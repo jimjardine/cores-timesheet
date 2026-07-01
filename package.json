@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "clock-in": "node scripts/timelog.mjs in",
+    "clock-out": "node scripts/timelog.mjs out"
   },
   "keywords": ["timesheet", "cores-worldwide"],
   "author": "Cores Worldwide",

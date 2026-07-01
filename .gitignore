@@ -5,3 +5,4 @@ dist/
 .DS_Store
 *.DS_Store
 RESUME_TOMORROW.md
+.timelog
