@@ -176,20 +176,30 @@ export default function Reports() {
   const csvDateTo   = dateTo   || ''
 
   function exportEntries(entriesToExport, title, filename) {
-    const rows = ['Employee,Date,Job #,Customer,Vessel,Hours,Description,Date From,Date To']
-    entriesToExport.forEach(e => {
-      rows.push([
-        e.employees?.name,
-        e.work_date,
-        e.jobs?.job_number,
-        e.jobs?.customers?.name,
-        e.jobs?.vessels?.name,
-        e.hours,
-        `"${(e.description || '').replace(/"/g, '""')}"`,
-        csvDateFrom,
-        csvDateTo,
-      ].join(','))
-    })
+    // Need full employee entries for accurate weekly OT context
+    const empIds = [...new Set(entriesToExport.map(e => e.employee_id))]
+    const allEmpEntries = entries.filter(e => empIds.includes(e.employee_id))
+    const otMap = computeAllOT(allEmpEntries)
+    const rows = ['Employee,Date,Job #,Customer,Vessel,Total Hours,Reg Hours,OT Hours,Per Diem,Description,Date From,Date To']
+    entriesToExport
+      .sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
+      .forEach(e => {
+        const { reg = 0, ot = 0 } = otMap[e.id] || {}
+        rows.push([
+          e.employees?.name,
+          e.work_date,
+          e.jobs?.job_number,
+          e.jobs?.customers?.name,
+          e.jobs?.vessels?.name,
+          Number(e.hours).toFixed(1),
+          reg.toFixed(1),
+          ot.toFixed(1),
+          Number(e.per_diem || 0),
+          `"${(e.description || '').replace(/"/g, '""')}"`,
+          csvDateFrom,
+          csvDateTo,
+        ].join(','))
+      })
     downloadCSV(rows, filename)
   }
 
@@ -200,39 +210,111 @@ export default function Reports() {
     </button>
   )
 
+  // Compute reg/OT per entry for any set of entries (handles multiple employees + weeks)
+  function computeAllOT(entriesToProcess) {
+    const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
+    const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
+    const map = {}
+    // Group by employee, then by pay week
+    const byEmp = entriesToProcess.reduce((acc, e) => {
+      if (!acc[e.employee_id]) acc[e.employee_id] = {}
+      const ws = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
+      if (!acc[e.employee_id][ws]) acc[e.employee_id][ws] = []
+      acc[e.employee_id][ws].push(e)
+      return acc
+    }, {})
+    Object.values(byEmp).forEach(weeks => {
+      Object.values(weeks).forEach(weekEnts => {
+        const inOrder = [...weekEnts].sort((a, b) =>
+          a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
+        )
+        let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
+        inOrder.forEach(e => {
+          if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
+          const hrs = Number(e.hours)
+          if (e.ot_hours !== null && e.ot_hours !== undefined) {
+            const ot = Number(e.ot_hours), reg = hrs - ot
+            map[e.id] = { reg, ot, manual: true }
+            dayHoursSoFar += hrs; weeklyRegSoFar += reg
+          } else {
+            const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
+            const dailyReg           = Math.min(hrs, dailyRegRemaining)
+            const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
+            const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
+            map[e.id]                = { reg: actualReg, ot: (hrs - dailyReg) + (dailyReg - actualReg) }
+            dayHoursSoFar           += hrs; weeklyRegSoFar += actualReg
+          }
+        })
+      })
+    })
+    return map
+  }
+
+  // Single-week version used by payroll tab display
+  function computeEntryOT(weekEntries) {
+    return computeAllOT(weekEntries)
+  }
+
   function exportCurrentTab() {
+    const otMap = computeAllOT(filteredEntries)
+
     if (activeTab === 'jobs') {
-      const rows = ['Job #,Customer,Vessel,Description,Status,Hours,Crew,Date From,Date To']
+      // Aggregate reg/OT per job across all filtered entries
+      const regPerJob = {}, otPerJob = {}, pdPerJob = {}
+      filteredEntries.forEach(e => {
+        const { reg = 0, ot = 0 } = otMap[e.id] || {}
+        regPerJob[e.job_id] = (regPerJob[e.job_id] || 0) + reg
+        otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
+        pdPerJob[e.job_id]  = (pdPerJob[e.job_id]  || 0) + Number(e.per_diem || 0)
+      })
+      const rows = ['Job #,Customer,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Per Diem,Crew,Date From,Date To']
       filteredJobs
         .filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
         .forEach(j => rows.push([
           j.job_number, j.customers?.name, j.vessels?.name,
           `"${(j.description || '').replace(/"/g, '""')}"`,
-          j.status, (hoursPerJob[j.id] || 0).toFixed(1),
+          j.status,
+          (hoursPerJob[j.id] || 0).toFixed(1),
+          (regPerJob[j.id] || 0).toFixed(1),
+          (otPerJob[j.id]  || 0).toFixed(1),
+          (pdPerJob[j.id]  || 0),
           `"${crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : ''}"`,
           csvDateFrom, csvDateTo,
         ].join(',')))
       downloadCSV(rows, `jobs-${dateFileSuffix}.csv`)
     } else if (activeTab === 'customer') {
-      const rows = ['Customer,Job #,Vessel,Description,Status,Hours,Date From,Date To']
+      const regPerJob = {}, otPerJob = {}
+      filteredEntries.forEach(e => {
+        const { reg = 0, ot = 0 } = otMap[e.id] || {}
+        regPerJob[e.job_id] = (regPerJob[e.job_id] || 0) + reg
+        otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
+      })
+      const rows = ['Customer,Job #,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
       customers.forEach(c =>
         filteredJobs.filter(j => j.customer_id === c.id).forEach(j =>
           rows.push([c.name, j.job_number, j.vessels?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
-            j.status, (hoursPerJob[j.id] || 0).toFixed(1),
+            j.status,
+            (hoursPerJob[j.id] || 0).toFixed(1),
+            (regPerJob[j.id] || 0).toFixed(1),
+            (otPerJob[j.id]  || 0).toFixed(1),
             csvDateFrom, csvDateTo,
           ].join(','))
         )
       )
       downloadCSV(rows, `by-customer-${dateFileSuffix}.csv`)
     } else if (activeTab === 'employee') {
-      const rows = ['Employee,Jobs Worked,Total Hours,Customers,Date From,Date To']
+      const rows = ['Employee,Jobs Worked,Total Hours,Reg Hours,OT Hours,Per Diem,Customers,Date From,Date To']
       employees.forEach(emp => {
         const ee = filteredEntries.filter(e => e.employee_id === emp.id)
+        if (!ee.length) return
         const empJobs = new Set(ee.map(e => e.job_id))
         const empCusts = new Set(ee.map(e => e.jobs?.customers?.name).filter(Boolean))
-        const hrs = ee.reduce((s, e) => s + Number(e.hours), 0)
-        rows.push([emp.name, empJobs.size, hrs.toFixed(1), `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
+        const totalHrs = ee.reduce((s, e) => s + Number(e.hours), 0)
+        const totalReg = ee.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
+        const totalOT  = ee.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0)
+        const totalPD  = ee.reduce((s, e) => s + Number(e.per_diem || 0), 0)
+        rows.push([emp.name, empJobs.size, totalHrs.toFixed(1), totalReg.toFixed(1), totalOT.toFixed(1), totalPD, `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
     } else if (activeTab === 'payroll') {
@@ -241,16 +323,22 @@ export default function Reports() {
       const days = getPayWeekDays(payWeekStart)
       const weekDates = new Set(days.map(toYMD))
       const weekEntries = entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date))
-      const rows = ['Employee,Day,Date,Job #,Customer,Hours,Description,Week From,Week To']
-      weekEntries.sort((a, b) => a.work_date.localeCompare(b.work_date)).forEach(e =>
-        rows.push([
-          emp?.name,
-          new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
-          e.work_date, e.jobs?.job_number, e.jobs?.customers?.name, e.hours,
-          `"${(e.description || '').replace(/"/g, '""')}"`,
-          toYMD(payWeekStart), toYMD(weekEnd),
-        ].join(','))
-      )
+      const otMap = computeEntryOT(weekEntries)
+      const rows = ['Employee,Day,Date,Job #,Customer,Total Hours,Reg Hours,OT Hours,Per Diem,Description,Week From,Week To']
+      weekEntries
+        .sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
+        .forEach(e => {
+          const { reg = 0, ot = 0 } = otMap[e.id] || {}
+          rows.push([
+            emp?.name,
+            new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
+            e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
+            Number(e.hours).toFixed(1), reg.toFixed(1), ot.toFixed(1),
+            Number(e.per_diem || 0),
+            `"${(e.description || '').replace(/"/g, '""')}"`,
+            toYMD(payWeekStart), toYMD(weekEnd),
+          ].join(','))
+        })
       downloadCSV(rows, `payroll-${emp?.name?.replace(/\s+/g, '-') || 'unknown'}-${toYMD(payWeekStart)}.csv`)
     }
   }
@@ -640,27 +728,7 @@ export default function Reports() {
         const weekEntries = payEmployee ? entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date)) : []
         const byDate     = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
 
-        // Entry-level OT attribution — walk in sort_order, assign reg/OT per entry
-        const entryOtMap = {} // id → { reg, ot }
-        {
-          let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
-          const inOrder = [...weekEntries].sort((a, b) =>
-            a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
-          )
-          inOrder.forEach(e => {
-            if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
-            const hrs = Number(e.hours)
-            const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
-            const dailyReg           = Math.min(hrs, dailyRegRemaining)
-            const dailyOT            = hrs - dailyReg
-            const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
-            const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
-            const weeklyOT           = dailyReg - actualReg
-            entryOtMap[e.id]         = { reg: actualReg, ot: dailyOT + weeklyOT }
-            dayHoursSoFar           += hrs
-            weeklyRegSoFar          += actualReg
-          })
-        }
+        const entryOtMap = computeEntryOT(weekEntries)
 
         // Day-level summary — derived from entry-level totals
         const dayBreakdowns = days.map(day => {

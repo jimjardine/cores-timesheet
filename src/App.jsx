@@ -10,7 +10,7 @@ function App() {
 
   return (
     <div>
-      <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
         <span style={{ color: '#fff', fontWeight: 700, marginRight: '1.5rem' }}>Cores Worldwide</span>
         {[['reports', 'Reports'], ['dashboard', 'Timesheets'], ['email', 'Email Parser']].map(([key, label]) => (
           <button key={key} onClick={() => setAdminView(key)} style={{

@@ -20,6 +20,14 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
   const [selectedEmp, setSelectedEmp] = useState(null)
   const [selectedDate, setSelectedDate] = useState(null)
   const [payrollConfig, setPayrollConfig] = useState({})
+  const [jobs, setJobs] = useState([])
+
+  // ── Edit / delete ──
+  const [editEntry, setEditEntry] = useState(null)
+  const [editFields, setEditFields] = useState({})
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [exportSummaries, setExportSummaries] = useState(true)
 
   // ── Email Parser tab ──
   const [inputText, setInputText] = useState('')
@@ -33,6 +41,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
     loadTimesheets()
     supabase.from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
     supabase.from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
+    supabase.from('jobs').select('id, job_number, customers(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
 
   useEffect(() => {
@@ -47,6 +56,43 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
       .order('work_date', { ascending: false })
     setEntries(data || [])
     setLoadingEntries(false)
+  }
+
+  function openEdit(e, computedReg, computedOT) {
+    setEditEntry(e)
+    setEditFields({
+      work_date:   e.work_date,
+      job_id:      e.job_id,
+      reg_hours:   (computedReg ?? Number(e.hours) - Number(e.ot_hours ?? 0)).toFixed(1),
+      ot_hours:    (computedOT  ?? Number(e.ot_hours ?? 0)).toFixed(1),
+      description: e.description || '',
+      per_diem:    e.per_diem ?? 0,
+      sort_order:  e.sort_order ?? 1,
+    })
+  }
+
+  async function saveEdit() {
+    setSavingEdit(true)
+    const reg = Number(editFields.reg_hours) || 0
+    const ot  = Number(editFields.ot_hours)  || 0
+    await supabase.from('timesheet_entries').update({
+      work_date:   editFields.work_date,
+      job_id:      editFields.job_id,
+      hours:       reg + ot,
+      ot_hours:    ot,
+      description: editFields.description,
+      per_diem:    Number(editFields.per_diem),
+      sort_order:  Number(editFields.sort_order),
+    }).eq('id', editEntry.id)
+    await loadTimesheets()
+    setEditEntry(null)
+    setSavingEdit(false)
+  }
+
+  async function deleteEntry(id) {
+    await supabase.from('timesheet_entries').delete().eq('id', id)
+    setConfirmDeleteId(null)
+    await loadTimesheets()
   }
 
   // ── Date helpers ──
@@ -76,31 +122,165 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
     return true
   })
 
+  // Build OT map for all employees using full (unfiltered) entries for accurate weekly context
+  const listOtMap = (() => {
+    const empIds = [...new Set(filteredEntries.map(e => e.employee_id))]
+    const map = {}
+    empIds.forEach(empId => {
+      const empAll = entries.filter(e => e.employee_id === empId)
+      Object.assign(map, computeEntryOT(empAll))
+    })
+    return map
+  })()
+
   const timesheetRows = Object.values(
     filteredEntries.reduce((acc, e) => {
       const key = `${e.employee_id}_${e.work_date}`
-      if (!acc[key]) acc[key] = { key, employee: e.employees, date: e.work_date, entries: [], hours: 0, jobIds: new Set() }
+      if (!acc[key]) acc[key] = { key, employee: e.employees, date: e.work_date, entries: [], hours: 0, reg: 0, ot: 0, pd: 0, jobIds: new Set() }
       acc[key].entries.push(e)
       acc[key].hours += Number(e.hours)
+      acc[key].reg   += listOtMap[e.id]?.reg ?? 0
+      acc[key].ot    += listOtMap[e.id]?.ot  ?? 0
+      acc[key].pd    += Number(e.per_diem || 0)
       acc[key].jobIds.add(e.job_id)
       return acc
     }, {})
   ).sort((a, b) => b.date.localeCompare(a.date) || (a.employee?.name || '').localeCompare(b.employee?.name || ''))
 
-  const totalFilteredHours = filteredEntries.reduce((s, e) => s + Number(e.hours), 0)
+  const totalReg = timesheetRows.reduce((s, r) => s + r.reg, 0)
+  const totalOT  = timesheetRows.reduce((s, r) => s + r.ot, 0)
+  const totalPD  = timesheetRows.reduce((s, r) => s + r.pd, 0)
+
+  function computeEntryOT(empEntries) {
+    const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
+    const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
+    const byPayWeek = empEntries.reduce((acc, e) => {
+      const ws = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
+      if (!acc[ws]) acc[ws] = []
+      acc[ws].push(e)
+      return acc
+    }, {})
+    const map = {}
+    Object.values(byPayWeek).forEach(weekEnts => {
+      const inOrder = [...weekEnts].sort((a, b) =>
+        a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
+      )
+      let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
+      inOrder.forEach(e => {
+        if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
+        const hrs = Number(e.hours)
+        if (e.ot_hours !== null && e.ot_hours !== undefined) {
+          const ot = Number(e.ot_hours), reg = hrs - ot
+          map[e.id] = { reg, ot, manual: true }
+          dayHoursSoFar += hrs; weeklyRegSoFar += reg
+        } else {
+          const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
+          const dailyReg           = Math.min(hrs, dailyRegRemaining)
+          const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
+          const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
+          map[e.id]                = { reg: actualReg, ot: (hrs - dailyReg) + (dailyReg - actualReg) }
+          dayHoursSoFar           += hrs; weeklyRegSoFar += actualReg
+        }
+      })
+    })
+    return map
+  }
 
   function handleExport() {
-    const rows = ['Employee,Date,Job,Customer,Hours,Description']
-    filteredEntries.forEach(e => {
-      rows.push([
-        e.employees?.name, e.work_date,
-        e.jobs?.job_number, e.jobs?.customers?.name,
-        e.hours, `"${(e.description || '').replace(/"/g, '""')}"`
-      ].join(','))
+    const toExport = selectedDate
+      ? filteredEntries.filter(e => e.work_date === selectedDate)
+      : filteredEntries
+
+    // Compute OT using all entries for each employee (need full week context)
+    const empIds = [...new Set(toExport.map(e => e.employee_id))]
+    const otMap = {}
+    empIds.forEach(empId => {
+      const empAll = entries.filter(e => e.employee_id === empId)
+      Object.assign(otMap, computeEntryOT(empAll))
     })
+
+    const sorted = [...toExport].sort((a, b) =>
+      (a.employees?.name || '').localeCompare(b.employees?.name || '') ||
+      a.work_date.localeCompare(b.work_date) ||
+      (a.sort_order ?? 1) - (b.sort_order ?? 1)
+    )
+
+    // Group by employee
+    const byEmp = []
+    sorted.forEach(e => {
+      const last = byEmp[byEmp.length - 1]
+      if (last && last.id === e.employee_id) { last.entries.push(e) }
+      else byEmp.push({ id: e.employee_id, name: e.employees?.name || 'Unknown', entries: [e] })
+    })
+
+    // 13 columns: Type (Detail | Job Summary | Period Total | Grand Total), Employee, Date, Job, Customer, Total Hours, Reg Hours, OT Hours, Per Diem, Description, Period Reg, Period OT, Period PD
+    const csvRow = cols => cols.map(c => c === '' || c == null ? '' : String(c).includes(',') ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')
+    const rows = [csvRow(['Type','Employee','Date','Job','Customer','Total Hours','Reg Hours','OT Hours','Per Diem','Description','Period Reg','Period OT','Period PD'])]
+    let grandReg = 0, grandOT = 0, grandPD = 0
+    const jobTotals = {} // job_id → { jobNum, customer, reg, ot, pd }
+
+    byEmp.forEach(({ name, entries }) => {
+      let empReg = 0, empOT = 0, empPD = 0
+
+      // Group by pay week
+      const weekMap = {}
+      entries.forEach(e => {
+        const ws = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
+        if (!weekMap[ws]) weekMap[ws] = []
+        weekMap[ws].push(e)
+      })
+
+      Object.keys(weekMap).sort().forEach(ws => {
+        const weekEntries = weekMap[ws]
+        const weekEnd = new Date(ws + 'T12:00:00')
+        weekEnd.setDate(weekEnd.getDate() + 6)
+        const weekLabel = `${fmtDate(ws)} – ${fmtDate(toYMD(weekEnd))}`
+        let weekReg = 0, weekOT = 0, weekPD = 0
+
+        // Group by job within the week
+        const jobMap = {}
+        weekEntries.forEach(e => {
+          const key = e.job_id
+          if (!jobMap[key]) jobMap[key] = { jobNum: e.jobs?.job_number || '', customer: e.jobs?.customers?.name || '', entries: [] }
+          jobMap[key].entries.push(e)
+        })
+
+        Object.values(jobMap).forEach(({ jobNum, customer, entries: jobEntries }) => {
+          let jobReg = 0, jobOT = 0, jobPD = 0
+          jobEntries.sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
+          jobEntries.forEach(e => {
+            const { reg = 0, ot = 0 } = otMap[e.id] || {}
+            const pd = Number(e.per_diem || 0)
+            jobReg += reg; jobOT += ot; jobPD += pd
+            if (!jobTotals[e.job_id]) jobTotals[e.job_id] = { jobNum: e.jobs?.job_number || '', customer: e.jobs?.customers?.name || '', reg: 0, ot: 0, pd: 0 }
+            jobTotals[e.job_id].reg += reg; jobTotals[e.job_id].ot += ot; jobTotals[e.job_id].pd += pd
+            rows.push(csvRow(['Detail', e.employees?.name, e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
+              Number(e.hours).toFixed(1), reg.toFixed(1), ot.toFixed(1), pd, e.description || '', '', '', '']))
+          })
+          if (exportSummaries) rows.push(csvRow(['Job Summary', name, weekLabel, jobNum, customer, '', '', '', '', '', jobReg.toFixed(1), jobOT.toFixed(1), jobPD]))
+          weekReg += jobReg; weekOT += jobOT; weekPD += jobPD
+        })
+
+        if (exportSummaries) rows.push(csvRow(['Period Total', name, weekLabel, '', '', '', '', '', '', '', weekReg.toFixed(1), weekOT.toFixed(1), weekPD]))
+        empReg += weekReg; empOT += weekOT; empPD += weekPD
+      })
+
+      rows.push('')
+      grandReg += empReg; grandOT += empOT; grandPD += empPD
+    })
+
+    if (exportSummaries) {
+      Object.values(jobTotals)
+        .sort((a, b) => a.jobNum.localeCompare(b.jobNum))
+        .forEach(({ jobNum, customer, reg, ot, pd }) => {
+          rows.push(csvRow(['Job Total', '', '', jobNum, customer, '', '', '', '', '', reg.toFixed(1), ot.toFixed(1), pd]))
+        })
+      rows.push('')
+      rows.push(csvRow(['Grand Total', '', '', '', '', '', '', '', '', '', grandReg.toFixed(1), grandOT.toFixed(1), grandPD]))
+    }
     const link = document.createElement('a')
     link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'))
-    link.download = 'timesheets.csv'
+    link.download = selectedDate ? `timesheets-${selectedDate}.csv` : 'timesheets.csv'
     link.click()
   }
 
@@ -140,8 +320,66 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
 
   const fmtDate = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 
+  const ef = (field) => ({ value: editFields[field] ?? '', onChange: e => setEditFields(f => ({ ...f, [field]: e.target.value })) })
+  const inputStyle = { padding: '0.4rem 0.6rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }
+
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+
+      {/* ── Edit modal ── */}
+      {editEntry && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '1.75rem', width: '480px', maxWidth: '95vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 1.25rem' }}>Edit Entry</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Date</label>
+                <input type="date" style={inputStyle} {...ef('work_date')} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#2d6a38', marginBottom: '0.3rem', fontWeight: 600 }}>Reg Hours</label>
+                <input type="number" step="0.5" min="0" style={{ ...inputStyle, borderColor: '#2d6a38' }} {...ef('reg_hours')} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#c0392b', marginBottom: '0.3rem', fontWeight: 600 }}>OT Hours</label>
+                <input type="number" step="0.5" min="0" style={{ ...inputStyle, borderColor: '#c0392b' }}
+                  value={editFields.ot_hours ?? ''}
+                  onChange={e => setEditFields(f => ({ ...f, ot_hours: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Sort Order</label>
+                <input type="number" min="1" style={inputStyle} {...ef('sort_order')} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Job</label>
+                <select style={inputStyle} value={editFields.job_id || ''} onChange={e => setEditFields(f => ({ ...f, job_id: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}{j.customers?.name ? ` — ${j.customers.name}` : ''}</option>)}
+                </select>
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Description</label>
+                <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...ef('description')} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Per Diem</label>
+                <select style={inputStyle} value={editFields.per_diem ?? 0} onChange={e => setEditFields(f => ({ ...f, per_diem: e.target.value }))}>
+                  <option value={0}>None</option>
+                  <option value={1}>×1 Standard</option>
+                  <option value={2}>×2 Double</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button onClick={() => setEditEntry(null)} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={saveEdit} disabled={savingEdit} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                {savingEdit ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <h1>Admin Dashboard</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
@@ -195,14 +433,20 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
             return (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-                  <button onClick={() => { setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}
+                  <button onClick={() => { setSelectedEmp(null); setSelectedDate(null) }}
                     style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
-                    ← All employees
+                    ← {filterEmployee || 'All employees'}
                   </button>
                   <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedEmp.name}</span>
                   <span style={{ color: '#555', fontSize: '0.95rem' }}>{selectedDate ? fmtDate(selectedDate) : 'All dates'}</span>
                   <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{empTotal.toFixed(1)} hrs</span>
-                  <button onClick={handleExport} style={{ marginLeft: 'auto', padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Export CSV</button>
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#555', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={exportSummaries} onChange={e => setExportSummaries(e.target.checked)} />
+                      Include summaries
+                    </label>
+                    <button onClick={handleExport} style={{ padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Export CSV</button>
+                  </div>
                 </div>
 
                 {empEntries.length === 0 ? (
@@ -245,7 +489,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
                         <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                          {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left']].map(([h, align]) => (
+                          {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left'],['','left']].map(([h, align]) => (
                             <th key={h} style={{ padding: '0.75rem', textAlign: align, fontWeight: 600, color: h === 'OT' ? '#c0392b' : h === 'PD' ? '#8B4513' : '#555' }}>{h}</th>
                           ))}
                         </tr>
@@ -254,10 +498,11 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                         {sorted.map(e => {
                           const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
                           const perDiem = Number(e.per_diem || 0)
+                          const isConfirmingDelete = confirmDeleteId === e.id
                           return (
-                            <tr key={e.id} style={{ borderBottom: '1px solid #eee' }}
-                              onMouseEnter={ev => hoverRow(ev, true)}
-                              onMouseLeave={ev => hoverRow(ev, false)}>
+                            <tr key={e.id} style={{ borderBottom: '1px solid #eee', background: isConfirmingDelete ? '#fff5f5' : '' }}
+                              onMouseEnter={ev => { if (!isConfirmingDelete) hoverRow(ev, true) }}
+                              onMouseLeave={ev => { if (!isConfirmingDelete) hoverRow(ev, false) }}>
                               <td style={{ padding: '0.75rem', color: '#555', whiteSpace: 'nowrap' }}>{fmtDate(e.work_date)}</td>
                               <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#666' }}>{e.jobs?.customers?.name ?? '—'}</td>
@@ -266,6 +511,20 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ddd', fontWeight: ot > 0 ? 600 : 400 }}>{ot > 0 ? ot.toFixed(1) : '—'}</td>
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: perDiem > 0 ? '#8B4513' : '#ddd' }}>{perDiem > 0 ? `×${perDiem}` : '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#555' }}>{e.description ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                                {isConfirmingDelete ? (
+                                  <span>
+                                    <span style={{ fontSize: '0.85rem', color: '#c0392b', marginRight: '0.5rem' }}>Delete?</span>
+                                    <button onClick={() => deleteEntry(e.id)} style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', background: '#c0392b', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
+                                    <button onClick={() => setConfirmDeleteId(null)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}>No</button>
+                                  </span>
+                                ) : (
+                                  <span>
+                                    <button onClick={() => openEdit(e, reg, ot)} style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#555' }}>Edit</button>
+                                    <button onClick={() => setConfirmDeleteId(e.id)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ffaaaa', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#c0392b' }}>Delete</button>
+                                  </span>
+                                )}
+                              </td>
                             </tr>
                           )
                         })}
@@ -282,9 +541,17 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                 <div>
                   <span style={{ fontWeight: 600 }}>{timesheetRows.length} timesheets</span>
                   <span style={{ color: '#aaa', margin: '0 0.5rem' }}>·</span>
-                  <span style={{ color: '#555' }}>{totalFilteredHours.toFixed(1)} hrs total</span>
+                  <span style={{ color: '#2d6a38' }}>{totalReg.toFixed(1)} reg</span>
+                  {totalOT > 0 && <><span style={{ color: '#aaa', margin: '0 0.4rem' }}>·</span><span style={{ color: '#c0392b' }}>{totalOT.toFixed(1)} OT</span></>}
+                  {totalPD > 0 && <><span style={{ color: '#aaa', margin: '0 0.4rem' }}>·</span><span style={{ color: '#7a5c00' }}>{totalPD} PD</span></>}
                 </div>
-                <button onClick={handleExport} style={{ padding: '0.45rem 1rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Export CSV</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#555', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={exportSummaries} onChange={e => setExportSummaries(e.target.checked)} />
+                    Include summaries
+                  </label>
+                  <button onClick={handleExport} style={{ padding: '0.45rem 1rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Export CSV</button>
+                </div>
               </div>
 
               {timesheetRows.length === 0 ? (
@@ -293,8 +560,16 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      {['Employee', 'Date', 'Jobs', 'Hours', ''].map((h, i) => (
-                        <th key={i} style={{ padding: '0.75rem', textAlign: h === 'Jobs' || h === 'Hours' ? 'center' : 'left', fontWeight: 600, color: '#555' }}>{h}</th>
+                      {[
+                        { label: 'Employee', align: 'left' },
+                        { label: 'Date', align: 'left' },
+                        { label: 'Jobs', align: 'center' },
+                        { label: 'Reg', align: 'center' },
+                        { label: 'OT', align: 'center' },
+                        { label: 'PD', align: 'center' },
+                        { label: '', align: 'right' },
+                      ].map((h, i) => (
+                        <th key={i} style={{ padding: '0.75rem', textAlign: h.align, fontWeight: 600, color: '#555' }}>{h.label}</th>
                       ))}
                     </tr>
                   </thead>
@@ -311,11 +586,23 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                         <td style={{ padding: '0.75rem', ...linkStyle }}>{row.employee?.name}</td>
                         <td style={{ padding: '0.75rem', color: '#555' }}>{fmtDate(row.date)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', color: '#888' }}>{row.jobIds.size}</td>
-                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{row.hours.toFixed(1)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: '#2d6a38' }}>{row.reg.toFixed(1)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: row.ot > 0 ? 600 : 400, color: row.ot > 0 ? '#c0392b' : '#ccc' }}>{row.ot.toFixed(1)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', color: row.pd > 0 ? '#7a5c00' : '#ccc' }}>{row.pd > 0 ? row.pd : '—'}</td>
                         <td style={{ padding: '0.75rem', color: '#aaa', fontSize: '0.85rem', textAlign: 'right' }}>view →</td>
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: '2px solid #ddd', background: '#fafafa', fontWeight: 700 }}>
+                      <td style={{ padding: '0.75rem', color: '#333' }}>Total</td>
+                      <td colSpan={2} />
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{totalReg.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: totalOT > 0 ? '#c0392b' : '#ccc' }}>{totalOT.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: totalPD > 0 ? '#7a5c00' : '#ccc' }}>{totalPD > 0 ? totalPD : '—'}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </div>
