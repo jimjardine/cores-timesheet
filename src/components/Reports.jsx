@@ -47,6 +47,7 @@ export default function Reports() {
   // Payroll tab
   const payWeeks = recentPayWeeks(8)
   const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
+
   const [payEmployee, setPayEmployee] = useState('')
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
@@ -862,6 +863,7 @@ export default function Reports() {
           </div>
         )
       })()}
+
     </div>
   )
 }

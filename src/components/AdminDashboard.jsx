@@ -29,6 +29,25 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [exportSummaries, setExportSummaries] = useState(true)
 
+  // ── Submission Status tab ──
+  const [subPreset, setSubPreset] = useState('this-week')
+  const [subWeekStart, setSubWeekStart] = useState(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() - ((d.getDay() - 4 + 7) % 7))
+    return d.toISOString().split('T')[0]
+  })
+
+  function applySubPreset(preset) {
+    setSubPreset(preset)
+    if (preset === 'custom') return
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const thisWeek = new Date(today); thisWeek.setDate(today.getDate() - ((today.getDay() - 4 + 7) % 7))
+    if (preset === 'this-week') { setSubWeekStart(thisWeek.toISOString().split('T')[0]); return }
+    if (preset === 'last-week') { const lw = new Date(thisWeek); lw.setDate(lw.getDate() - 7); setSubWeekStart(lw.toISOString().split('T')[0]); return }
+    // For broader ranges snap to the most recent pay week with entries, default this week
+    setSubWeekStart(thisWeek.toISOString().split('T')[0])
+  }
+
   // ── Email Parser tab ──
   const [inputText, setInputText] = useState('')
   const [senderName, setSenderName] = useState('')
@@ -384,6 +403,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}>Timesheets</button>
+        <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
         <button style={tabStyle('email')} onClick={() => setActiveTab('email')}>Email Parser</button>
       </div>
 
@@ -404,11 +424,12 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 {[['all','All time'],['this-week','This pay week'],['last-week','Last pay week'],['this-month','This month'],['last-30','Last 30 days'],['custom','Custom']].map(([key, label]) => (
                   <button key={key} onClick={() => applyPreset(key)} style={{
-                    padding: '0.35rem 0.85rem', fontSize: '0.85rem', border: '1px solid',
-                    borderColor: datePreset === key ? '#0066cc' : '#ddd', borderRadius: '20px', cursor: 'pointer',
-                    background: datePreset === key ? '#e6f0ff' : '#fff',
-                    color: datePreset === key ? '#0066cc' : '#555',
-                    fontWeight: datePreset === key ? 600 : 400,
+                    padding: '0.4rem 1rem', fontSize: '0.875rem', border: '1.5px solid',
+                    borderColor: datePreset === key ? '#0066cc' : '#d1d5db', borderRadius: '999px', cursor: 'pointer',
+                    background: datePreset === key ? '#0066cc' : '#fff',
+                    color: datePreset === key ? '#fff' : '#555',
+                    fontWeight: datePreset === key ? 700 : 400,
+                    transition: 'all 0.15s',
                   }}>{label}</button>
                 ))}
               </div>
@@ -609,6 +630,132 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
           )}
         </>
       )}
+
+      {/* ── Submission Status tab ── */}
+      {activeTab === 'submission' && (() => {
+        const ws = new Date(subWeekStart + 'T12:00:00')
+        const weekEnd = new Date(ws); weekEnd.setDate(weekEnd.getDate() + 6)
+        const weekDates = new Set(Array.from({ length: 7 }, (_, i) => {
+          const d = new Date(ws); d.setDate(d.getDate() + i); return d.toISOString().split('T')[0]
+        }))
+
+        // Build recent pay weeks for dropdown
+        const recentWeeks = []
+        const cur = new Date(ws)
+        for (let i = 0; i < 8; i++) {
+          recentWeeks.push(cur.toISOString().split('T')[0])
+          cur.setDate(cur.getDate() - 7)
+        }
+
+        const rows = employees.map(emp => {
+          const ee = entries.filter(e => e.employee_id === emp.id && weekDates.has(e.work_date))
+          const submitted = ee.length > 0
+          const otMap = submitted ? (() => {
+            const empAll = entries.filter(e => e.employee_id === emp.id)
+            return computeEntryOT(empAll)
+          })() : {}
+          return {
+            emp, submitted,
+            days:  new Set(ee.map(e => e.work_date)).size,
+            hours: ee.reduce((s, e) => s + Number(e.hours), 0),
+            reg:   ee.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
+            ot:    ee.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0),
+            pd:    ee.reduce((s, e) => s + Number(e.per_diem || 0), 0),
+          }
+        }).sort((a, b) => a.submitted - b.submitted || a.emp.name.localeCompare(b.emp.name))
+
+        const missing = rows.filter(r => !r.submitted)
+        const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+
+        return (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {[['this-week','This pay week'],['last-week','Last pay week'],['custom','Custom']].map(([key, label]) => (
+                  <button key={key} onClick={() => applySubPreset(key)} style={{
+                    padding: '0.4rem 1rem', fontSize: '0.875rem', border: '1.5px solid',
+                    borderColor: subPreset === key ? '#0066cc' : '#d1d5db', borderRadius: '999px', cursor: 'pointer',
+                    background: subPreset === key ? '#0066cc' : '#fff',
+                    color: subPreset === key ? '#fff' : '#555',
+                    fontWeight: subPreset === key ? 700 : 400,
+                    transition: 'all 0.15s',
+                  }}>{label}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <span style={{ color: '#2d6a38', fontWeight: 600 }}>{rows.filter(r => r.submitted).length} submitted</span>
+                <span style={{ color: '#aaa' }}>·</span>
+                <span style={{ color: missing.length > 0 ? '#c0392b' : '#aaa', fontWeight: missing.length > 0 ? 700 : 400 }}>{missing.length} missing</span>
+              </div>
+            </div>
+            {subPreset === 'custom' && (
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', padding: '0.6rem 0.9rem', background: '#f8faff', border: '1px solid #d0e0f8', borderRadius: '6px' }}>
+                <span style={{ color: '#555', fontSize: '0.9rem', fontWeight: 600 }}>Pay week:</span>
+                <select value={subWeekStart} onChange={e => setSubWeekStart(e.target.value)}
+                  style={{ padding: '0.35rem 0.7rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }}>
+                  {recentWeeks.map(w => {
+                    const we = new Date(w + 'T12:00:00'); we.setDate(we.getDate() + 6)
+                    return <option key={w} value={w}>{fmtDate(w)} – {fmtDate(we.toISOString().split('T')[0])}</option>
+                  })}
+                </select>
+              </div>
+            )}
+            <div style={{ marginBottom: '1.5rem', color: '#777', fontSize: '0.9rem' }}>
+              Week of {fmtDate(subWeekStart)} – {fmtDate(new Date(new Date(subWeekStart + 'T12:00:00').setDate(new Date(subWeekStart + 'T12:00:00').getDate() + 6)).toISOString().split('T')[0])}
+            </div>
+
+            {missing.length > 0 && (
+              <div style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#fff5f5', border: '1px solid #f5c6c6', borderRadius: '6px' }}>
+                <span style={{ fontWeight: 700, color: '#c0392b', marginRight: '0.75rem' }}>Missing:</span>
+                {missing.map((r, i) => (
+                  <span key={r.emp.id} style={{ color: '#c0392b' }}>{r.emp.name}{i < missing.length - 1 ? ', ' : ''}</span>
+                ))}
+              </div>
+            )}
+
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                  {['Employee', 'Status', 'Days', 'Total Hrs', 'Reg', 'OT', 'PD'].map((h, i) => (
+                    <th key={i} style={{ padding: '0.75rem', textAlign: i > 1 ? 'center' : 'left', fontWeight: 600, color: '#555' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ emp, submitted, days, hours, reg, ot, pd }) => (
+                  <tr key={emp.id}
+                    style={{ borderBottom: '1px solid #eee', background: submitted ? '' : '#fff9f9', cursor: submitted ? 'pointer' : 'default' }}
+                    onClick={() => {
+                      if (!submitted) return
+                      const we = new Date(ws); we.setDate(we.getDate() + 6)
+                      setFilterEmployee(emp.name)
+                      setSelectedEmp(emp)
+                      setSelectedDate(null)
+                      setDateFrom(subWeekStart)
+                      setDateTo(we.toISOString().split('T')[0])
+                      setDatePreset('custom')
+                      setActiveTab('timesheets')
+                    }}
+                    onMouseEnter={e => { if (submitted) hoverRow(e, true) }}
+                    onMouseLeave={e => hoverRow(e, false)}>
+                    <td style={{ padding: '0.75rem', fontWeight: 600, ...(submitted ? linkStyle : {}) }}>{emp.name}</td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {submitted
+                        ? <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#e6f4ea', color: '#2d6a38', fontWeight: 700, fontSize: '0.85rem' }}>✓ Submitted</span>
+                        : <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fde8e8', color: '#c0392b', fontWeight: 700, fontSize: '0.85rem' }}>✗ Missing</span>}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: '#555' }}>{submitted ? days : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: submitted ? 600 : 400, color: submitted ? '#333' : '#ccc' }}>{submitted ? hours.toFixed(1) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: submitted ? '#2d6a38' : '#ccc' }}>{submitted ? reg.toFixed(1) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ccc' }}>{submitted ? ot.toFixed(1) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: pd > 0 ? '#7a5c00' : '#ccc' }}>{submitted ? (pd > 0 ? pd : '—') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })()}
 
       {/* ── Email Parser tab ── */}
       {activeTab === 'email' && (
