@@ -48,6 +48,8 @@ export default function Reports() {
   const payWeeks = recentPayWeeks(8)
   const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
   const [payEmployee, setPayEmployee] = useState('')
+  const [payrollConfig, setPayrollConfig] = useState({})
+  const [statHolidays, setStatHolidays] = useState(new Set())
 
   // Date range filter
   const [datePreset, setDatePreset] = useState('all')
@@ -83,16 +85,20 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, empRes, entriesRes] = await Promise.all([
+    const [jobsRes, custRes, empRes, entriesRes, configRes, holidaysRes] = await Promise.all([
       supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.from('customers').select('*').order('name'),
       supabase.from('employees').select('*').order('name'),
       supabase.from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
+      supabase.from('payroll_config').select('key, value'),
+      supabase.from('stat_holidays').select('holiday_date'),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
     setEmployees(empRes.data || [])
     setEntries(entriesRes.data || [])
+    setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
+    setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
     setLoading(false)
   }
 
@@ -621,16 +627,68 @@ export default function Reports() {
 
       {/* ── Payroll ── */}
       {activeTab === 'payroll' && (() => {
-        const weekEnd = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
-        const days = getPayWeekDays(payWeekStart)
-        const weekDates = new Set(days.map(toYMD))
-        const emp = employees.find(e => e.id === payEmployee)
+        const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
+        const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
+        const otMultiplier    = payrollConfig.ot_multiplier        ?? 1.5
+        const statMultiplier  = payrollConfig.stat_holiday_multiplier ?? 1.5
+        const perDiemRate     = payrollConfig.per_diem_rate        ?? 0
+
+        const weekEnd    = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
+        const days       = getPayWeekDays(payWeekStart)
+        const weekDates  = new Set(days.map(toYMD))
+        const emp        = employees.find(e => e.id === payEmployee)
         const weekEntries = payEmployee ? entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date)) : []
-        const totalHoursWeek = weekEntries.reduce((s, e) => s + Number(e.hours), 0)
-        const byDate = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
+        const byDate     = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
+
+        // Entry-level OT attribution — walk in sort_order, assign reg/OT per entry
+        const entryOtMap = {} // id → { reg, ot }
+        {
+          let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
+          const inOrder = [...weekEntries].sort((a, b) =>
+            a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
+          )
+          inOrder.forEach(e => {
+            if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
+            const hrs = Number(e.hours)
+            const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
+            const dailyReg           = Math.min(hrs, dailyRegRemaining)
+            const dailyOT            = hrs - dailyReg
+            const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
+            const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
+            const weeklyOT           = dailyReg - actualReg
+            entryOtMap[e.id]         = { reg: actualReg, ot: dailyOT + weeklyOT }
+            dayHoursSoFar           += hrs
+            weeklyRegSoFar          += actualReg
+          })
+        }
+
+        // Day-level summary — derived from entry-level totals
+        const dayBreakdowns = days.map(day => {
+          const ymd        = toYMD(day)
+          const dayEntries = (byDate[ymd] || []).slice().sort((a, b) => (a.sort_order ?? 1) - (b.sort_order ?? 1))
+          const dayHours   = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
+          const dayPerDiem = dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
+          const isStat     = statHolidays.has(ymd)
+          const isToday    = ymd === toYMD(new Date())
+          const isWeekend  = day.getDay() === 0 || day.getDay() === 6
+          const regularHours = dayEntries.reduce((s, e) => s + (entryOtMap[e.id]?.reg ?? 0), 0)
+          const otHours      = dayEntries.reduce((s, e) => s + (entryOtMap[e.id]?.ot ?? 0), 0)
+
+          return { ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }
+        })
+
+        const totalHours   = dayBreakdowns.reduce((s, d) => s + d.dayHours, 0)
+        const totalRegular = dayBreakdowns.reduce((s, d) => s + d.regularHours, 0)
+        const totalOT      = dayBreakdowns.reduce((s, d) => s + d.otHours, 0)
+        const totalPerDiem = dayBreakdowns.reduce((s, d) => s + d.dayPerDiem, 0)
+        const statDays     = dayBreakdowns.filter(d => d.isStat && d.dayHours > 0)
+
+        const thStyle = { padding: '0.65rem 0.75rem', textAlign: 'center', fontWeight: 600, color: '#555', whiteSpace: 'nowrap' }
+        const tdC     = { padding: '0.65rem 0.75rem', textAlign: 'center' }
 
         return (
           <div>
+            {/* Selectors */}
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div>
                 <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Employee</label>
@@ -651,59 +709,83 @@ export default function Reports() {
               <div style={{ ...card, textAlign: 'center', padding: '3rem', color: '#aaa' }}>Select an employee to view their pay week</div>
             ) : (
               <>
-                <div style={{ ...card, marginBottom: '1.5rem', background: '#f8faff', borderColor: '#c8d8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{emp?.name}</div>
-                      <div style={{ color: '#666', marginTop: '0.25rem' }}>Thu {fmtDate(payWeekStart)} – Wed {fmtDate(weekEnd)}</div>
+                {/* Summary bar */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                  {[
+                    { label: 'Total Hours',   value: totalHours.toFixed(1),   color: '#1a1a2e' },
+                    { label: `Regular (≤${dailyThreshold}h/day, ≤${weeklyThreshold}h/wk)`, value: totalRegular.toFixed(1), color: '#2d6a38' },
+                    { label: `OT @ ${otMultiplier}×`, value: totalOT.toFixed(1), color: '#c0392b' },
+                    { label: `Per Diem${perDiemRate > 0 ? ` ($${(totalPerDiem * perDiemRate).toFixed(2)})` : ''}`, value: totalPerDiem > 0 ? `×${totalPerDiem}` : '—', color: '#8B4513' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={card}>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 700, color }}>{value}</div>
+                      <div style={{ color: '#888', fontSize: '0.8rem', marginTop: '0.2rem' }}>{label}</div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '2rem', fontWeight: 700, color: totalHoursWeek > 0 ? '#1a1a2e' : '#ccc' }}>{totalHoursWeek.toFixed(1)}</div>
-                      <div style={{ color: '#888', fontSize: '0.9rem' }}>total hours</div>
-                    </div>
-                  </div>
+                  ))}
                 </div>
 
+                {/* Stat holiday notice */}
+                {statDays.length > 0 && (
+                  <div style={{ marginBottom: '1rem', padding: '0.6rem 1rem', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '6px', fontSize: '0.9rem', color: '#7a5c00' }}>
+                    Stat holiday{statDays.length > 1 ? 's' : ''} this week (+{statMultiplier}× on top of regular/OT rate):
+                    {' '}{statDays.map(d => `${d.day.toLocaleDateString('en-GB', { weekday: 'short' })} ${fmtDate(d.day)} — ${d.day.toLocaleDateString('en-GB', { month: 'long', day: 'numeric' })}`).join(', ')}
+                  </div>
+                )}
+
+                {/* Day-by-day table */}
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Day</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Date</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Hours</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Job(s) &amp; Work Done</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Day</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Date</th>
+                      <th style={thStyle}>Total</th>
+                      <th style={thStyle}>Reg</th>
+                      <th style={{ ...thStyle, color: '#c0392b' }}>OT</th>
+                      <th style={{ ...thStyle, color: '#7a5c00' }}>Stat</th>
+                      <th style={{ ...thStyle, color: '#8B4513' }}>PD</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Job(s) &amp; Work Done</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {days.map(day => {
-                      const ymd = toYMD(day)
-                      const dayEntries = byDate[ymd] || []
-                      const dayHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
-                      const isToday = ymd === toYMD(new Date())
-                      const isWeekend = day.getDay() === 0 || day.getDay() === 6
-                      return (
-                        <tr key={ymd} style={{ borderBottom: '1px solid #eee', background: isToday ? '#fffbe6' : isWeekend ? '#fafafa' : '#fff' }}>
-                          <td style={{ padding: '0.75rem', color: isWeekend ? '#bbb' : '#333', fontWeight: isToday ? 700 : 400 }}>{day.toLocaleDateString('en-GB', { weekday: 'long' })}</td>
-                          <td style={{ padding: '0.75rem', color: '#888', fontSize: '0.9rem' }}>{fmtDate(day)}</td>
-                          <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? dayHours.toFixed(1) : '—'}</td>
-                          <td style={{ padding: '0.75rem' }}>
-                            {dayEntries.length === 0
-                              ? <span style={{ color: '#ddd', fontSize: '0.9rem' }}>No entries</span>
-                              : dayEntries.map(e => (
+                    {dayBreakdowns.map(({ ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }) => (
+                      <tr key={ymd} style={{ borderBottom: '1px solid #eee', background: isStat && dayHours > 0 ? '#fff8e1' : isToday ? '#f0fff4' : isWeekend ? '#fafafa' : '#fff' }}>
+                        <td style={{ padding: '0.65rem 0.75rem', color: isWeekend ? '#bbb' : '#333', fontWeight: isToday ? 700 : 400 }}>
+                          {day.toLocaleDateString('en-GB', { weekday: 'long' })}
+                          {isStat && <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', background: '#ffe082', color: '#7a5c00', borderRadius: '4px', padding: '0.1rem 0.35rem', fontWeight: 600 }}>STAT</span>}
+                        </td>
+                        <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.9rem' }}>{fmtDate(day)}</td>
+                        <td style={{ ...tdC, fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? dayHours.toFixed(1) : '—'}</td>
+                        <td style={{ ...tdC, color: regularHours > 0 ? '#2d6a38' : '#ddd' }}>{regularHours > 0 ? regularHours.toFixed(1) : '—'}</td>
+                        <td style={{ ...tdC, color: otHours > 0 ? '#c0392b' : '#ddd', fontWeight: otHours > 0 ? 600 : 400 }}>{otHours > 0 ? otHours.toFixed(1) : '—'}</td>
+                        <td style={{ ...tdC, color: isStat && dayHours > 0 ? '#7a5c00' : '#ddd' }}>{isStat && dayHours > 0 ? `+${statMultiplier}×` : '—'}</td>
+                        <td style={{ ...tdC, color: dayPerDiem > 0 ? '#8B4513' : '#ddd' }}>{dayPerDiem > 0 ? `×${dayPerDiem}` : '—'}</td>
+                        <td style={{ padding: '0.65rem 0.75rem' }}>
+                          {dayEntries.length === 0
+                            ? <span style={{ color: '#ddd', fontSize: '0.9rem' }}>No entries</span>
+                            : dayEntries.map(e => {
+                              const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
+                              return (
                                 <div key={e.id} style={{ marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
                                   <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
                                   <span style={{ color: '#aaa', margin: '0 0.4rem', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
+                                  <span style={{ color: '#2d6a38', fontSize: '0.85rem', marginRight: '0.3rem' }}>{reg.toFixed(1)}reg</span>
+                                  {ot > 0 && <span style={{ color: '#c0392b', fontWeight: 600, fontSize: '0.85rem', marginRight: '0.3rem' }}>{ot.toFixed(1)}OT</span>}
                                   {e.description && <span style={{ color: '#555', fontSize: '0.9rem' }}>— {e.description}</span>}
                                 </div>
-                              ))
-                            }
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
-                      <td colSpan={2} style={{ padding: '0.75rem', fontWeight: 700 }}>Total</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 700, fontSize: '1.1rem' }}>{totalHoursWeek.toFixed(1)}</td>
-                      <td style={{ padding: '0.75rem', color: '#888', fontSize: '0.9rem' }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'} across {Object.keys(byDate).length} day{Object.keys(byDate).length !== 1 ? 's' : ''}</td>
+                              )
+                            })
+                          }
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd', fontWeight: 700 }}>
+                      <td colSpan={2} style={{ padding: '0.65rem 0.75rem' }}>Total</td>
+                      <td style={{ ...tdC, fontWeight: 700 }}>{totalHours.toFixed(1)}</td>
+                      <td style={{ ...tdC, color: '#2d6a38' }}>{totalRegular.toFixed(1)}</td>
+                      <td style={{ ...tdC, color: totalOT > 0 ? '#c0392b' : '#aaa' }}>{totalOT.toFixed(1)}</td>
+                      <td style={{ ...tdC, color: statDays.length > 0 ? '#7a5c00' : '#aaa' }}>{statDays.length > 0 ? statDays.length + ' day' + (statDays.length > 1 ? 's' : '') : '—'}</td>
+                      <td style={{ ...tdC, color: totalPerDiem > 0 ? '#8B4513' : '#aaa' }}>{totalPerDiem > 0 ? `×${totalPerDiem}` : '—'}</td>
+                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.85rem' }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}</td>
                     </tr>
                   </tbody>
                 </table>

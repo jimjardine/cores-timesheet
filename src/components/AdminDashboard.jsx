@@ -17,7 +17,9 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
   const [datePreset, setDatePreset] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [selectedEmp, setSelectedEmp] = useState(null) // employee object when drilled in
+  const [selectedEmp, setSelectedEmp] = useState(null)
+  const [selectedDate, setSelectedDate] = useState(null)
+  const [payrollConfig, setPayrollConfig] = useState({})
 
   // ── Email Parser tab ──
   const [inputText, setInputText] = useState('')
@@ -30,6 +32,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
   useEffect(() => {
     loadTimesheets()
     supabase.from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
+    supabase.from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
   }, [])
 
   useEffect(() => {
@@ -142,7 +145,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
       <h1>Admin Dashboard</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setFilterEmployee('') }}>Timesheets</button>
+        <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}>Timesheets</button>
         <button style={tabStyle('email')} onClick={() => setActiveTab('email')}>Email Parser</button>
       </div>
 
@@ -153,14 +156,9 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
               <select value={filterEmployee} onChange={e => {
-                const name = e.target.value
-                setFilterEmployee(name)
-                if (!name) {
-                  setSelectedEmp(null)
-                } else {
-                  const emp = employees.find(em => em.name === name)
-                  if (emp) setSelectedEmp(emp)
-                }
+                setFilterEmployee(e.target.value)
+                setSelectedEmp(null)
+                setSelectedDate(null)
               }} style={{ padding: '0.45rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.95rem', minWidth: '200px' }}>
                 <option value="">All employees</option>
                 {employees.map(emp => <option key={emp.id} value={emp.name}>{emp.name}</option>)}
@@ -191,54 +189,90 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
           {loadingEntries ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa' }}>Loading...</div>
           ) : selectedEmp ? (() => {
-            /* ── Employee detail view — all their entries for the current date range ── */
-            const empEntries = filteredEntries  // already filtered to this employee via filterEmployee
-            const byDate = Object.values(
-              empEntries.reduce((acc, e) => {
-                if (!acc[e.work_date]) acc[e.work_date] = { date: e.work_date, entries: [], hours: 0, jobIds: new Set() }
-                acc[e.work_date].entries.push(e)
-                acc[e.work_date].hours += Number(e.hours)
-                acc[e.work_date].jobIds.add(e.job_id)
-                return acc
-              }, {})
-            ).sort((a, b) => b.date.localeCompare(a.date))
+            const empEntries = filteredEntries.filter(e => !selectedDate || e.work_date === selectedDate)
             const empTotal = empEntries.reduce((s, e) => s + Number(e.hours), 0)
 
             return (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-                  <button onClick={() => { setSelectedEmp(null); setFilterEmployee('') }}
+                  <button onClick={() => { setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}
                     style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
                     ← All employees
                   </button>
                   <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedEmp.name}</span>
-                  <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{byDate.length} day{byDate.length !== 1 ? 's' : ''} · {empTotal.toFixed(1)} hrs</span>
+                  <span style={{ color: '#555', fontSize: '0.95rem' }}>{selectedDate ? fmtDate(selectedDate) : 'All dates'}</span>
+                  <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{empTotal.toFixed(1)} hrs</span>
                   <button onClick={handleExport} style={{ marginLeft: 'auto', padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Export CSV</button>
                 </div>
 
-                {byDate.length === 0 ? (
+                {empEntries.length === 0 ? (
                   <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa', border: '1px solid #eee', borderRadius: '6px' }}>No entries for this period.</div>
-                ) : byDate.map(day => (
-                  <div key={day.date} style={{ marginBottom: '1.25rem', border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.9rem', background: '#f5f5f5', borderBottom: '1px solid #e0e0e0' }}>
-                      <span style={{ fontWeight: 600, color: '#333' }}>{fmtDate(day.date)}</span>
-                      <span style={{ fontWeight: 700, color: '#1a1a2e' }}>{day.hours.toFixed(1)} hrs · {day.jobIds.size} job{day.jobIds.size !== 1 ? 's' : ''}</span>
-                    </div>
+                ) : (() => {
+                  const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
+                  const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
+
+                  // Entry-level OT attribution — walk entries in date+sort_order, assign reg/OT per entry
+                  const byPayWeek = empEntries.reduce((acc, e) => {
+                    const weekStart = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
+                    if (!acc[weekStart]) acc[weekStart] = []
+                    acc[weekStart].push(e)
+                    return acc
+                  }, {})
+                  const entryOtMap = {} // id → { reg, ot }
+                  Object.values(byPayWeek).forEach(weekEnts => {
+                    const inOrder = [...weekEnts].sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
+                    let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
+                    inOrder.forEach(e => {
+                      if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
+                      const hrs = Number(e.hours)
+                      const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
+                      const dailyReg           = Math.min(hrs, dailyRegRemaining)
+                      const dailyOT            = hrs - dailyReg
+                      const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
+                      const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
+                      const weeklyOT           = dailyReg - actualReg
+                      entryOtMap[e.id]         = { reg: actualReg, ot: dailyOT + weeklyOT }
+                      dayHoursSoFar           += hrs
+                      weeklyRegSoFar          += actualReg
+                    })
+                  })
+
+                  // Display: date desc, sort_order asc within each date
+                  const sorted = [...empEntries].sort((a, b) =>
+                    b.work_date.localeCompare(a.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
+                  )
+                  return (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                          {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left']].map(([h, align]) => (
+                            <th key={h} style={{ padding: '0.75rem', textAlign: align, fontWeight: 600, color: h === 'OT' ? '#c0392b' : h === 'PD' ? '#8B4513' : '#555' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
                       <tbody>
-                        {day.entries.map(e => (
-                          <tr key={e.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '0.55rem 0.9rem', ...linkStyle, width: '90px' }}>{e.jobs?.job_number ?? '—'}</td>
-                            <td style={{ padding: '0.55rem 0.9rem', color: '#666', width: '160px' }}>{e.jobs?.customers?.name ?? '—'}</td>
-                            <td style={{ padding: '0.55rem 0.9rem', color: '#888', width: '120px' }}>{e.jobs?.vessels?.name ?? '—'}</td>
-                            <td style={{ padding: '0.55rem 0.9rem', fontWeight: 600, width: '60px' }}>{e.hours}h</td>
-                            <td style={{ padding: '0.55rem 0.9rem', color: '#555' }}>{e.description ?? '—'}</td>
-                          </tr>
-                        ))}
+                        {sorted.map(e => {
+                          const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
+                          const perDiem = Number(e.per_diem || 0)
+                          return (
+                            <tr key={e.id} style={{ borderBottom: '1px solid #eee' }}
+                              onMouseEnter={ev => hoverRow(ev, true)}
+                              onMouseLeave={ev => hoverRow(ev, false)}>
+                              <td style={{ padding: '0.75rem', color: '#555', whiteSpace: 'nowrap' }}>{fmtDate(e.work_date)}</td>
+                              <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', color: '#666' }}>{e.jobs?.customers?.name ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', color: '#888' }}>{e.jobs?.vessels?.name ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38', fontWeight: 600 }}>{reg.toFixed(1)}</td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ddd', fontWeight: ot > 0 ? 600 : 400 }}>{ot > 0 ? ot.toFixed(1) : '—'}</td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center', color: perDiem > 0 ? '#8B4513' : '#ddd' }}>{perDiem > 0 ? `×${perDiem}` : '—'}</td>
+                              <td style={{ padding: '0.75rem', color: '#555' }}>{e.description ?? '—'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
-                  </div>
-                ))}
+                  )
+                })()}
               </div>
             )
           })() : (
@@ -270,6 +304,7 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
                         onClick={() => {
                           setFilterEmployee(row.employee?.name || '')
                           setSelectedEmp(row.employee)
+                          setSelectedDate(row.date)
                         }}
                         onMouseEnter={e => hoverRow(e, true)}
                         onMouseLeave={e => hoverRow(e, false)}>
