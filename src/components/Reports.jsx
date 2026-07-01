@@ -1,0 +1,717 @@
+import React, { useState, useEffect } from 'react'
+import { supabase } from '../supabaseClient'
+
+const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
+const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
+const clickRow = { cursor: 'pointer' }
+const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
+const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }
+
+function getPayWeekStart(date) {
+  const d = new Date(date)
+  const diff = (d.getDay() - 4 + 7) % 7
+  d.setDate(d.getDate() - diff)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+function getPayWeekDays(s) {
+  return Array.from({ length: 7 }, (_, i) => { const d = new Date(s); d.setDate(d.getDate() + i); return d })
+}
+function recentPayWeeks(n = 8) {
+  const weeks = []; let s = getPayWeekStart(new Date())
+  for (let i = 0; i < n; i++) { weeks.push(new Date(s)); s.setDate(s.getDate() - 7) }
+  return weeks
+}
+function fmtDate(d) { return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) }
+function toYMD(d) { return d.toISOString().split('T')[0] }
+
+export default function Reports() {
+  const [loading, setLoading] = useState(true)
+  const [jobs, setJobs] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [employees, setEmployees] = useState([])
+  const [entries, setEntries] = useState([])
+
+  // Navigation
+  const [activeTab, setActiveTab] = useState('jobs')
+  const [selectedJob, setSelectedJob] = useState(null)
+  const [selectedEmployee, setSelectedEmployee] = useState(null)
+  const [navHistory, setNavHistory] = useState([])
+
+  // Global job status filter
+  const [jobStatus, setJobStatus] = useState('open')
+
+  // Jobs tab customer filter
+  const [customerFilter, setCustomerFilter] = useState('all')
+
+  // Payroll tab
+  const payWeeks = recentPayWeeks(8)
+  const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
+  const [payEmployee, setPayEmployee] = useState('')
+
+  // Date range filter
+  const [datePreset, setDatePreset] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  function applyPreset(preset) {
+    setDatePreset(preset)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const todayStr = toYMD(today)
+    if (preset === 'all') { setDateFrom(''); setDateTo(''); return }
+    if (preset === 'this-week') {
+      const s = getPayWeekStart(today)
+      const e = new Date(s); e.setDate(e.getDate() + 6)
+      setDateFrom(toYMD(s)); setDateTo(toYMD(e) > todayStr ? todayStr : toYMD(e)); return
+    }
+    if (preset === 'last-week') {
+      const s = getPayWeekStart(today); s.setDate(s.getDate() - 7)
+      const e = new Date(s); e.setDate(e.getDate() + 6)
+      setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return
+    }
+    if (preset === 'this-month') {
+      const s = new Date(today.getFullYear(), today.getMonth(), 1)
+      setDateFrom(toYMD(s)); setDateTo(todayStr); return
+    }
+    if (preset === 'last-30') {
+      const s = new Date(today); s.setDate(s.getDate() - 30)
+      setDateFrom(toYMD(s)); setDateTo(todayStr); return
+    }
+  }
+
+  useEffect(() => { loadAll() }, [])
+
+  async function loadAll() {
+    setLoading(true)
+    const [jobsRes, custRes, empRes, entriesRes] = await Promise.all([
+      supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
+      supabase.from('customers').select('*').order('name'),
+      supabase.from('employees').select('*').order('name'),
+      supabase.from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
+    ])
+    setJobs(jobsRes.data || [])
+    setCustomers(custRes.data || [])
+    setEmployees(empRes.data || [])
+    setEntries(entriesRes.data || [])
+    setLoading(false)
+  }
+
+  // ── Filtering ──
+  const filteredJobs = jobs.filter(j => jobStatus === 'all' || j.status === jobStatus)
+  const filteredEntries = entries.filter(e => {
+    if (jobStatus !== 'all' && e.jobs?.status !== jobStatus) return false
+    if (dateFrom && e.work_date < dateFrom) return false
+    if (dateTo   && e.work_date > dateTo)   return false
+    return true
+  })
+  const dateLabel = datePreset === 'all' ? 'All time'
+    : datePreset === 'this-week' ? 'This pay week'
+    : datePreset === 'last-week' ? 'Last pay week'
+    : datePreset === 'this-month' ? 'This month'
+    : datePreset === 'last-30' ? 'Last 30 days'
+    : dateFrom && dateTo ? `${dateFrom} – ${dateTo}` : dateFrom ? `From ${dateFrom}` : dateTo ? `To ${dateTo}` : 'Custom'
+
+  // ── Derived maps ──
+  const hoursPerJob = filteredEntries.reduce((acc, e) => { acc[e.job_id] = (acc[e.job_id] || 0) + Number(e.hours); return acc }, {})
+  const crewPerJob  = filteredEntries.reduce((acc, e) => { if (!acc[e.job_id]) acc[e.job_id] = new Set(); acc[e.job_id].add(e.employees?.name); return acc }, {})
+  const hoursPerEmp = filteredEntries.reduce((acc, e) => { const id = e.employee_id; acc[id] = (acc[id] || 0) + Number(e.hours); return acc }, {})
+  const totalHours  = filteredEntries.reduce((s, e) => s + Number(e.hours), 0)
+  const openJobs    = jobs.filter(j => j.status === 'open').length
+  const shownJobs   = filteredJobs.length
+
+  // ── Navigation helpers ──
+  function goToJob(job) {
+    setNavHistory(h => [...h, { selectedJob, selectedEmployee, activeTab }])
+    setSelectedJob(job)
+    setSelectedEmployee(null)
+  }
+  function goToEmployee(emp) {
+    setNavHistory(h => [...h, { selectedJob, selectedEmployee, activeTab }])
+    setSelectedJob(null)
+    setSelectedEmployee(emp)
+  }
+  function goBack() {
+    if (!navHistory.length) return
+    const prev = navHistory[navHistory.length - 1]
+    setNavHistory(h => h.slice(0, -1))
+    setSelectedJob(prev.selectedJob)
+    setSelectedEmployee(prev.selectedEmployee)
+    setActiveTab(prev.activeTab)
+  }
+  function switchTab(tab, opts = {}) {
+    setNavHistory([])
+    setSelectedJob(null)
+    setSelectedEmployee(null)
+    setActiveTab(tab)
+    if (opts.status !== undefined) setJobStatus(opts.status)
+    if (opts.customer !== undefined) setCustomerFilter(opts.customer)
+  }
+
+  function backLabel() {
+    if (!navHistory.length) return '← Back'
+    const prev = navHistory[navHistory.length - 1]
+    if (prev.selectedJob) return `← ${prev.selectedJob.job_number}`
+    if (prev.selectedEmployee) return `← ${prev.selectedEmployee.name}`
+    const labels = { jobs: '← Jobs Overview', customer: '← By Customer', employee: '← All Employees', payroll: '← Payroll' }
+    return labels[prev.activeTab] || '← Back'
+  }
+
+  function downloadCSV(rows, filename) {
+    const link = document.createElement('a')
+    link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'))
+    link.download = filename
+    link.click()
+  }
+
+  const dateFileSuffix = dateFrom && dateTo ? `${dateFrom}-to-${dateTo}`
+    : dateFrom ? `from-${dateFrom}` : dateTo ? `to-${dateTo}` : 'all-time'
+
+  const csvDateFrom = dateFrom || ''
+  const csvDateTo   = dateTo   || ''
+
+  function exportEntries(entriesToExport, title, filename) {
+    const rows = ['Employee,Date,Job #,Customer,Vessel,Hours,Description,Date From,Date To']
+    entriesToExport.forEach(e => {
+      rows.push([
+        e.employees?.name,
+        e.work_date,
+        e.jobs?.job_number,
+        e.jobs?.customers?.name,
+        e.jobs?.vessels?.name,
+        e.hours,
+        `"${(e.description || '').replace(/"/g, '""')}"`,
+        csvDateFrom,
+        csvDateTo,
+      ].join(','))
+    })
+    downloadCSV(rows, filename)
+  }
+
+  const exportBtn = (entriesToExport, title, filename) => (
+    <button onClick={() => exportEntries(entriesToExport, title, filename)}
+      style={{ marginLeft: 'auto', padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
+      Export CSV
+    </button>
+  )
+
+  function exportCurrentTab() {
+    if (activeTab === 'jobs') {
+      const rows = ['Job #,Customer,Vessel,Description,Status,Hours,Crew,Date From,Date To']
+      filteredJobs
+        .filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+        .forEach(j => rows.push([
+          j.job_number, j.customers?.name, j.vessels?.name,
+          `"${(j.description || '').replace(/"/g, '""')}"`,
+          j.status, (hoursPerJob[j.id] || 0).toFixed(1),
+          `"${crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : ''}"`,
+          csvDateFrom, csvDateTo,
+        ].join(',')))
+      downloadCSV(rows, `jobs-${dateFileSuffix}.csv`)
+    } else if (activeTab === 'customer') {
+      const rows = ['Customer,Job #,Vessel,Description,Status,Hours,Date From,Date To']
+      customers.forEach(c =>
+        filteredJobs.filter(j => j.customer_id === c.id).forEach(j =>
+          rows.push([c.name, j.job_number, j.vessels?.name,
+            `"${(j.description || '').replace(/"/g, '""')}"`,
+            j.status, (hoursPerJob[j.id] || 0).toFixed(1),
+            csvDateFrom, csvDateTo,
+          ].join(','))
+        )
+      )
+      downloadCSV(rows, `by-customer-${dateFileSuffix}.csv`)
+    } else if (activeTab === 'employee') {
+      const rows = ['Employee,Jobs Worked,Total Hours,Customers,Date From,Date To']
+      employees.forEach(emp => {
+        const ee = filteredEntries.filter(e => e.employee_id === emp.id)
+        const empJobs = new Set(ee.map(e => e.job_id))
+        const empCusts = new Set(ee.map(e => e.jobs?.customers?.name).filter(Boolean))
+        const hrs = ee.reduce((s, e) => s + Number(e.hours), 0)
+        rows.push([emp.name, empJobs.size, hrs.toFixed(1), `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
+      })
+      downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
+    } else if (activeTab === 'payroll') {
+      const emp = employees.find(e => e.id === payEmployee)
+      const weekEnd = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
+      const days = getPayWeekDays(payWeekStart)
+      const weekDates = new Set(days.map(toYMD))
+      const weekEntries = entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date))
+      const rows = ['Employee,Day,Date,Job #,Customer,Hours,Description,Week From,Week To']
+      weekEntries.sort((a, b) => a.work_date.localeCompare(b.work_date)).forEach(e =>
+        rows.push([
+          emp?.name,
+          new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
+          e.work_date, e.jobs?.job_number, e.jobs?.customers?.name, e.hours,
+          `"${(e.description || '').replace(/"/g, '""')}"`,
+          toYMD(payWeekStart), toYMD(weekEnd),
+        ].join(','))
+      )
+      downloadCSV(rows, `payroll-${emp?.name?.replace(/\s+/g, '-') || 'unknown'}-${toYMD(payWeekStart)}.csv`)
+    }
+  }
+
+  const tabExportBtn = (
+    <button onClick={exportCurrentTab}
+      style={{ padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
+      Export CSV
+    </button>
+  )
+
+  const backBtn = (
+    <button onClick={goBack} style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
+      {backLabel()}
+    </button>
+  )
+
+  const tabBtn = (key, label) => (
+    <button key={key} onClick={() => switchTab(key)} style={{
+      padding: '0.5rem 1.2rem', border: 'none', cursor: 'pointer', fontSize: '0.95rem',
+      borderBottom: activeTab === key && !selectedJob && !selectedEmployee ? '3px solid #0066cc' : '3px solid transparent',
+      background: 'none', fontWeight: activeTab === key && !selectedJob && !selectedEmployee ? 700 : 400,
+      color: activeTab === key && !selectedJob && !selectedEmployee ? '#0066cc' : '#555',
+    }}>{label}</button>
+  )
+
+  if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: '#888' }}>Loading reports...</div>
+
+  // ── Job Detail ──
+  if (selectedJob) {
+    const job = selectedJob
+    const jobEntries = filteredEntries.filter(e => e.job_id === job.id)
+    const totalJobHours = jobEntries.reduce((s, e) => s + Number(e.hours), 0)
+    const crewMap = jobEntries.reduce((acc, e) => {
+      const emp = e.employees
+      if (!emp) return acc
+      if (!acc[emp.id]) acc[emp.id] = { emp, hours: 0 }
+      acc[emp.id].hours += Number(e.hours)
+      return acc
+    }, {})
+
+    return (
+      <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          {backBtn}
+          <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>{job.job_number}</span>
+          <span style={{ color: '#aaa' }}>·</span>
+          <span>{job.customers?.name}</span>
+          <span style={{ color: '#aaa' }}>·</span>
+          <span style={{ color: '#555' }}>{job.vessels?.name}</span>
+          <span style={badge(job.status)}>{job.status}</span>
+          {exportBtn(jobEntries, `Job ${job.job_number} – ${job.customers?.name}`, `${job.job_number}-${dateFileSuffix}.csv`)}
+        </div>
+        <p style={{ color: '#666', marginBottom: '1.5rem' }}>{job.description}</p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+          {[
+            { label: 'Total Hours', value: totalJobHours.toFixed(1) },
+            { label: 'Crew Members', value: Object.keys(crewMap).length },
+            { label: 'Days Worked', value: new Set(jobEntries.map(e => e.work_date)).size },
+          ].map(({ label, value }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '1.75rem', fontWeight: 700 }}>{value}</div>
+              <div style={{ color: '#888', fontSize: '0.9rem' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Crew</h4>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Hours</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>% of Job</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.values(crewMap).sort((a, b) => b.hours - a.hours).map(({ emp, hours }) => (
+              <tr key={emp.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToEmployee(emp)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                <td style={{ padding: '0.6rem 0.75rem', ...linkStyle }}>{emp.name}</td>
+                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{hours.toFixed(1)}</td>
+                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', color: '#888' }}>{totalJobHours > 0 ? Math.round((hours / totalJobHours) * 100) : 0}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Work Log</h4>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Date</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Hours</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobEntries.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(e => (
+              <tr key={e.id} style={{ borderBottom: '1px solid #eee' }}>
+                <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+                  {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                </td>
+                <td style={{ padding: '0.6rem 0.75rem', ...linkStyle }} onClick={() => goToEmployee(e.employees)}>{e.employees?.name}</td>
+                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{e.hours}</td>
+                <td style={{ padding: '0.6rem 0.75rem', color: '#555' }}>{e.description}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  // ── Employee Detail ──
+  if (selectedEmployee) {
+    const emp = selectedEmployee
+    const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
+    const byJob = empEntries.reduce((acc, e) => {
+      const jid = e.job_id
+      if (!acc[jid]) acc[jid] = { job: e.jobs, hours: 0, entries: [] }
+      acc[jid].hours += Number(e.hours)
+      acc[jid].entries.push(e)
+      return acc
+    }, {})
+    const empTotalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
+    const empCustomers = new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean))
+
+    return (
+      <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          {backBtn}
+          <h3 style={{ margin: 0 }}>{emp.name}</h3>
+          {exportBtn(empEntries, `${emp.name} – Timesheets`, `${emp.name.replace(/\s+/g, '-')}-${dateFileSuffix}.csv`)}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+          {[
+            { label: 'Total Hours', value: empTotalHours.toFixed(1) },
+            { label: 'Jobs Worked', value: Object.keys(byJob).length },
+            { label: 'Customers', value: empCustomers.size },
+          ].map(({ label, value }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '1.75rem', fontWeight: 700 }}>{value}</div>
+              <div style={{ color: '#888', fontSize: '0.9rem' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {Object.values(byJob).map(({ job, hours, entries: jobEntries }) => {
+          const fullJob = jobs.find(j => j.id === job?.id) || job
+          return (
+            <div key={job?.job_number} style={{ ...card, marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={linkStyle} onClick={() => goToJob(fullJob)}>{job?.job_number}</span>
+                  <span style={{ color: '#aaa' }}>·</span>
+                  <span style={{ color: '#555' }}>{job?.customers?.name}</span>
+                  <span style={{ color: '#aaa' }}>·</span>
+                  <span style={{ color: '#888' }}>{job?.vessels?.name}</span>
+                  <span style={badge(job?.status)}>{job?.status}</span>
+                </div>
+                <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{hours.toFixed(1)} hrs</span>
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#777', marginBottom: '0.75rem' }}>{job?.description}</div>
+              <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: '0.75rem' }}>
+                {jobEntries.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(e => (
+                  <div key={e.id} style={{ display: 'flex', gap: '1rem', padding: '0.25rem 0', fontSize: '0.9rem' }}>
+                    <span style={{ color: '#aaa', minWidth: '80px' }}>{new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+                    <span style={{ color: '#333', minWidth: '36px' }}>{e.hours}h</span>
+                    <span style={{ color: '#555' }}>{e.description}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // ── Normal tab views ──
+  return (
+    <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Reports</h1>
+          <p style={{ color: '#888', margin: '0.25rem 0 0' }}>Cores Worldwide — as of {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Status filter */}
+          {[['open','Open'], ['closed','Closed'], ['all','All jobs']].map(([key, label]) => (
+            <button key={key} onClick={() => setJobStatus(key)} style={{
+              padding: '0.35rem 0.85rem', fontSize: '0.85rem', border: '1px solid',
+              borderColor: jobStatus === key ? '#444' : '#ddd',
+              borderRadius: '20px', cursor: 'pointer',
+              background: jobStatus === key ? '#1a1a2e' : '#fff',
+              color: jobStatus === key ? '#fff' : '#555',
+              fontWeight: jobStatus === key ? 600 : 400,
+            }}>{label}</button>
+          ))}
+          <div style={{ width: '1px', height: '20px', background: '#ddd', margin: '0 0.25rem' }} />
+          {/* Date filter */}
+          {[
+            ['all',       'All time'],
+            ['this-week', 'This pay week'],
+            ['last-week', 'Last pay week'],
+            ['this-month','This month'],
+            ['last-30',   'Last 30 days'],
+            ['custom',    'Custom'],
+          ].map(([key, label]) => (
+            <button key={key} onClick={() => applyPreset(key)} style={{
+              padding: '0.35rem 0.85rem', fontSize: '0.85rem', border: '1px solid',
+              borderColor: datePreset === key ? '#0066cc' : '#ddd',
+              borderRadius: '20px', cursor: 'pointer',
+              background: datePreset === key ? '#e6f0ff' : '#fff',
+              color: datePreset === key ? '#0066cc' : '#555',
+              fontWeight: datePreset === key ? 600 : 400,
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {datePreset === 'custom' && (
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1.25rem', padding: '0.75rem 1rem', background: '#f8faff', border: '1px solid #d0e0f8', borderRadius: '6px', flexWrap: 'wrap' }}>
+          <label style={{ color: '#555', fontWeight: 600, fontSize: '0.9rem' }}>Custom range:</label>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: '0.35rem 0.6rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }} />
+            <span style={{ color: '#aaa' }}>→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: '0.35rem 0.6rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }} />
+          </div>
+          {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo('') }} style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#888', fontSize: '0.85rem' }}>Clear</button>}
+        </div>
+      )}
+      {datePreset !== 'all' && (
+        <div style={{ marginBottom: '1.25rem', fontSize: '0.85rem', color: '#0066cc' }}>
+          Showing: <strong>{dateLabel}</strong>{dateFrom && dateTo && datePreset !== 'custom' ? ` (${dateFrom} – ${dateTo})` : ''}
+          {' '}<span onClick={() => applyPreset('all')} style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}>clear</span>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
+        {[
+          { label: jobStatus === 'closed' ? 'Closed Jobs' : jobStatus === 'all' ? 'Total Jobs' : 'Open Jobs',
+            value: shownJobs, color: '#2d6a38', onClick: () => switchTab('jobs') },
+          { label: 'Total Customers',    value: customers.length,                       color: '#0066cc', onClick: () => switchTab('customer') },
+          { label: 'Active Employees',   value: employees.filter(e => e.active).length, color: '#444',   onClick: () => switchTab('employee') },
+          { label: 'Total Hours Logged', value: totalHours.toFixed(1),                  color: '#8B4513', onClick: () => switchTab('jobs') },
+        ].map(({ label, value, color, onClick }) => (
+          <div key={label} onClick={onClick} style={{ ...card, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
+            onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.12)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
+            onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)';  e.currentTarget.style.transform = 'translateY(0)' }}>
+            <div style={{ fontSize: '2rem', fontWeight: 700, color }}>{value}</div>
+            <div style={{ color: '#888', fontSize: '0.9rem', marginTop: '0.25rem' }}>{label}</div>
+            <div style={{ color: '#ccc', fontSize: '0.75rem', marginTop: '0.4rem' }}>click to view →</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
+        {['jobs', 'customer', 'employee', 'payroll'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', employee: 'By Employee', payroll: 'Payroll' }[t]))}
+        <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
+          {tabExportBtn}
+        </div>
+      </div>
+
+      {/* ── Jobs Overview ── */}
+      {activeTab === 'jobs' && (
+        <div>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Customer:</label>
+              <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <option value="all">All customers</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
+                  <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredJobs.filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+                .map(j => (
+                  <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                    <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
+                    <td style={{ padding: '0.75rem' }}>{j.customers?.name}</td>
+                    <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
+                    <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                    <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── By Customer ── */}
+      {activeTab === 'customer' && (
+        <div>
+          {customers.map(c => {
+            const custJobs = filteredJobs.filter(j => j.customer_id === c.id)
+            const custHours = custJobs.reduce((s, j) => s + (hoursPerJob[j.id] || 0), 0)
+            const custCrew = new Set(filteredEntries.filter(e => custJobs.find(j => j.id === e.job_id)).map(e => e.employees?.name))
+            return (
+              <div key={c.id} style={{ ...card, marginBottom: '1.5rem' }}>
+                <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
+                <div style={{ color: '#888', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                  {custJobs.filter(j => j.status === 'open').length} open · {custHours.toFixed(1)} hrs · {custCrew.size} crew
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #eee' }}>
+                      {['JOB #', 'VESSEL', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
+                        <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'STATUS' || h === 'HOURS' ? 'center' : 'left', color: '#888', fontWeight: 600, fontSize: '0.8rem' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {custJobs.map(j => (
+                      <tr key={j.id} style={{ borderBottom: '1px solid #f5f5f5', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                        <td style={{ padding: '0.5rem 0.75rem', ...linkStyle }}>{j.job_number}</td>
+                        <td style={{ padding: '0.5rem 0.75rem' }}>{j.vessels?.name}</td>
+                        <td style={{ padding: '0.5rem 0.75rem', color: '#555' }}>{j.description}</td>
+                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
+                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── By Employee ── */}
+      {activeTab === 'employee' && (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              {['Employee', 'Jobs Worked', 'Total Hours', 'Customers'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Jobs Worked' || h === 'Total Hours' ? 'center' : 'left' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map(emp => {
+              const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
+              const empJobs = new Set(empEntries.map(e => e.job_id))
+              const empCustomers = new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean))
+              const empHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
+              return (
+                <tr key={emp.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToEmployee(emp)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                  <td style={{ padding: '0.75rem', ...linkStyle }}>{emp.name}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}>{empJobs.size}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{empHours.toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{[...empCustomers].join(', ') || '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {/* ── Payroll ── */}
+      {activeTab === 'payroll' && (() => {
+        const weekEnd = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
+        const days = getPayWeekDays(payWeekStart)
+        const weekDates = new Set(days.map(toYMD))
+        const emp = employees.find(e => e.id === payEmployee)
+        const weekEntries = payEmployee ? entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date)) : []
+        const totalHoursWeek = weekEntries.reduce((s, e) => s + Number(e.hours), 0)
+        const byDate = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
+
+        return (
+          <div>
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div>
+                <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Employee</label>
+                <select value={payEmployee} onChange={e => setPayEmployee(e.target.value)} style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
+                  <option value="">— select —</option>
+                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Pay Week</label>
+                <select value={toYMD(payWeekStart)} onChange={e => setPayWeekStart(new Date(e.target.value + 'T12:00:00'))} style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '230px' }}>
+                  {payWeeks.map(w => { const end = new Date(w); end.setDate(end.getDate() + 6); return <option key={toYMD(w)} value={toYMD(w)}>Thu {fmtDate(w)} – Wed {fmtDate(end)}</option> })}
+                </select>
+              </div>
+            </div>
+
+            {!payEmployee ? (
+              <div style={{ ...card, textAlign: 'center', padding: '3rem', color: '#aaa' }}>Select an employee to view their pay week</div>
+            ) : (
+              <>
+                <div style={{ ...card, marginBottom: '1.5rem', background: '#f8faff', borderColor: '#c8d8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{emp?.name}</div>
+                      <div style={{ color: '#666', marginTop: '0.25rem' }}>Thu {fmtDate(payWeekStart)} – Wed {fmtDate(weekEnd)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '2rem', fontWeight: 700, color: totalHoursWeek > 0 ? '#1a1a2e' : '#ccc' }}>{totalHoursWeek.toFixed(1)}</div>
+                      <div style={{ color: '#888', fontSize: '0.9rem' }}>total hours</div>
+                    </div>
+                  </div>
+                </div>
+
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Day</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Date</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Hours</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Job(s) &amp; Work Done</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map(day => {
+                      const ymd = toYMD(day)
+                      const dayEntries = byDate[ymd] || []
+                      const dayHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
+                      const isToday = ymd === toYMD(new Date())
+                      const isWeekend = day.getDay() === 0 || day.getDay() === 6
+                      return (
+                        <tr key={ymd} style={{ borderBottom: '1px solid #eee', background: isToday ? '#fffbe6' : isWeekend ? '#fafafa' : '#fff' }}>
+                          <td style={{ padding: '0.75rem', color: isWeekend ? '#bbb' : '#333', fontWeight: isToday ? 700 : 400 }}>{day.toLocaleDateString('en-GB', { weekday: 'long' })}</td>
+                          <td style={{ padding: '0.75rem', color: '#888', fontSize: '0.9rem' }}>{fmtDate(day)}</td>
+                          <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? dayHours.toFixed(1) : '—'}</td>
+                          <td style={{ padding: '0.75rem' }}>
+                            {dayEntries.length === 0
+                              ? <span style={{ color: '#ddd', fontSize: '0.9rem' }}>No entries</span>
+                              : dayEntries.map(e => (
+                                <div key={e.id} style={{ marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
+                                  <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
+                                  <span style={{ color: '#aaa', margin: '0 0.4rem', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
+                                  {e.description && <span style={{ color: '#555', fontSize: '0.9rem' }}>— {e.description}</span>}
+                                </div>
+                              ))
+                            }
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
+                      <td colSpan={2} style={{ padding: '0.75rem', fontWeight: 700 }}>Total</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 700, fontSize: '1.1rem' }}>{totalHoursWeek.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', color: '#888', fontSize: '0.9rem' }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'} across {Object.keys(byDate).length} day{Object.keys(byDate).length !== 1 ? 's' : ''}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        )
+      })()}
+    </div>
+  )
+}

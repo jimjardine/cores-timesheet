@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env.local
+.env*.local
+.DS_Store
+*.DS_Store
+RESUME_TOMORROW.md
