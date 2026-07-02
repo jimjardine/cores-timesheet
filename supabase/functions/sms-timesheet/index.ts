@@ -233,28 +233,23 @@ Deno.serve(async (req: Request) => {
   // ── Work date ──
   const workDate = parsed.work_date || today
 
-  // ── Find existing collecting submission ──
+  // ── Find existing submission for this day ──
+  // Priority: collecting (mid-conversation) → submitted (re-open and add more entries)
   let submission: any = null
-  const { data: byPhone } = await supabase
-    .from('sms_submissions')
-    .select('*')
-    .eq('from_phone', fromPhone)
-    .eq('work_date', workDate)
-    .eq('status', 'collecting')
-    .order('created_at', { ascending: false })
-    .limit(1)
-  if (byPhone?.length) submission = byPhone[0]
-
-  if (!submission && employeeId) {
-    const { data: byEmp } = await supabase
-      .from('sms_submissions')
-      .select('*')
-      .eq('employee_id', employeeId)
-      .eq('work_date', workDate)
-      .eq('status', 'collecting')
-      .order('created_at', { ascending: false })
-      .limit(1)
-    if (byEmp?.length) submission = byEmp[0]
+  for (const status of ['collecting', 'submitted']) {
+    if (submission) break
+    const { data: byPhone } = await supabase
+      .from('sms_submissions').select('*')
+      .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', status)
+      .order('created_at', { ascending: false }).limit(1)
+    if (byPhone?.length) { submission = byPhone[0]; break }
+    if (employeeId) {
+      const { data: byEmp } = await supabase
+        .from('sms_submissions').select('*')
+        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', status)
+        .order('created_at', { ascending: false }).limit(1)
+      if (byEmp?.length) submission = byEmp[0]
+    }
   }
 
   // Whether this is a follow-up reply to our question
@@ -319,9 +314,7 @@ Deno.serve(async (req: Request) => {
 
   // Fields Nicki will need to fill in (shown in review screen)
   const flags: string[] = []
-  if (!mergedTimeIn)              flags.push('start time missing')
-  if (missingLunch && isFollowUp) flags.push('lunch unknown')
-  if (missingPerDiem && isFollowUp) flags.push('per diem unknown')
+  if (!mergedTimeIn) flags.push('start time missing')
 
   // ── One-question logic ──
   // Max one exchange with the worker. On follow-up, submit regardless.
@@ -349,16 +342,34 @@ Deno.serve(async (req: Request) => {
     nextStatus = 'submitted'
     flags.push('no job entries — needs manual entry')
 
-  } else if ((missingLunch || missingPerDiem) && !isFollowUp) {
-    // Ask both missing pieces in one message
-    const entrySummary = allEntriesWithOT.map((e: any) => `${e.job_number} ${e.hours}hrs`).join(', ')
-    const qs: string[] = []
-    if (missingLunch)   qs.push('lunch? ("lunch 30" or "no lunch")')
-    if (missingPerDiem) qs.push('per diem tonight? (location or "no PD")')
-    reply = `Got it ${firstName} — ${entrySummary}\n\nQuick: ${qs.join(' | ')}`
-    pendingQuestions = qs
+  } else if (missingLunch || missingPerDiem) {
+    // Ask for missing fields. On the first ask we bundle both; on subsequent asks we only
+    // re-ask fields that were the sole pending question last time (i.e. we already gave them
+    // one full round dedicated to that field — now just submit).
+    const prevPendingQuestions: string[] = submission?.pending_questions || []
+    const pdWasAloneLastTime  = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('per diem')
+    const lunchWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('lunch')
+    const shouldAskPD    = missingPerDiem  && !pdWasAloneLastTime
+    const shouldAskLunch = missingLunch    && !lunchWasAloneLastTime
 
-  } else {
+    if (shouldAskLunch || shouldAskPD) {
+      const qs: string[] = []
+      if (shouldAskLunch) qs.push('lunch? ("lunch 30" or "no lunch")')
+      if (shouldAskPD)    qs.push('per diem tonight? (location or "no PD")')
+      const entrySummary = allEntriesWithOT.map((e: any) => `${e.job_number} ${e.hours}hrs`).join(', ')
+      reply = isFollowUp
+        ? `Quick: ${qs.join(' | ')}`
+        : `Got it ${firstName} — ${entrySummary}\n\nQuick: ${qs.join(' | ')}`
+      pendingQuestions = qs
+    } else {
+      // Already asked those questions individually — accept what we have
+      nextStatus = 'submitted'
+      if (missingLunch)   flags.push('lunch unknown')
+      if (missingPerDiem) flags.push('per diem unknown')
+    }
+  }
+
+  if (nextStatus === 'submitted' && !reply) {
     // All present, or follow-up — submit with what we have
     nextStatus = 'submitted'
     const date     = friendlyDate(workDate)
