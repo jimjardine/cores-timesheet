@@ -112,8 +112,8 @@ Rules:
 - work_date: "YYYY-MM-DD" if a date is mentioned (resolve "yesterday", day names, "June 30", etc.) — else null
 - time_in: "HH:MM" 24-hour if a start time is mentioned — else null
 - stated_time_out: "HH:MM" 24-hour only if they explicitly said when they finished/left — else null
-- lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30), 0 if explicitly no lunch ("no lunch", "worked through") — null if not mentioned at all
-- per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home") — null if not mentioned at all
+- lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
+- per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string", hours:number, description:"verbatim from message"}] — only real job work
 - is_help_request: true only if the entire message is a help request
 
@@ -254,16 +254,29 @@ Deno.serve(async (req: Request) => {
 
   // Whether this is a follow-up reply to our question
   const isFollowUp = !!(submission && (submission.pending_questions || []).length > 0)
+  // Whether we re-opened a previously submitted record (correction flow)
+  const isCorrection = !!(submission && submission.status === 'submitted' && !isFollowUp)
 
   // ── Merge fields ──
+  // Corrections override existing values; follow-ups and new entries preserve them.
   const prevEntries: any[] = submission?.entries || []
-  let allEntries: any[] = [...prevEntries, ...(parsed.entries || [])]
+  let allEntries: any[] = isCorrection && parsed.entries?.length
+    ? [...prevEntries, ...(parsed.entries || [])]
+    : [...prevEntries, ...(parsed.entries || [])]
 
-  const mergedTimeIn      = submission?.time_in        ? submission.time_in.substring(0, 5) : parsed.time_in
-  const mergedStatedOut   = submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : parsed.stated_time_out
-  const mergedLunch       = (submission?.lunch_minutes != null)    ? submission.lunch_minutes    : parsed.lunch_minutes
-  const mergedPerDiem     = (submission?.per_diem_location != null) ? submission.per_diem_location : parsed.per_diem_location
-  const mergedEmployeeId  = employeeId || submission?.employee_id || null
+  const mergedTimeIn    = (isCorrection && parsed.time_in)            ? parsed.time_in
+                        : submission?.time_in                          ? submission.time_in.substring(0, 5)
+                        : parsed.time_in
+  const mergedStatedOut = (isCorrection && parsed.stated_time_out)    ? parsed.stated_time_out
+                        : submission?.stated_time_out                  ? submission.stated_time_out.substring(0, 5)
+                        : parsed.stated_time_out
+  const mergedLunch     = (isCorrection && parsed.lunch_minutes != null) ? parsed.lunch_minutes
+                        : (submission?.lunch_minutes != null)           ? submission.lunch_minutes
+                        : parsed.lunch_minutes
+  const mergedPerDiem   = (isCorrection && parsed.per_diem_location != null) ? parsed.per_diem_location
+                        : (submission?.per_diem_location != null)       ? submission.per_diem_location
+                        : parsed.per_diem_location
+  const mergedEmployeeId = employeeId || submission?.employee_id || null
 
   // If any entry has no hours but we have start + end times, infer hours from the time bounds.
   // Common case: "worked on 4760 all day" — hours are null but times tell us how long.
