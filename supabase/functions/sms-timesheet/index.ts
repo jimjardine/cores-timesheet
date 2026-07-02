@@ -219,12 +219,13 @@ Deno.serve(async (req: Request) => {
       .select('id, name')
       .ilike('name', `%${parsed.name_override}%`)
       .eq('active', true)
+      .eq('role', 'technician')
       .limit(1)
     if (byName?.length) { employeeId = byName[0].id; employeeName = byName[0].name }
   }
 
   if (!employeeId && fromPhone) {
-    const { data: allEmps } = await supabase.from('employees').select('id, name, phone').eq('active', true)
+    const { data: allEmps } = await supabase.from('employees').select('id, name, phone').eq('active', true).eq('role', 'technician')
     const match = (allEmps || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
     if (match) { employeeId = match.id; employeeName = match.name }
   }

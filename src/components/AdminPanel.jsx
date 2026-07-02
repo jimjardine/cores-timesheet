@@ -42,7 +42,10 @@ export default function AdminPanel() {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [modal, setModal] = useState(null) // { type: 'customer'|'vessel'|'job', record: null|{...} }
+  const [employees, setEmployees] = useState([])
+  const [empStatusFilter, setEmpStatusFilter] = useState('active')
+  const [empRoleFilter, setEmpRoleFilter] = useState('technician')
+  const [modal, setModal] = useState(null) // { type: 'customer'|'vessel'|'job'|'employee', record: null|{...} }
   const [fields, setFields] = useState({})
   const [statusModal, setStatusModal] = useState(null) // { job, action: 'close'|'reopen' }
   const [statusNote, setStatusNote] = useState('')
@@ -78,19 +81,21 @@ export default function AdminPanel() {
 
   async function loadAll() {
     setLoading(true)
-    const [c, v, j, l, vc, ec] = await Promise.all([
+    const [c, v, j, l, vc, ec, em] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('vessels').select('*, customers(name)').order('name'),
       supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.from('job_status_logs').select('*').order('created_at'),
       supabase.from('vessel_contacts').select('*').order('sort_order'),
       supabase.from('timesheet_entries').select('job_id'),
+      supabase.from('employees').select('*').order('name'),
     ])
     setCustomers(c.data || [])
     setVessels(v.data || [])
     setJobs(j.data || [])
     setJobLogs(l.data || [])
     setVesselContacts(vc.data || [])
+    setEmployees(em.data || [])
     const counts = {}
     for (const { job_id } of (ec.data || [])) {
       if (job_id) counts[job_id] = (counts[job_id] || 0) + 1
@@ -112,6 +117,8 @@ export default function AdminPanel() {
       ])
     } else if (type === 'job') {
       setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open' })
+    } else if (type === 'employee') {
+      setFields({ name: record?.name || '', phone: record?.phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     }
   }
 
@@ -136,6 +143,13 @@ export default function AdminPanel() {
         await supabase.from('vessel_contacts').insert(
           valid.map((c, i) => ({ vessel_id: vesselId, role: c.role || 'Contact', name: c.name || null, phone: c.phone || null, sort_order: i }))
         )
+      }
+    } else if (type === 'employee') {
+      const empPayload = { name: payload.name.trim(), phone: payload.phone.replace(/\D/g, '').slice(-10) || null, active: payload.active === 'true', role: payload.role }
+      if (record) {
+        await supabase.from('employees').update(empPayload).eq('id', record.id)
+      } else {
+        await supabase.from('employees').insert(empPayload)
       }
     } else {
       if (type === 'job') {
@@ -252,7 +266,7 @@ export default function AdminPanel() {
       <h1 style={{ marginTop: 0 }}>Admin</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['jobs', 'Jobs']].map(([key, label]) => (
+        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['jobs', 'Jobs'], ['employees', 'Employees']].map(([key, label]) => (
           <button key={key} style={tabStyle(key)} onClick={() => setSection(key)}>{label}</button>
         ))}
       </div>
@@ -645,6 +659,65 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {/* ── Employees ── */}
+      {section === 'employees' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {['technician', 'office', 'all'].map(r => (
+                <button key={r} style={pill(empRoleFilter === r)} onClick={() => setEmpRoleFilter(r)}>
+                  {r.charAt(0).toUpperCase() + r.slice(1)}
+                </button>
+              ))}
+              <span style={{ margin: '0 0.5rem', color: '#ddd' }}>|</span>
+              {['active', 'all'].map(s => (
+                <button key={s} style={pill(empStatusFilter === s)} onClick={() => setEmpStatusFilter(s)}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+            <button style={btnPrimary} onClick={() => openModal('employee')}>+ New Employee</button>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Name</th>
+                <th style={thStyle}>Cell</th>
+                <th style={thStyle}>Role</th>
+                <th style={thStyle}>Status</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {employees
+                .filter(e => (empStatusFilter === 'all' || e.active) && (empRoleFilter === 'all' || e.role === empRoleFilter))
+                .map(e => {
+                  const phone = e.phone ? e.phone.replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') : null
+                  return (
+                    <tr key={e.id}>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{e.name}</td>
+                      <td style={{ ...tdStyle, color: phone ? '#333' : '#bbb', fontFamily: 'monospace' }}>{phone || 'No number'}</td>
+                      <td style={tdStyle}>
+                        <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: e.role === 'technician' ? '#e8eef8' : '#f5f0ff', color: e.role === 'technician' ? '#0055aa' : '#6b21a8' }}>
+                          {e.role || 'technician'}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: e.active ? '#e6f4ea' : '#f0f0f0', color: e.active ? '#2d6a38' : '#888' }}>
+                          {e.active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('employee', e)}>Edit</button>
+                      </td>
+                    </tr>
+                  )
+                })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* ── Modals ── */}
       {modal?.type === 'customer' && (
         <Modal title={modal.record ? 'Edit Customer' : 'New Customer'} onClose={() => setModal(null)}>
@@ -791,6 +864,29 @@ export default function AdminPanel() {
               </select>
             </Field>
           )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+            <button style={btnSecondary} onClick={() => setModal(null)}>Cancel</button>
+            <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal?.type === 'employee' && (
+        <Modal title={modal.record ? 'Edit Employee' : 'New Employee'} onClose={() => setModal(null)}>
+          <Field label="Name"><input style={inputStyle} {...f('name')} placeholder="First Last" /></Field>
+          <Field label="Cell Number"><input type="tel" style={inputStyle} {...f('phone')} placeholder="e.g. 902-555-1234" /></Field>
+          <Field label="Role">
+            <select style={inputStyle} {...f('role')}>
+              <option value="technician">Technician</option>
+              <option value="office">Office</option>
+            </select>
+          </Field>
+          <Field label="Status">
+            <select style={inputStyle} {...f('active')}>
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+          </Field>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
             <button style={btnSecondary} onClick={() => setModal(null)}>Cancel</button>
             <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
