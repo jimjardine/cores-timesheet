@@ -369,9 +369,9 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  if (!reply) nextStatus = 'submitted'
+
   if (nextStatus === 'submitted' && !reply) {
-    // All present, or follow-up — submit with what we have
-    nextStatus = 'submitted'
     const date     = friendlyDate(workDate)
     const inFmt    = mergedTimeIn ? friendlyTime(mergedTimeIn) : '?'
     const outFmt   = calcOut      ? friendlyTime(calcOut)      : (mergedStatedOut ? friendlyTime(mergedStatedOut) : '?')
@@ -382,10 +382,12 @@ Deno.serve(async (req: Request) => {
     const flagLine = flags.length ? `\n(Nicki will check: ${flags.join(', ')})` : ''
 
     // Per-job OT breakdown lines
-    const entryLines = allEntriesWithOT.map((e: any) => {
-      if (e.ot_hours > 0) return `${e.job_number}: ${e.reg_hours}hrs reg + ${e.ot_hours}hrs OT`
-      return `${e.job_number}: ${e.hours}hrs reg`
-    }).join('\n')
+    const entryLines = allEntriesWithOT
+      .filter((e: any) => Number(e.hours) > 0)
+      .map((e: any) => {
+        if (e.ot_hours > 0) return `${e.job_number}: ${e.reg_hours}hrs reg + ${e.ot_hours}hrs OT`
+        return `${e.job_number}: ${e.hours}hrs reg`
+      }).join('\n')
 
     const totalRegToday = totalTodayHours - (alreadyWorkedHours > dailyOTThreshold ? alreadyWorkedHours - dailyOTThreshold : 0) - totalOTHours
     const totalOTToday  = Math.max(0, totalTodayHours - dailyOTThreshold)
