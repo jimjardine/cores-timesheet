@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clock-in": "node scripts/timelog.mjs in",
-    "clock-out": "node scripts/timelog.mjs out"
+    "clock-out": "node scripts/timelog.mjs out",
+    "test:sms": "node scripts/test-sms.mjs"
   },
   "keywords": ["timesheet", "cores-worldwide"],
   "author": "Cores Worldwide",

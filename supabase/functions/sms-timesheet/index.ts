@@ -119,25 +119,29 @@ Rules:
 
 Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25).`
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      system,
-      messages: [{ role: 'user', content: msgBody }]
-    })
+  const payload = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    system,
+    messages: [{ role: 'user', content: msgBody }]
   })
+  const headers = {
+    'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!,
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json',
+  }
+
+  let res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  for (const waitMs of [4000, 10000]) {
+    if (res.status !== 429 && res.status !== 529) break
+    await new Promise(r => setTimeout(r, waitMs))
+    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  }
 
   const data = await res.json()
   const text = (data.content?.[0]?.text || '').trim()
   const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error(`No JSON in Claude response: ${text}`)
+  if (!jsonMatch) throw new Error(`No JSON in Claude response (${res.status}): ${text}`)
   return JSON.parse(jsonMatch[0])
 }
 
@@ -291,6 +295,13 @@ Deno.serve(async (req: Request) => {
                         : (submission?.per_diem_location != null)       ? submission.per_diem_location
                         : parsed.per_diem_location
   const mergedEmployeeId = employeeId || submission?.employee_id || null
+
+  // If we didn't find the employee name from the current message (e.g. follow-up with no name override),
+  // look it up from the existing submission so the confirmation says "Done Jim" not "Done ".
+  if (!employeeName && mergedEmployeeId) {
+    const { data: empRow } = await supabase.from('employees').select('name').eq('id', mergedEmployeeId).single()
+    if (empRow) employeeName = empRow.name
+  }
 
   // If any entry has no hours but we have start + end times, infer hours from the time bounds.
   // Common case: "worked on 4760 all day" — hours are null but times tell us how long.
