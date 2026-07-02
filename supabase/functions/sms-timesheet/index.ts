@@ -257,6 +257,20 @@ Deno.serve(async (req: Request) => {
   // Whether we re-opened a previously submitted record (correction flow)
   const isCorrection = !!(submission && submission.status === 'submitted' && !isFollowUp)
 
+  // For follow-ups, Claude sees a one-word reply with no context about what was asked.
+  // If the pending question was about per diem / lunch and the reply is a simple negative,
+  // override Claude's null so we don't keep re-asking.
+  if (isFollowUp) {
+    const pendQ = (submission?.pending_questions || []).join(' ').toLowerCase()
+    const isNegative = /^(no|nope|nah|none|n\/a|not tonight|going home|in the shop|at the shop|local|worked in the shop)$/i.test(msgBody.trim())
+    if (pendQ.includes('per diem') && parsed.per_diem_location == null && isNegative) {
+      parsed.per_diem_location = 'none'
+    }
+    if (pendQ.includes('lunch') && parsed.lunch_minutes == null && isNegative) {
+      parsed.lunch_minutes = 0
+    }
+  }
+
   // ── Merge fields ──
   // Corrections override existing values; follow-ups and new entries preserve them.
   const prevEntries: any[] = submission?.entries || []
