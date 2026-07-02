@@ -401,7 +401,7 @@ Deno.serve(async (req: Request) => {
   if (nextStatus === 'submitted' && !reply) {
     const date     = friendlyDate(workDate)
     const inFmt    = mergedTimeIn ? friendlyTime(mergedTimeIn) : '?'
-    const outFmt   = calcOut      ? friendlyTime(calcOut)      : (mergedStatedOut ? friendlyTime(mergedStatedOut) : '?')
+    const outFmt   = mergedStatedOut ? friendlyTime(mergedStatedOut) : (calcOut ? friendlyTime(calcOut) : '?')
     const lunchFmt = mergedLunch  ? `lunch ${mergedLunch}min`  : (mergedLunch === 0 ? 'no lunch' : '')
     const pdLine   = mergedPerDiem === 'none' ? 'No per diem'
                    : mergedPerDiem            ? `PD: ${mergedPerDiem}`
