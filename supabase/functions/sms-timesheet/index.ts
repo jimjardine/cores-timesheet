@@ -262,13 +262,26 @@ Deno.serve(async (req: Request) => {
 
   // ── Merge fields ──
   const prevEntries: any[] = submission?.entries || []
-  const allEntries = [...prevEntries, ...(parsed.entries || [])]
+  let allEntries: any[] = [...prevEntries, ...(parsed.entries || [])]
 
   const mergedTimeIn      = submission?.time_in        ? submission.time_in.substring(0, 5) : parsed.time_in
   const mergedStatedOut   = submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : parsed.stated_time_out
   const mergedLunch       = (submission?.lunch_minutes != null)    ? submission.lunch_minutes    : parsed.lunch_minutes
   const mergedPerDiem     = (submission?.per_diem_location != null) ? submission.per_diem_location : parsed.per_diem_location
   const mergedEmployeeId  = employeeId || submission?.employee_id || null
+
+  // If any entry has no hours but we have start + end times, infer hours from the time bounds.
+  // Common case: "worked on 4760 all day" — hours are null but times tell us how long.
+  const nullHoursEntries = allEntries.filter((e: any) => !e.hours || Number(e.hours) === 0)
+  if (nullHoursEntries.length > 0 && mergedTimeIn && mergedStatedOut) {
+    const boundedHours = (timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60
+    const knownHours   = allEntries.reduce((s: number, e: any) => { const h = Number(e.hours); return h > 0 ? s + h : s }, 0)
+    const remaining    = Math.max(0, Math.round((boundedHours - knownHours) * 100) / 100)
+    const each         = Math.round((remaining / nullHoursEntries.length) * 100) / 100
+    allEntries = allEntries.map((e: any) =>
+      (!e.hours || Number(e.hours) === 0) ? { ...e, hours: each } : e
+    )
+  }
 
   // ── Calculate time_out from hours + lunch ──
   const totalHours = allEntries.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0)
