@@ -15,7 +15,6 @@ export default function SmsReview() {
   const [submissions, setSubmissions] = useState([])
   const [jobs, setJobs]               = useState([])
   const [employees, setEmployees]     = useState([])
-  const [perDiemRate, setPerDiemRate] = useState(0)
   const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
   const [loading, setLoading]         = useState(true)
@@ -44,8 +43,6 @@ export default function SmsReview() {
     setSubmissions(subs || [])
     setJobs(j || [])
     setEmployees(emps || [])
-    const pd = (cfg || []).find(r => r.key === 'per_diem_rate')
-    setPerDiemRate(pd ? Number(pd.value) : 0)
     const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
     setOtThreshold(ot ? Number(ot.value) : 8)
     setLoading(false)
@@ -96,7 +93,8 @@ export default function SmsReview() {
       hours:       Number(e.hours),
       ot_hours:    Number(e.ot_hours ?? 0),
       description: e.description || null,
-      per_diem:    i === 0 && hasPD ? perDiemRate : 0,
+      // per_diem is a multiplier (×1 standard, ×2 double), not a dollar amount
+      per_diem:    i === 0 && hasPD ? 1 : 0,
       sort_order:  i + 1,
     }))
 

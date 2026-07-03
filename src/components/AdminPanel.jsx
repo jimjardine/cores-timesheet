@@ -399,7 +399,7 @@ export default function AdminPanel() {
                                           {e.ot_hours != null ? Number(e.ot_hours).toFixed(1) : '—'}
                                         </td>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}>
-                                          {e.per_diem > 0 ? `$${Number(e.per_diem).toFixed(0)}` : '—'}
+                                          {e.per_diem > 0 ? `×${Number(e.per_diem)}` : '—'}
                                         </td>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', color: '#555', padding: '0.4rem 0.6rem' }}>{e.description || '—'}</td>
                                       </tr>
@@ -411,7 +411,7 @@ export default function AdminPanel() {
                                       <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>{jobEntries[job.id].reduce((s, e) => s + Number(e.hours), 0).toFixed(1)}</td>
                                       <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}></td>
                                       <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>
-                                        {jobEntries[job.id].some(e => e.per_diem > 0) ? `$${jobEntries[job.id].reduce((s, e) => s + Number(e.per_diem || 0), 0).toFixed(0)}` : '—'}
+                                        {jobEntries[job.id].some(e => e.per_diem > 0) ? `×${jobEntries[job.id].reduce((s, e) => s + Number(e.per_diem || 0), 0)}` : '—'}
                                       </td>
                                       <td style={{ ...tdStyle, padding: '0.4rem 0.6rem' }}></td>
                                     </tr>

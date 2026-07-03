@@ -719,7 +719,7 @@ export default function Reports() {
         const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
         const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
         const otMultiplier    = payrollConfig.ot_multiplier        ?? 1.5
-        const statMultiplier  = payrollConfig.stat_holiday_multiplier ?? 1.5
+        const statMultiplier  = payrollConfig.stat_multiplier ?? 1.5
         const perDiemRate     = payrollConfig.per_diem_rate        ?? 0
 
         const weekEnd    = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)

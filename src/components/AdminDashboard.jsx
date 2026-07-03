@@ -432,34 +432,9 @@ export default function AdminDashboard() {
                 {empEntries.length === 0 ? (
                   <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa', border: '1px solid #eee', borderRadius: '6px' }}>No entries for this period.</div>
                 ) : (() => {
-                  const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
-                  const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
-
-                  // Entry-level OT attribution — walk entries in date+sort_order, assign reg/OT per entry
-                  const byPayWeek = empEntries.reduce((acc, e) => {
-                    const weekStart = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
-                    if (!acc[weekStart]) acc[weekStart] = []
-                    acc[weekStart].push(e)
-                    return acc
-                  }, {})
-                  const entryOtMap = {} // id → { reg, ot }
-                  Object.values(byPayWeek).forEach(weekEnts => {
-                    const inOrder = [...weekEnts].sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
-                    let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
-                    inOrder.forEach(e => {
-                      if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
-                      const hrs = Number(e.hours)
-                      const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
-                      const dailyReg           = Math.min(hrs, dailyRegRemaining)
-                      const dailyOT            = hrs - dailyReg
-                      const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
-                      const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
-                      const weeklyOT           = dailyReg - actualReg
-                      entryOtMap[e.id]         = { reg: actualReg, ot: dailyOT + weeklyOT }
-                      dayHoursSoFar           += hrs
-                      weeklyRegSoFar          += actualReg
-                    })
-                  })
+                  // Reuse the shared calculator over the employee's FULL history so
+                  // manual ot_hours and weekly-threshold context survive date filtering
+                  const entryOtMap = computeEntryOT(entries.filter(e => e.employee_id === selectedEmp.id))
 
                   // Display: date desc, sort_order asc within each date
                   const sorted = [...empEntries].sort((a, b) =>
