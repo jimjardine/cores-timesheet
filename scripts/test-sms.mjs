@@ -39,6 +39,20 @@ async function sms(fromPhone, body) {
 
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
+// Mirror the edge function's Atlantic-time date handling so date scenarios
+// ("yesterday") can assert the exact date string in the confirmation.
+function atlanticDate(offsetDays = 0) {
+  const d = new Date(Date.now() - 4 * 60 * 60 * 1000 - offsetDays * 86400000)
+  return d.toISOString().split('T')[0]
+}
+function friendlyDate(dstr) {
+  const [y, mo, day] = dstr.split('-').map(Number)
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  const dt = new Date(Date.UTC(y, mo - 1, day))
+  return `${dow[dt.getUTCDay()]} ${months[mo - 1]} ${day}`
+}
+
 const TEST_TECH_ID = 'e3044c0c-9628-46e0-9837-2526240b63c3'
 
 async function deleteSubmissions(fromPhone) {
@@ -206,6 +220,164 @@ await scenario('per diem with location', phone(12), [
   ['This is Test. 4760 8hrs, started 7am, til 3:30, lunch 30, staying at Delta Halifax', [
     'Done Test',
     'PD: Delta Halifax',
+  ]],
+])
+
+// ── rough-language scenarios ───────────────────────────────────────────────
+// Simulating how different techs actually text: lowercase, typos, run-ons,
+// slang, military time, spelled-out numbers, rambling. All map to Test Tech.
+
+// 13. All lowercase, zero punctuation
+await cleanupTestTech()
+await scenario('lowercase no punctuation', phone(13), [
+  ['this is test worked 4760 8 hrs in at 7 out at 330 half hour lunch no pd', [
+    'Done Test',
+    '4760: 8hrs reg',
+    'lunch 30min',
+    'No per diem',
+    '7am',
+  ]],
+])
+
+// 14. Typos everywhere
+await cleanupTestTech()
+await scenario('typos', phone(14), [
+  ['This is Test. wrked on 4760 8hrs, startd 7am, dun at 330, lnch 30, no pd', [
+    'Done Test',
+    '4760: 8hrs reg',
+    'lunch 30min',
+    'No per diem',
+  ]],
+])
+
+// 15. Military time
+await cleanupTestTech()
+await scenario('military time', phone(15), [
+  ['This is Test. 0700 to 1530, 4760 8hrs valve job, lunch 30, no per diem', [
+    'Done Test',
+    '7am',
+    '3:30pm',
+    '4760: 8hrs reg',
+  ]],
+])
+
+// 16. Decimal hours across two jobs
+await cleanupTestTech()
+await scenario('decimal hours', phone(16), [
+  ['This is Test. 4760 6.5hrs hyd pump, 4862 1.5hrs, in 7, lunch 30, no PD', [
+    'Done Test',
+    '4760: 6.5hrs reg',
+    '4862: 1.5hrs reg',
+    'Total: 8hrs reg',
+  ]],
+])
+
+// 17. "worked thru lunch" + "going home" as no-lunch / no-PD, with OT
+await cleanupTestTech()
+await scenario('worked thru lunch', phone(17), [
+  ['This is Test. in at 6, 4760 10hrs gearbox teardown, worked thru lunch, going home after', [
+    'Done Test',
+    /4760: 8hrs reg \+ 2hrs OT/,
+    'no lunch',
+    'No per diem',
+  ]],
+])
+
+// 18. "its [name]" identification form (no apostrophe)
+await cleanupTestTech()
+await scenario('its name form', phone(18), [
+  ['its test, 4760 8hrs, in 8, out 430, lunch 30, no pd', [
+    'Done Test',
+    '4760: 8hrs reg',
+    '8am',
+  ]],
+])
+
+// 19. Forgot to send yesterday — date resolves to yesterday
+await cleanupTestTech()
+await scenario('yesterday', phone(19), [
+  ['This is Test. forgot to send yesterday - 4760 8hrs engine work, in 7, out 330, lunch 30, no pd', [
+    'Done Test',
+    friendlyDate(atlanticDate(1)),
+    '4760: 8hrs reg',
+  ]],
+])
+
+// 20. Spelled-out numbers ("eight hours", "started at seven")
+await cleanupTestTech()
+await scenario('spelled out numbers', phone(20), [
+  ['This is Test. eight hours on 4760 today, started at seven, lunch 30, no PD', [
+    'Done Test',
+    '4760: 8hrs reg',
+    '7am',
+  ]],
+])
+
+// 21. Run-on: three jobs, bare numbers, no "hrs" anywhere
+await cleanupTestTech()
+await scenario('run-on three jobs', phone(21), [
+  ['this is test 4760 3 4862 3 4901 2 in 7 lunch 30 no pd', [
+    'Done Test',
+    '4760: 3hrs reg',
+    '4862: 3hrs reg',
+    '4901: 2hrs reg',
+    'Total: 8hrs reg',
+  ]],
+])
+
+// 22. Rambling with filler words, casual hotel mention, OT
+await cleanupTestTech()
+await scenario('rambling with hotel', phone(22), [
+  ['hey its test here, long day lol. did the engine swap on 4760, took me like 9 hrs. got in at 630. grabbed a quick half hr lunch. crashing at the comfort inn in sydney tonight', [
+    'Done Test',
+    /4760: 8hrs reg \+ 1hrs OT/,
+    'lunch 30min',
+    /PD: .*[Cc]omfort/,
+  ]],
+])
+
+// 23. Newline-separated fragments, terse
+await cleanupTestTech()
+await scenario('newline fragments', phone(23), [
+  ['This is Test\n4760 8hrs\nin 7 out 3\nno lunch\nno pd', [
+    'Done Test',
+    '4760: 8hrs reg',
+    'no lunch',
+    'No per diem',
+  ]],
+])
+
+// 24. Multi-turn with casual follow-up answers ("took a half hour, heading home")
+await cleanupTestTech()
+await scenario('casual follow-up answers', phone(24), [
+  ['yo its test, put in 8 on 4760 today doing exhaust work, started at 7', [
+    'lunch?',
+    'per diem',
+  ]],
+  ['took a half hour, heading home', [
+    'Done Test',
+    'lunch 30min',
+    'No per diem',
+  ]],
+])
+
+// 25. ALL CAPS
+await cleanupTestTech()
+await scenario('all caps', phone(25), [
+  ['THIS IS TEST 4760 8HRS IN 7 OUT 330 LUNCH 30 NO PD', [
+    'Done Test',
+    '4760: 8hrs reg',
+    'No per diem',
+  ]],
+])
+
+// 26. Casual per diem hotel phrasing ("im at the wandlyn inn tonight")
+await cleanupTestTech()
+await scenario('casual hotel phrasing', phone(26), [
+  ['this is test. 8 hrs on 4862 electrical, in at 7, out at 330, 30 min lunch, im at the wandlyn inn tonight', [
+    'Done Test',
+    '4862: 8hrs reg',
+    /PD: .*[Ww]andlyn/,
   ]],
 ])
 
