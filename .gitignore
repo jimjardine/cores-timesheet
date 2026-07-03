@@ -6,3 +6,4 @@ dist/
 *.DS_Store
 RESUME_TOMORROW.md
 .timelog
+.claude/settings.local.json
