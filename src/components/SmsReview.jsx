@@ -16,6 +16,7 @@ export default function SmsReview() {
   const [jobs, setJobs]               = useState([])
   const [employees, setEmployees]     = useState([])
   const [perDiemRate, setPerDiemRate] = useState(0)
+  const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
   const [loading, setLoading]         = useState(true)
   const [expanded, setExpanded]       = useState({})
@@ -45,6 +46,8 @@ export default function SmsReview() {
     setEmployees(emps || [])
     const pd = (cfg || []).find(r => r.key === 'per_diem_rate')
     setPerDiemRate(pd ? Number(pd.value) : 0)
+    const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
+    setOtThreshold(ot ? Number(ot.value) : 8)
     setLoading(false)
   }, [])
 
@@ -123,29 +126,61 @@ export default function SmsReview() {
       employee_id:       sub.employee_id || '',
       work_date:         sub.work_date || '',
       time_in:           sub.time_in ? sub.time_in.substring(0, 5) : '',
+      stated_time_out:   sub.stated_time_out ? sub.stated_time_out.substring(0, 5) : '',
       lunch_minutes:     sub.lunch_minutes != null ? String(sub.lunch_minutes) : '',
       per_diem_location: sub.per_diem_location || '',
-      entries:           JSON.stringify(sub.entries || [], null, 2),
+      entries:           (sub.entries || []).map(e => ({
+        job_number:  e.job_number || '',
+        hours:       e.hours != null ? String(e.hours) : '',
+        description: e.description || '',
+      })),
     })
   }
 
+  const setEntryField = (i, field, value) =>
+    setEditFields(p => ({ ...p, entries: p.entries.map((e, j) => j === i ? { ...e, [field]: value } : e) }))
+  const addEntryRow = () =>
+    setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', hours: '', description: '' }] }))
+  const removeEntryRow = (i) =>
+    setEditFields(p => ({ ...p, entries: p.entries.filter((_, j) => j !== i) }))
+
   async function saveEdit() {
-    let parsedEntries
-    try { parsedEntries = JSON.parse(editFields.entries) }
-    catch { alert('Entries JSON is invalid'); return }
+    // Drop blank rows, then re-split reg/OT the same way the edge function does
+    const cleaned = editFields.entries
+      .filter(e => e.job_number.trim() || e.description.trim() || e.hours !== '')
+      .map(e => ({ job_number: e.job_number.trim(), hours: Number(e.hours) || 0, description: e.description.trim() }))
+
+    if (cleaned.some(e => !e.job_number)) { alert('Every entry needs a job number'); return }
+    if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
+
+    let regLeft = otThreshold
+    const entries = cleaned.map(e => {
+      const hours = Math.round(e.hours * 100) / 100
+      const reg   = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100
+      const ot    = Math.round((hours - reg) * 100) / 100
+      regLeft     = Math.max(0, regLeft - hours)
+      return { ...e, hours, reg_hours: reg, ot_hours: ot }
+    })
 
     const updates = {
       employee_id:       editFields.employee_id || null,
       work_date:         editFields.work_date || null,
       time_in:           editFields.time_in || null,
+      stated_time_out:   editFields.stated_time_out || null,
       lunch_minutes:     editFields.lunch_minutes !== '' ? Number(editFields.lunch_minutes) : null,
       per_diem_location: editFields.per_diem_location || null,
-      entries:           parsedEntries,
+      entries,
+      calculated_time_out: null,
+      delta_minutes:     null,
+      pending_questions: [],
       updated_at:        new Date().toISOString(),
     }
 
-    // Recalculate time_out
-    const totalHours = parsedEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+    // Nicki has fixed it up by hand — a collecting submission is now reviewable
+    if (editModal.status === 'collecting') updates.status = 'submitted'
+
+    // Recalculate time_out and delta against the stated out time
+    const totalHours = entries.reduce((s, e) => s + e.hours, 0)
     if (updates.time_in && totalHours > 0) {
       const [h, m] = updates.time_in.split(':').map(Number)
       const lunchMins = Number(updates.lunch_minutes) || 0
@@ -153,9 +188,14 @@ export default function SmsReview() {
       const oh = Math.floor(outMins / 60) % 24
       const om = outMins % 60
       updates.calculated_time_out = `${String(oh).padStart(2,'0')}:${String(om).padStart(2,'0')}`
+      if (updates.stated_time_out) {
+        const [sh, sm] = updates.stated_time_out.split(':').map(Number)
+        updates.delta_minutes = (sh * 60 + sm) - outMins
+      }
     }
 
-    await supabase.from('sms_submissions').update(updates).eq('id', editModal.id)
+    const { error } = await supabase.from('sms_submissions').update(updates).eq('id', editModal.id)
+    if (error) { alert('Error saving: ' + error.message); return }
     setEditModal(null)
     await load()
   }
@@ -376,7 +416,7 @@ export default function SmsReview() {
                 )}
 
                 {/* Actions */}
-                {sub.status === 'submitted' && (
+                {(sub.status === 'submitted' || sub.status === 'collecting') && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
                       onClick={() => approve(sub)}
@@ -416,7 +456,7 @@ export default function SmsReview() {
       {/* Edit modal */}
       {editModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 560, maxHeight: '90vh', overflow: 'auto' }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 640, maxHeight: '90vh', overflow: 'auto' }}>
             <h3 style={{ marginTop: 0 }}>Edit Submission</h3>
 
             <label style={lbl}>Employee</label>
@@ -428,8 +468,16 @@ export default function SmsReview() {
             <label style={lbl}>Work Date</label>
             <input type="date" value={editFields.work_date} onChange={e => setEditFields(p => ({ ...p, work_date: e.target.value }))} style={inp} />
 
-            <label style={lbl}>Time In</label>
-            <input type="time" value={editFields.time_in} onChange={e => setEditFields(p => ({ ...p, time_in: e.target.value }))} style={inp} />
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>Time In</label>
+                <input type="time" value={editFields.time_in} onChange={e => setEditFields(p => ({ ...p, time_in: e.target.value }))} style={inp} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>Stated Time Out</label>
+                <input type="time" value={editFields.stated_time_out} onChange={e => setEditFields(p => ({ ...p, stated_time_out: e.target.value }))} style={inp} />
+              </div>
+            </div>
 
             <label style={lbl}>Lunch (minutes)</label>
             <input type="number" value={editFields.lunch_minutes} onChange={e => setEditFields(p => ({ ...p, lunch_minutes: e.target.value }))} placeholder="0 = no lunch" style={inp} />
@@ -437,13 +485,69 @@ export default function SmsReview() {
             <label style={lbl}>Per Diem Location</label>
             <input value={editFields.per_diem_location} onChange={e => setEditFields(p => ({ ...p, per_diem_location: e.target.value }))} placeholder='"none" or hotel name' style={inp} />
 
-            <label style={lbl}>Entries (JSON)</label>
-            <textarea
-              value={editFields.entries}
-              onChange={e => setEditFields(p => ({ ...p, entries: e.target.value }))}
-              rows={8}
-              style={{ ...inp, fontFamily: 'monospace', fontSize: '0.8rem', resize: 'vertical' }}
-            />
+            <label style={lbl}>Job Entries</label>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Hours</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2 }}>Description</th>
+                  <th style={{ width: 30 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {editFields.entries.map((e, i) => {
+                  const matched = jobs.some(j => j.job_number === e.job_number.trim())
+                  return (
+                    <tr key={i}>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          value={e.job_number}
+                          onChange={ev => setEntryField(i, 'job_number', ev.target.value)}
+                          placeholder="4760"
+                          style={{ ...inp, borderColor: e.job_number.trim() && !matched ? '#e08080' : '#ccc' }}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          type="number" min="0" step="0.25"
+                          value={e.hours}
+                          onChange={ev => setEntryField(i, 'hours', ev.target.value)}
+                          style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          value={e.description}
+                          onChange={ev => setEntryField(i, 'description', ev.target.value)}
+                          placeholder="what was done"
+                          style={inp}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          onClick={() => removeEntryRow(i)}
+                          title="Remove entry"
+                          style={{ border: 'none', background: 'transparent', color: '#c00', cursor: 'pointer', fontSize: '1rem', padding: '0.2rem' }}
+                        >✕</button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <button
+              onClick={addEntryRow}
+              style={{ marginTop: '0.35rem', padding: '0.25rem 0.7rem', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+            >+ Add job</button>
+            {editFields.entries.some(e => e.job_number.trim() && !jobs.some(j => j.job_number === e.job_number.trim())) && (
+              <div style={{ fontSize: '0.75rem', color: '#c00', marginTop: '0.3rem' }}>
+                Red job numbers don't match any open job — they'll save, but won't link to a job record.
+              </div>
+            )}
+            <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.3rem' }}>
+              Reg/OT split and out-time are recalculated automatically on save.
+            </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
               <button onClick={saveEdit} style={{ padding: '0.4rem 1.2rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Save</button>
