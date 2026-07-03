@@ -108,7 +108,8 @@ Return exactly this JSON structure (all fields required, use null when absent):
 }
 
 Rules:
-- name_override: first name string if they said "this is [name]", "it's [name]", "for [name]" — else null
+- Workers text casually: expect ALL CAPS, all lowercase, typos, and run-on sentences. Match all phrases below case-insensitively.
+- name_override: first name string if they said "this is [name]", "it's [name]", "for [name]" (any casing — "THIS IS JOEY" counts) — else null
 - work_date: "YYYY-MM-DD" if a date is mentioned (resolve "yesterday", day names, "June 30", etc.) — else null
 - time_in: "HH:MM" 24-hour if a start time is mentioned — else null
 - stated_time_out: "HH:MM" 24-hour only if they explicitly said when they finished/left — else null
@@ -229,7 +230,9 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!employeeId && fromPhone) {
-    const { data: allEmps } = await supabase.from('employees').select('id, name, phone').eq('active', true).eq('role', 'technician')
+    // Any active employee can text from their own phone (office staff like Nicki included);
+    // the "This is [name]" override stays technician-only since that's for techs borrowing phones.
+    const { data: allEmps } = await supabase.from('employees').select('id, name, phone').eq('active', true)
     const match = (allEmps || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
     if (match) { employeeId = match.id; employeeName = match.name }
   }
