@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-timesheet`
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
 
-export default function AdminDashboard({ defaultTab = 'timesheets' }) {
-  const [activeTab, setActiveTab] = useState(defaultTab)
+export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState('timesheets')
 
   // ── Timesheets tab ──
   const [entries, setEntries] = useState([])
@@ -48,24 +47,12 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
     setSubWeekStart(thisWeek.toISOString().split('T')[0])
   }
 
-  // ── Email Parser tab ──
-  const [inputText, setInputText] = useState('')
-  const [senderName, setSenderName] = useState('')
-  const [parsing, setParsing] = useState(false)
-  const [parseResult, setParseResult] = useState(null)
-  const [emailRecords, setEmailRecords] = useState([])
-  const [loadingRecords, setLoadingRecords] = useState(false)
-
   useEffect(() => {
     loadTimesheets()
     supabase.from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
     supabase.from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
     supabase.from('jobs').select('id, job_number, customers(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
-
-  useEffect(() => {
-    if (activeTab === 'email') fetchEmailRecords()
-  }, [activeTab])
 
   async function loadTimesheets() {
     setLoadingEntries(true)
@@ -303,33 +290,6 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
     link.click()
   }
 
-  // ── Email parser helpers ──
-  async function fetchEmailRecords() {
-    setLoadingRecords(true)
-    const { data } = await supabase.from('email_timesheets').select('*').order('created_at', { ascending: false }).limit(50)
-    setEmailRecords(data || [])
-    setLoadingRecords(false)
-  }
-
-  async function handleParse() {
-    if (!inputText.trim()) return
-    setParsing(true)
-    setParseResult(null)
-    try {
-      const res = await fetch(FUNCTION_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: inputText.trim(), sender_name: senderName.trim() || null }),
-      })
-      const json = await res.json()
-      setParseResult(json)
-      if (json.success) { setInputText(''); setSenderName(''); fetchEmailRecords() }
-    } catch (err) {
-      setParseResult({ error: err.message })
-    }
-    setParsing(false)
-  }
-
   const tabStyle = (tab) => ({
     padding: '0.6rem 1.4rem', border: 'none', cursor: 'pointer', fontSize: '1rem',
     borderBottom: activeTab === tab ? '3px solid #0066cc' : '3px solid transparent',
@@ -404,7 +364,6 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}>Timesheets</button>
         <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
-        <button style={tabStyle('email')} onClick={() => setActiveTab('email')}>Email Parser</button>
       </div>
 
       {/* ── Timesheets tab ── */}
@@ -757,94 +716,6 @@ export default function AdminDashboard({ defaultTab = 'timesheets' }) {
         )
       })()}
 
-      {/* ── Email Parser tab ── */}
-      {activeTab === 'email' && (
-        <>
-          <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#f0f4ff', borderRadius: '4px', border: '1px solid #c8d8f0' }}>
-            <h3 style={{ marginTop: 0 }}>Parse Timesheet Text</h3>
-            <p style={{ color: '#555', marginBottom: '1rem' }}>
-              Paste an email or text message below. The AI will extract the worker, date, job, hours, and description — regardless of the order or wording.
-            </p>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label><strong>Sender name</strong> <span style={{ color: '#888', fontWeight: 'normal' }}>(optional — if not in the message)</span></label>
-              <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} placeholder="e.g. Cole Davis"
-                style={{ display: 'block', width: '100%', padding: '0.5rem', marginTop: '0.4rem', boxSizing: 'border-box' }} />
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label><strong>Email / message text</strong></label>
-              <textarea value={inputText} onChange={e => setInputText(e.target.value)} rows={6}
-                placeholder={'e.g. "Hey Jim, Cole here. Worked MV Trident today. 8 hours. Welded the forward bulkhead and painted hull section B."'}
-                style={{ display: 'block', width: '100%', padding: '0.5rem', marginTop: '0.4rem', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: '0.95rem' }} />
-            </div>
-
-            <button onClick={handleParse} disabled={parsing || !inputText.trim()}
-              style={{ padding: '0.6rem 1.4rem', background: parsing ? '#aaa' : '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: parsing ? 'default' : 'pointer', fontSize: '1rem' }}>
-              {parsing ? 'Parsing...' : 'Parse & Save'}
-            </button>
-
-            {parseResult && (
-              <div style={{ marginTop: '1rem', padding: '1rem', borderRadius: '4px', background: parseResult.success ? '#e6f4ea' : '#fdecea', border: `1px solid ${parseResult.success ? '#a8d5b0' : '#f5c6c6'}` }}>
-                {parseResult.success ? (
-                  <>
-                    <strong style={{ color: '#2d6a38' }}>Saved successfully</strong>
-                    <table style={{ marginTop: '0.75rem', borderCollapse: 'collapse', width: '100%' }}>
-                      {[['Worker', parseResult.record.worker_name], ['Date', parseResult.record.work_date], ['Job', parseResult.record.job_name], ['Hours', parseResult.record.hours_worked], ['Description', parseResult.record.work_description]].map(([label, value]) => (
-                        <tr key={label}>
-                          <td style={{ padding: '0.3rem 0.75rem 0.3rem 0', color: '#555', whiteSpace: 'nowrap' }}>{label}</td>
-                          <td style={{ padding: '0.3rem 0' }}>{value ?? <em style={{ color: '#aaa' }}>not found</em>}</td>
-                        </tr>
-                      ))}
-                    </table>
-                  </>
-                ) : (
-                  <strong style={{ color: '#c0392b' }}>Error: {parseResult.error}</strong>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0 }}>Recent Parsed Entries ({emailRecords.length})</h3>
-              <button onClick={fetchEmailRecords} style={{ padding: '0.4rem 0.9rem', background: '#555', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Refresh</button>
-            </div>
-
-            {loadingRecords ? (
-              <p style={{ color: '#888' }}>Loading...</p>
-            ) : emailRecords.length === 0 ? (
-              <p style={{ color: '#888' }}>No entries yet. Parse a message above to get started.</p>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#ddd', borderBottom: '2px solid #999' }}>
-                    {['Worker', 'Date', 'Job', 'Hours', 'Description', 'Status'].map(h => (
-                      <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {emailRecords.map(r => (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td style={{ padding: '0.75rem' }}>{r.worker_name ?? <em style={{ color: '#aaa' }}>unknown</em>}</td>
-                      <td style={{ padding: '0.75rem' }}>{r.work_date ?? '—'}</td>
-                      <td style={{ padding: '0.75rem' }}>{r.job_name ?? '—'}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>{r.hours_worked ?? '—'}</td>
-                      <td style={{ padding: '0.75rem', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.work_description}>{r.work_description ?? '—'}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                        <span style={{ padding: '0.2rem 0.5rem', borderRadius: '3px', fontSize: '0.85rem', background: r.parse_status === 'parsed' ? '#00aa00' : '#cc3300', color: 'white' }} title={r.parse_error || ''}>
-                          {r.parse_status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
-      )}
     </div>
   )
 }

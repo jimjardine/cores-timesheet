@@ -14,7 +14,7 @@ function App() {
     <div>
       <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
         <span style={{ color: '#fff', fontWeight: 700, marginRight: '1.5rem' }}>Cores Worldwide</span>
-        {[['reports', 'Reports'], ['dashboard', 'Timesheets'], ['email', 'Email Parser'], ['sms', 'SMS'], ['admin', 'Admin']].map(([key, label]) => (
+        {[['reports', 'Reports'], ['dashboard', 'Timesheets'], ['sms', 'SMS'], ['admin', 'Admin']].map(([key, label]) => (
           <button key={key} onClick={() => setAdminView(key)} style={{
             padding: '0.4rem 1rem', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem',
             background: adminView === key ? '#0066cc' : 'transparent',
@@ -25,7 +25,6 @@ function App() {
       </nav>
       {adminView === 'reports' && <Reports />}
       {adminView === 'dashboard' && <AdminDashboard />}
-      {adminView === 'email' && <AdminDashboard defaultTab="email" />}
       {adminView === 'sms' && <SmsReview />}
       {adminView === 'admin' && <AdminPanel />}
     </div>
