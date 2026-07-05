@@ -54,6 +54,8 @@ export default function AdminPanel() {
   const [jobStatusFilter, setJobStatusFilter] = useState('open')
   const [customerFilter, setCustomerFilter] = useState('')
   const [vesselFilter, setVesselFilter] = useState('')
+  const [customerStatusFilter, setCustomerStatusFilter] = useState('active')
+  const [vesselStatusFilter, setVesselStatusFilter] = useState('active')
   const [jobSearch, setJobSearch] = useState('')
   const [sortCol, setSortCol] = useState('job_number')
   const [sortDir, setSortDir] = useState('asc')
@@ -77,7 +79,7 @@ export default function AdminPanel() {
       .order('work_date')
       .order('sort_order')
       .then(({ data }) => setJobEntries(prev => ({ ...prev, [expandedJobId]: data || [] })))
-  }, [expandedJobId])
+  }, [expandedJobId, jobEntries])
 
   async function loadAll() {
     setLoading(true)
@@ -109,7 +111,7 @@ export default function AdminPanel() {
     if (type === 'customer') {
       setFields({ name: record?.name || '', contact_name: record?.contact_name || '', contact_email: record?.contact_email || '', phone: record?.phone || '', status: record?.status || 'active' })
     } else if (type === 'vessel') {
-      setFields({ name: record?.name || '', vessel_type: record?.vessel_type || '', customer_id: record?.customer_id || '' })
+      setFields({ name: record?.name || '', vessel_type: record?.vessel_type || '', customer_id: record?.customer_id || '', status: record?.status || 'active' })
       const existing = record ? vesselContacts.filter(c => c.vessel_id === record.id) : []
       setModalContacts(existing.length > 0 ? existing.map(c => ({ ...c })) : [
         { role: 'Superintendent', name: '', phone: '' },
@@ -120,7 +122,7 @@ export default function AdminPanel() {
     } else if (type === 'employee') {
       setFields({ name: record?.name || '', phone: record?.phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     } else if (type === 'entry') {
-      setFields({ work_date: record?.work_date || '', job_id: record?.job_id || '', hours: record?.hours || '', ot_hours: record?.ot_hours || '', per_diem: record?.per_diem || '0', description: record?.description || '' })
+      setFields({ work_date: record?.work_date || '', job_id: record?.job_id || '', hours: record?.hours ?? '', ot_hours: record?.ot_hours ?? '', per_diem: record?.per_diem ?? '0', description: record?.description || '' })
     }
   }
 
@@ -133,26 +135,45 @@ export default function AdminPanel() {
       if (!payload.customer_id) payload.customer_id = null
       let vesselId = record?.id
       if (record) {
-        await supabase.from('vessels').update(payload).eq('id', record.id)
+        const { error } = await supabase.from('vessels').update(payload).eq('id', record.id)
+        if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
       } else {
-        const { data } = await supabase.from('vessels').insert(payload).select().single()
+        const { data, error } = await supabase.from('vessels').insert(payload).select().single()
+        if (error || !data) { alert(`Save failed: ${error?.message || 'no data returned'}`); setSaving(false); return }
         vesselId = data.id
       }
       // Sync contacts: replace all
-      await supabase.from('vessel_contacts').delete().eq('vessel_id', vesselId)
+      const { error: delError } = await supabase.from('vessel_contacts').delete().eq('vessel_id', vesselId)
+      if (delError) { alert(`Vessel saved but contacts failed to update: ${delError.message}`); setSaving(false); return }
       const valid = modalContacts.filter(c => c.name?.trim() || c.phone?.trim())
       if (valid.length > 0) {
-        await supabase.from('vessel_contacts').insert(
+        const { error: insError } = await supabase.from('vessel_contacts').insert(
           valid.map((c, i) => ({ vessel_id: vesselId, role: c.role || 'Contact', name: c.name || null, phone: c.phone || null, sort_order: i }))
         )
+        if (insError) { alert(`Vessel saved but contacts failed to save — re-enter them: ${insError.message}`); setSaving(false); return }
       }
     } else if (type === 'employee') {
       const empPayload = { name: payload.name.trim(), phone: payload.phone.replace(/\D/g, '').slice(-10) || null, active: payload.active === 'true', role: payload.role }
-      if (record) {
-        await supabase.from('employees').update(empPayload).eq('id', record.id)
-      } else {
-        await supabase.from('employees').insert(empPayload)
+      const { error } = record
+        ? await supabase.from('employees').update(empPayload).eq('id', record.id)
+        : await supabase.from('employees').insert(empPayload)
+      if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
+    } else if (type === 'entry') {
+      const entryPayload = {
+        work_date: payload.work_date,
+        job_id: payload.job_id || null,
+        hours: Number(payload.hours) || 0,
+        ot_hours: payload.ot_hours === '' || payload.ot_hours == null ? null : Number(payload.ot_hours),
+        per_diem: Number(payload.per_diem) || 0,
+        description: payload.description || '',
       }
+      const { error } = await supabase.from('timesheet_entries').update(entryPayload).eq('id', record.id)
+      if (error) {
+        alert(`Save failed: ${error.message}`)
+        setSaving(false)
+        return
+      }
+      setJobEntries({}) // job assignment may have changed — drop the per-job cache so it reloads
     } else {
       if (type === 'job') {
         if (!payload.vessel_id) payload.vessel_id = null
@@ -160,11 +181,10 @@ export default function AdminPanel() {
         if (payload.status === 'closed' && record?.status !== 'closed') payload.closed_at = new Date().toISOString()
         if (payload.status === 'open') payload.closed_at = null
       }
-      if (record) {
-        await supabase.from(`${type}s`).update(payload).eq('id', record.id)
-      } else {
-        await supabase.from(`${type}s`).insert(payload)
-      }
+      const { error } = record
+        ? await supabase.from(`${type}s`).update(payload).eq('id', record.id)
+        : await supabase.from(`${type}s`).insert(payload)
+      if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
     }
 
     await loadAll()
@@ -185,13 +205,15 @@ export default function AdminPanel() {
     const update = toStatus === 'closed'
       ? { status: 'closed', closed_at: new Date().toISOString() }
       : { status: 'open', closed_at: null }
-    await supabase.from('jobs').update(update).eq('id', job.id)
-    await supabase.from('job_status_logs').insert({
+    const { error: jobError } = await supabase.from('jobs').update(update).eq('id', job.id)
+    if (jobError) { alert(`Status change failed: ${jobError.message}`); setSaving(false); return }
+    const { error: logError } = await supabase.from('job_status_logs').insert({
       job_id: job.id,
       from_status: job.status,
       to_status: toStatus,
       note: statusNote.trim(),
     })
+    if (logError) alert(`Job status changed but the log entry failed: ${logError.message}`)
     await loadAll()
     setStatusModal(null)
     setSaving(false)
@@ -204,7 +226,8 @@ export default function AdminPanel() {
       ? { name: quickAddName.trim(), status: 'active' }
       : { name: quickAddName.trim(), customer_id: fields.customer_id || null }
     const table = quickAdd === 'customer' ? 'customers' : 'vessels'
-    const { data } = await supabase.from(table).insert(payload).select().single()
+    const { data, error } = await supabase.from(table).insert(payload).select().single()
+    if (error) alert(`Save failed: ${error.message}`)
     if (data) {
       if (quickAdd === 'customer') {
         setCustomers(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)))
@@ -259,7 +282,10 @@ export default function AdminPanel() {
     })
   })()
 
-  const visibleVessels = vessels.filter(v => !customerFilter || v.customer_id === customerFilter)
+  const visibleVessels = vessels.filter(v =>
+    (!customerFilter || v.customer_id === customerFilter) &&
+    (vesselStatusFilter === 'all' || (v.status || 'active') === vesselStatusFilter)
+  )
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa' }}>Loading...</div>
 
@@ -300,7 +326,7 @@ export default function AdminPanel() {
                 style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.875rem' }}>
                 <option value="">All vessels</option>
                 {vessels
-                  .filter(v => !customerFilter || v.customer_id === customerFilter)
+                  .filter(v => v.status === 'active' && (!customerFilter || v.customer_id === customerFilter))
                   .map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
               <div style={{ display: 'flex', gap: '0.4rem', marginLeft: '0.25rem' }}>
@@ -457,7 +483,14 @@ export default function AdminPanel() {
       {/* ── Customers ── */}
       {section === 'customers' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {['active', 'inactive', 'all'].map(s => (
+                <button key={s} style={pill(customerStatusFilter === s)} onClick={() => setCustomerStatusFilter(s)}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
             <button style={btnPrimary} onClick={() => openModal('customer')}>+ New Customer</button>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -472,7 +505,7 @@ export default function AdminPanel() {
               </tr>
             </thead>
             <tbody>
-              {customers.map(c => {
+              {customers.filter(c => customerStatusFilter === 'all' || (c.status || 'active') === customerStatusFilter).map(c => {
                 const custJobs = jobs.filter(j => j.customer_id === c.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
                 const isExpanded = expandedId === c.id
                 return (
@@ -576,11 +609,20 @@ export default function AdminPanel() {
       {section === 'vessels' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem' }}>
-            <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }}>
-              <option value="">All customers</option>
-              {customers.filter(c => c.status === 'active').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
+                style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }}>
+                <option value="">All customers</option>
+                {customers.filter(c => c.status === 'active').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                {['active', 'inactive', 'all'].map(s => (
+                  <button key={s} style={pill(vesselStatusFilter === s)} onClick={() => setVesselStatusFilter(s)}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button style={btnPrimary} onClick={() => openModal('vessel')}>+ New Vessel</button>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -591,6 +633,7 @@ export default function AdminPanel() {
                 <th style={thStyle}>Customer</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Open</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Closed</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}></th>
               </tr>
             </thead>
@@ -602,7 +645,7 @@ export default function AdminPanel() {
                 const isExpanded = expandedId === v.id
                 return (
                   <React.Fragment key={v.id}>
-                    <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : v.id)}>
+                    <tr style={{ background: v.status !== 'active' ? '#fafafa' : '', cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : v.id)}>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>
                         <span style={{ marginRight: '0.4rem', color: '#aaa', fontSize: '0.8rem' }}>{isExpanded ? '▾' : '▸'}</span>
                         {v.name}
@@ -618,6 +661,11 @@ export default function AdminPanel() {
                         {closedJobs.length > 0
                           ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#f0f0f0', color: '#888' }}>{closedJobs.length}</span>
                           : <span style={{ color: '#ddd' }}>—</span>}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>
+                        <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: v.status === 'active' ? '#e6f4ea' : '#f0f0f0', color: v.status === 'active' ? '#2d6a38' : '#888' }}>
+                          {v.status || 'active'}
+                        </span>
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                         <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('vessel', v)}>Edit</button>
@@ -750,6 +798,12 @@ export default function AdminPanel() {
               {customers.filter(c => c.status === 'active').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
+          <Field label="Status">
+            <select style={inputStyle} {...f('status')}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </Field>
 
           {/* Contacts */}
           <div style={{ marginTop: '1.25rem' }}>
@@ -828,7 +882,7 @@ export default function AdminPanel() {
               <select style={{ ...inputStyle, flex: 1 }} {...f('vessel_id')}>
                 <option value="">— shop / no vessel —</option>
                 {vessels
-                  .filter(v => !fields.customer_id || v.customer_id === fields.customer_id)
+                  .filter(v => v.status === 'active' && (!fields.customer_id || v.customer_id === fields.customer_id))
                   .map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
               <button type="button" style={{ ...btnSecondary, whiteSpace: 'nowrap', fontSize: '0.82rem', padding: '0.35rem 0.7rem' }}

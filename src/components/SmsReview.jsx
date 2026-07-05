@@ -103,7 +103,11 @@ export default function SmsReview() {
       if (error) { alert('Error creating entries: ' + error.message); setActing(null); return }
     }
 
-    await supabase.from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    const { error: statusError } = await supabase.from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    if (statusError) {
+      // Entries are already in — approving again would duplicate them
+      alert(`Entries were created but the submission couldn't be marked approved: ${statusError.message}\nDo NOT approve it again — refresh and check the Timesheets tab.`)
+    }
     await load()
     setActing(null)
   }
@@ -112,7 +116,8 @@ export default function SmsReview() {
   async function reject(sub) {
     if (!confirm('Mark this submission as rejected?')) return
     setActing(sub.id)
-    await supabase.from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    const { error } = await supabase.from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    if (error) alert(`Reject failed: ${error.message}`)
     await load()
     setActing(null)
   }
@@ -151,7 +156,16 @@ export default function SmsReview() {
     if (cleaned.some(e => !e.job_number)) { alert('Every entry needs a job number'); return }
     if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
 
-    let regLeft = otThreshold
+    // Seed the split with hours already in timesheet_entries for this employee/date,
+    // matching the edge function — otherwise a second submission that day gets reg
+    // hours it shouldn't
+    let alreadyWorked = 0
+    if (editFields.employee_id && editFields.work_date) {
+      const { data: existing } = await supabase.from('timesheet_entries')
+        .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date)
+      alreadyWorked = (existing || []).reduce((s, e) => s + Number(e.hours || 0), 0)
+    }
+    let regLeft = Math.max(0, otThreshold - alreadyWorked)
     const entries = cleaned.map(e => {
       const hours = Math.round(e.hours * 100) / 100
       const reg   = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100

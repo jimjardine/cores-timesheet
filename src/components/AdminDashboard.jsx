@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
+import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
@@ -92,7 +93,7 @@ export default function AdminDashboard() {
     setSavingEdit(true)
     const reg = Number(editFields.reg_hours) || 0
     const ot  = Number(editFields.ot_hours)  || 0
-    await supabase.from('timesheet_entries').update({
+    const { error } = await supabase.from('timesheet_entries').update({
       work_date:   editFields.work_date,
       job_id:      editFields.job_id,
       hours:       reg + ot,
@@ -101,13 +102,19 @@ export default function AdminDashboard() {
       per_diem:    Number(editFields.per_diem),
       sort_order:  Number(editFields.sort_order),
     }).eq('id', editEntry.id)
+    if (error) {
+      alert(`Save failed: ${error.message}`)
+      setSavingEdit(false)
+      return
+    }
     await loadTimesheets()
     setEditEntry(null)
     setSavingEdit(false)
   }
 
   async function deleteEntry(id) {
-    await supabase.from('timesheet_entries').delete().eq('id', id)
+    const { error } = await supabase.from('timesheet_entries').delete().eq('id', id)
+    if (error) alert(`Delete failed: ${error.message}`)
     setConfirmDeleteId(null)
     await loadTimesheets()
   }
@@ -131,12 +138,12 @@ export default function AdminDashboard() {
 
       // Fetch existing entries for this employee on this date to include in OT calc
       const { data: existingToday } = await supabase.from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date)
-      const alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
+      let alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
 
       // Insert entries with OT split
       const toInsert = validEntries.map((e, i) => {
         const hours = Number(e.hours)
-        let reg = Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
+        const reg = Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
         const ot = hours - reg
         alreadyWorked += hours
         return {
@@ -144,7 +151,6 @@ export default function AdminDashboard() {
           work_date: manualFields.work_date,
           job_id: e.job_id,
           hours: hours,
-          reg_hours: reg,
           ot_hours: ot,
           description: e.description || '',
           per_diem: manualFields.per_diem,
@@ -152,7 +158,11 @@ export default function AdminDashboard() {
         }
       })
 
-      await supabase.from('timesheet_entries').insert(toInsert)
+      const { error } = await supabase.from('timesheet_entries').insert(toInsert)
+      if (error) {
+        alert(`Save failed: ${error.message}`)
+        return
+      }
       await loadTimesheets()
       setManualEntry(null)
       setManualFields({
@@ -353,6 +363,39 @@ export default function AdminDashboard() {
     link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'))
     link.download = selectedDate ? `timesheets-${selectedDate}.csv` : 'timesheets.csv'
     link.click()
+  }
+
+  async function handlePrintTimesheet() {
+    if (!selectedEmp || !selectedDate) return
+    const dayEntries = entries.filter(e => e.employee_id === selectedEmp.id && e.work_date === selectedDate)
+      .sort((a, b) => (a.sort_order ?? 1) - (b.sort_order ?? 1))
+    const totalHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
+
+    // Most recent non-rejected submission — maybeSingle() errors if the employee
+    // has more than one row for the date (e.g. a rejected attempt plus the real one)
+    const { data: subRows } = await supabase
+      .from('sms_submissions')
+      .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
+      .eq('employee_id', selectedEmp.id)
+      .eq('work_date', selectedDate)
+      .neq('status', 'rejected')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+    const submission = subRows?.[0] || null
+
+    generateDailyTimesheetPDF({
+      employeeName: selectedEmp.name,
+      workDate: selectedDate,
+      timeIn: submission?.time_in || null,
+      timeOut: submission?.stated_time_out || submission?.calculated_time_out || null,
+      lunchMinutes: submission?.lunch_minutes ?? null,
+      totalHours,
+      jobLines: dayEntries.map(e => ({
+        jobNumber: e.jobs?.job_number || '',
+        hours: e.hours,
+        description: e.description || '',
+      })),
+    })
   }
 
   const tabStyle = (tab) => ({
@@ -569,6 +612,9 @@ export default function AdminDashboard() {
                       Include summaries
                     </label>
                     <button onClick={handleExport} style={{ padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Export CSV</button>
+                    {selectedDate && (
+                      <button onClick={handlePrintTimesheet} style={{ padding: '0.35rem 0.9rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Print Timesheet</button>
+                    )}
                   </div>
                 </div>
 

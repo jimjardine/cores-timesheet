@@ -222,21 +222,22 @@ Deno.serve(async (req: Request) => {
     // Extract vessel name filter if present (e.g., "jobs wave master")
     const vesselFilter = msgLower === 'jobs' ? null : msgLower.slice(5).trim()
 
+    // vessel name lives on the vessels table — join it (inner join when filtering so
+    // non-matching and no-vessel jobs drop out)
     let query = supabase
       .from('jobs')
-      .select('job_number, description, vessel_name')
+      .select(vesselFilter ? 'job_number, description, vessels!inner(name)' : 'job_number, description, vessels(name)')
       .eq('status', 'open')
 
-    // If a vessel filter is provided, filter by vessel name (case-insensitive partial match)
     if (vesselFilter) {
-      query = query.ilike('vessel_name', `%${vesselFilter}%`)
+      query = query.ilike('vessels.name', `%${vesselFilter}%`)
     }
 
     const { data: openJobs } = await query.order('job_number')
 
     if (openJobs && openJobs.length > 0) {
       const jobsList = openJobs
-        .map((j: any) => `${j.job_number} (${j.vessel_name || 'Unknown vessel'}${j.description ? ' — ' + j.description : ''})`)
+        .map((j: any) => `${j.job_number} (${j.vessels?.name || 'Shop'}${j.description ? ' — ' + j.description : ''})`)
         .join(', ')
       const r = vesselFilter ? `Jobs for ${vesselFilter}: ${jobsList}` : `Open jobs: ${jobsList}`
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
@@ -507,10 +508,14 @@ Deno.serve(async (req: Request) => {
     updated_at:         new Date().toISOString(),
   }
 
-  if (submission) {
-    await supabase.from('sms_submissions').update(record).eq('id', submission.id)
-  } else {
-    await supabase.from('sms_submissions').insert(record)
+  const { error: saveError } = submission
+    ? await supabase.from('sms_submissions').update(record).eq('id', submission.id)
+    : await supabase.from('sms_submissions').insert(record)
+
+  if (saveError) {
+    console.error('sms_submissions save failed:', saveError.message)
+    const r = "Something went wrong saving that — text Nicki directly so it doesn't get lost."
+    return isTwilio ? twiML(r) : jsonReply({ reply: r, error: saveError.message }, 500)
   }
 
   return isTwilio ? twiML(reply) : jsonReply({ reply, status: nextStatus, flags })
