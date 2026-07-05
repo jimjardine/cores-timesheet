@@ -436,10 +436,6 @@ export default function AdminDashboard() {
                   value={editFields.ot_hours ?? ''}
                   onChange={e => setEditFields(f => ({ ...f, ot_hours: e.target.value }))} />
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Sort Order</label>
-                <input type="number" min="1" style={inputStyle} {...ef('sort_order')} />
-              </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Job</label>
                 <select style={inputStyle} value={editFields.job_id || ''} onChange={e => setEditFields(f => ({ ...f, job_id: e.target.value }))}>
