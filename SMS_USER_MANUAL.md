@@ -78,9 +78,9 @@ Day names ("Tuesday") and dates ("June 30") work too. If you don't mention a day
 
 ## Don't know the job number?
 
-Text **JOBS** and you'll get the list of open jobs with their vessels.
+Text **JOBS** and you'll get the list of open job numbers with their vessels.
 
-Text **JOBS** plus a boat name to narrow it down:
+Text **JOBS** plus a boat name to get just that boat's jobs, with details on each one:
 
 > "JOBS wave master"
 

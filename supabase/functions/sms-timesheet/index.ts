@@ -19,6 +19,8 @@ Using someone else's phone?
 Start with: "This is Joey"
 
 Need the job list? Text JOBS.
+Job details? Text JOBS + boat name.
+(e.g. "JOBS nanaimo")
 Questions? Reply HELP anytime.`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -194,28 +196,7 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
-  const today = atlanticToday()
-
-  // ── Parse with Claude ──
-  let parsed: any = {
-    entries: [], name_override: null, work_date: null,
-    time_in: null, stated_time_out: null,
-    lunch_minutes: null, per_diem_location: null,
-    is_help_request: false
-  }
-
-  try {
-    parsed = await parseWithClaude(msgBody, today)
-  } catch (_e) {
-    const r = "Couldn't read that one. Reply HELP for the format, or text Nicki directly."
-    return isTwilio ? twiML(r) : jsonReply({ reply: r })
-  }
-
-  if (parsed.is_help_request) {
-    return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
-  }
-
-  // ── Jobs list request ──
+  // ── Jobs list request (before the Claude parse — deterministic keyword) ──
   const msgLower = msgBody.toLowerCase().trim()
   const isJobsRequest = msgLower === 'jobs' || msgLower.startsWith('jobs ')
   if (isJobsRequest) {
@@ -236,15 +217,55 @@ Deno.serve(async (req: Request) => {
     const { data: openJobs } = await query.order('job_number')
 
     if (openJobs && openJobs.length > 0) {
-      const jobsList = openJobs
-        .map((j: any) => `${j.job_number} (${j.vessels?.name || 'Shop'}${j.description ? ' — ' + j.description : ''})`)
-        .join(', ')
-      const r = vesselFilter ? `Jobs for ${vesselFilter}: ${jobsList}` : `Open jobs: ${jobsList}`
+      let r: string
+      if (vesselFilter) {
+        // JOBS <boat>: one job per line with its description
+        const boatName = openJobs[0]?.vessels?.name || vesselFilter
+        const detail = openJobs
+          .map((j: any) => {
+            const d = j.description ? j.description.replace(/\s+/g, ' ').trim() : ''
+            return `${j.job_number}${d ? ' — ' + d : ''}`
+          })
+          .join('\n')
+        r = `${boatName} jobs:\n${detail}`
+      } else {
+        // bare JOBS: numbers grouped by boat, one line each, Shop last
+        const groups: Record<string, string[]> = {}
+        for (const j of openJobs as any[]) {
+          const v = j.vessels?.name || 'Shop'
+          ;(groups[v] ||= []).push(j.job_number)
+        }
+        const names = Object.keys(groups).filter((n) => n !== 'Shop').sort((a, b) => a.localeCompare(b))
+        if (groups['Shop']) names.push('Shop')
+        const lines = names.map((n) => `${n}: ${groups[n].join(', ')}`).join('\n')
+        r = `Open jobs by boat:\n\n${lines}\n\nText JOBS + boat for details.`
+      }
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
     } else {
       const r = vesselFilter ? `No open jobs found for ${vesselFilter}.` : 'No open jobs right now.'
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
     }
+  }
+
+  const today = atlanticToday()
+
+  // ── Parse with Claude ──
+  let parsed: any = {
+    entries: [], name_override: null, work_date: null,
+    time_in: null, stated_time_out: null,
+    lunch_minutes: null, per_diem_location: null,
+    is_help_request: false
+  }
+
+  try {
+    parsed = await parseWithClaude(msgBody, today)
+  } catch (_e) {
+    const r = "Couldn't read that one. Reply HELP for the format, or text Nicki directly."
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  if (parsed.is_help_request) {
+    return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
   // ── Employee lookup (name override → phone) ──
