@@ -103,6 +103,23 @@ export default function SmsReview() {
       if (error) { alert('Error creating entries: ' + error.message); setActing(null); return }
     }
 
+    // Supplies go to job_supplies for job cost reporting (no pricing — invoicing adds that)
+    const supplies = (sub.supplies || []).filter(s => s.supply_name?.trim())
+    if (supplies.length > 0) {
+      const supplyRows = supplies.map(s => ({
+        job_id:            jobMap[s.job_number] || null,
+        sms_submission_id: sub.id,
+        employee_id:       sub.employee_id,
+        work_date:         sub.work_date,
+        supply_name:       s.supply_name.trim(),
+        quantity:          Number(s.quantity) > 0 ? Number(s.quantity) : 1,
+      }))
+      const { error: supplyError } = await supabase.from('job_supplies').insert(supplyRows)
+      if (supplyError) {
+        alert(`Timesheet entries were created but supplies failed to save: ${supplyError.message}\nAdd the supplies manually.`)
+      }
+    }
+
     const { error: statusError } = await supabase.from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
     if (statusError) {
       // Entries are already in — approving again would duplicate them
@@ -137,6 +154,11 @@ export default function SmsReview() {
         hours:       e.hours != null ? String(e.hours) : '',
         description: e.description || '',
       })),
+      supplies:          (sub.supplies || []).map(s => ({
+        job_number:  s.job_number || '',
+        supply_name: s.supply_name || '',
+        quantity:    s.quantity != null ? String(s.quantity) : '1',
+      })),
     })
   }
 
@@ -146,6 +168,13 @@ export default function SmsReview() {
     setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', hours: '', description: '' }] }))
   const removeEntryRow = (i) =>
     setEditFields(p => ({ ...p, entries: p.entries.filter((_, j) => j !== i) }))
+
+  const setSupplyField = (i, field, value) =>
+    setEditFields(p => ({ ...p, supplies: p.supplies.map((s, j) => j === i ? { ...s, [field]: value } : s) }))
+  const addSupplyRow = () =>
+    setEditFields(p => ({ ...p, supplies: [...p.supplies, { job_number: '', supply_name: '', quantity: '1' }] }))
+  const removeSupplyRow = (i) =>
+    setEditFields(p => ({ ...p, supplies: p.supplies.filter((_, j) => j !== i) }))
 
   async function saveEdit() {
     // Drop blank rows, then re-split reg/OT the same way the edge function does
@@ -174,6 +203,14 @@ export default function SmsReview() {
       return { ...e, hours, reg_hours: reg, ot_hours: ot }
     })
 
+    const supplies = (editFields.supplies || [])
+      .filter(s => s.supply_name.trim())
+      .map(s => ({
+        job_number:  s.job_number.trim(),
+        supply_name: s.supply_name.trim(),
+        quantity:    Number(s.quantity) > 0 ? Number(s.quantity) : 1,
+      }))
+
     const updates = {
       employee_id:       editFields.employee_id || null,
       work_date:         editFields.work_date || null,
@@ -182,6 +219,7 @@ export default function SmsReview() {
       lunch_minutes:     editFields.lunch_minutes !== '' ? Number(editFields.lunch_minutes) : null,
       per_diem_location: editFields.per_diem_location || null,
       entries,
+      supplies,
       calculated_time_out: null,
       delta_minutes:     null,
       pending_questions: [],
@@ -403,6 +441,35 @@ export default function SmsReview() {
                   <div style={{ color: '#c00', marginBottom: '0.75rem', fontSize: '0.875rem' }}>No job entries</div>
                 )}
 
+                {/* Supplies table */}
+                {sub.supplies && sub.supplies.length > 0 && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+                    <thead>
+                      <tr style={{ background: '#eef4ee' }}>
+                        <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left' }}>Supply</th>
+                        <th style={{ padding: '0.4rem 0.6rem', textAlign: 'right', width: 55 }}>Qty</th>
+                        <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 70 }}>Job #</th>
+                        <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 110, color: '#888' }}>Matched</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sub.supplies.map((s, i) => {
+                        const matchedJob = jobs.find(j => j.job_number === s.job_number)
+                        return (
+                          <tr key={i} style={{ borderTop: '1px solid #eee' }}>
+                            <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600 }}>{s.supply_name}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>{s.quantity}</td>
+                            <td style={{ padding: '0.4rem 0.6rem' }}>{s.job_number || '—'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem', color: matchedJob ? '#2a7a2a' : '#c00' }}>
+                              {matchedJob ? '✓' : '✗ not found'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+
                 {/* Conversation history */}
                 {sub.raw_messages && sub.raw_messages.length > 0 && (
                   <details style={{ marginBottom: '0.75rem' }}>
@@ -560,6 +627,62 @@ export default function SmsReview() {
             <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.3rem' }}>
               Reg/OT split and out-time are recalculated automatically on save.
             </div>
+
+            <label style={lbl}>Supplies Used</label>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
+                  <th style={{ fontWeight: 600, paddingBottom: 2 }}>Supply</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Qty</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
+                  <th style={{ width: 30 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {(editFields.supplies || []).map((s, i) => {
+                  const matched = jobs.some(j => j.job_number === s.job_number.trim())
+                  return (
+                    <tr key={i}>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          value={s.supply_name}
+                          onChange={ev => setSupplyField(i, 'supply_name', ev.target.value)}
+                          placeholder="brake cleaner"
+                          style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          type="number" min="0" step="0.5"
+                          value={s.quantity}
+                          onChange={ev => setSupplyField(i, 'quantity', ev.target.value)}
+                          style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          value={s.job_number}
+                          onChange={ev => setSupplyField(i, 'job_number', ev.target.value)}
+                          placeholder="4760"
+                          style={{ ...inp, borderColor: s.job_number.trim() && !matched ? '#e08080' : '#ccc' }}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          onClick={() => removeSupplyRow(i)}
+                          title="Remove supply"
+                          style={{ border: 'none', background: 'transparent', color: '#c00', cursor: 'pointer', fontSize: '1rem', padding: '0.2rem' }}
+                        >✕</button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <button
+              onClick={addSupplyRow}
+              style={{ marginTop: '0.35rem', padding: '0.25rem 0.7rem', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+            >+ Add supply</button>
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
               <button onClick={saveEdit} style={{ padding: '0.4rem 1.2rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Save</button>

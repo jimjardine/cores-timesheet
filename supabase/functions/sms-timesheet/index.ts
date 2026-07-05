@@ -15,6 +15,9 @@ Wrap up with out time and lunch:
 Or send it all at once:
 "In 7:30, 4760 6hrs bearings, 4862 2hrs fuel lines, lunch 30, no PD"
 
+Used supplies? Add them so they get billed:
+"supplies brake cleaner x1, wire brushes x2 Job 4358"
+
 Using someone else's phone?
 Start with: "This is Joey"
 
@@ -107,6 +110,7 @@ Return exactly this JSON structure (all fields required, use null when absent):
   "lunch_minutes": null,
   "per_diem_location": null,
   "entries": [],
+  "supplies": [],
   "is_help_request": false
 }
 
@@ -119,9 +123,10 @@ Rules:
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string", hours:number, description:"verbatim from message"}] — only real job work
+- supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase.
 - is_help_request: true only if the entire message is a help request
 
-Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25).`
+Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).`
 
   const payload = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -251,7 +256,7 @@ Deno.serve(async (req: Request) => {
 
   // ── Parse with Claude ──
   let parsed: any = {
-    entries: [], name_override: null, work_date: null,
+    entries: [], supplies: [], name_override: null, work_date: null,
     time_in: null, stated_time_out: null,
     lunch_minutes: null, per_diem_location: null,
     is_help_request: false
@@ -341,6 +346,19 @@ Deno.serve(async (req: Request) => {
   let allEntries: any[] = isCorrection && parsed.entries?.length
     ? [...prevEntries, ...(parsed.entries || [])]
     : [...prevEntries, ...(parsed.entries || [])]
+
+  // Supplies accumulate across texts the same way entries do. If no job number was
+  // given with a supply, attribute it to the first job we know about for the day.
+  const prevSupplies: any[] = submission?.supplies || []
+  const fallbackJob = allEntries[0]?.job_number || ''
+  const newSupplies = (parsed.supplies || [])
+    .filter((s: any) => s.supply_name && String(s.supply_name).trim())
+    .map((s: any) => ({
+      job_number:  s.job_number || fallbackJob,
+      supply_name: String(s.supply_name).trim(),
+      quantity:    Number(s.quantity) > 0 ? Number(s.quantity) : 1,
+    }))
+  const allSupplies = [...prevSupplies, ...newSupplies]
 
   const mergedTimeIn    = (isCorrection && parsed.time_in)            ? parsed.time_in
                         : submission?.time_in                          ? submission.time_in.substring(0, 5)
@@ -495,10 +513,16 @@ Deno.serve(async (req: Request) => {
         ? `Total: ${totalHours}hrs (${(totalHours - totalOTHours).toFixed(2).replace(/\.?0+$/, '')}reg + ${totalOTHours}OT)`
         : `Total: ${totalHours}hrs reg`
 
+    const supplyLine = allSupplies.length
+      ? 'Supplies: ' + allSupplies.map((s: any) =>
+          `${s.supply_name} x${s.quantity}${s.job_number ? ` (${s.job_number})` : ''}`).join(', ')
+      : ''
+
     reply = [
       `Done ${firstName} ✓ ${date} | ${inFmt}–${outFmt}${lunchFmt ? ' | ' + lunchFmt : ''}`,
       entryLines,
       totalLine,
+      supplyLine,
       pdLine,
       `Nicki has it.${flagLine}`
     ].filter(Boolean).join('\n')
@@ -523,6 +547,7 @@ Deno.serve(async (req: Request) => {
     calculated_time_out: calcOut,
     delta_minutes:      deltaMinutes,
     entries:            allEntriesWithOT,
+    supplies:           allSupplies,
     pending_questions:  pendingQuestions,
     raw_messages:       allMsgs,
     status:             nextStatus,

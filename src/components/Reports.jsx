@@ -32,6 +32,7 @@ export default function Reports() {
   const [vessels, setVessels] = useState([])
   const [employees, setEmployees] = useState([])
   const [entries, setEntries] = useState([])
+  const [supplies, setSupplies] = useState([])
 
   // Navigation
   const [activeTab, setActiveTab] = useState('jobs')
@@ -90,7 +91,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes] = await Promise.all([
       supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.from('customers').select('*').order('name'),
       supabase.from('vessels').select('*').order('name'),
@@ -98,12 +99,14 @@ export default function Reports() {
       supabase.from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
       supabase.from('payroll_config').select('key, value'),
       supabase.from('stat_holidays').select('holiday_date'),
+      supabase.from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
     setVessels(vesselRes.data || [])
     setEmployees(empRes.data || [])
     setEntries(entriesRes.data || [])
+    setSupplies(suppliesRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
     setLoading(false)
@@ -114,6 +117,11 @@ export default function Reports() {
     if (jobStatus !== 'all' && e.jobs?.status !== jobStatus) return false
     if (dateFrom && e.work_date < dateFrom) return false
     if (dateTo   && e.work_date > dateTo)   return false
+    return true
+  })
+  const filteredSupplies = supplies.filter(s => {
+    if (dateFrom && s.work_date < dateFrom) return false
+    if (dateTo   && s.work_date > dateTo)   return false
     return true
   })
   const jobsWithEntriesInPeriod = new Set(filteredEntries.map(e => e.job_id))
@@ -279,7 +287,12 @@ export default function Reports() {
         otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
         pdPerJob[e.job_id]  = (pdPerJob[e.job_id]  || 0) + Number(e.per_diem || 0)
       })
-      const rows = ['Job #,Customer,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Per Diem,Crew,Date From,Date To']
+      const suppliesPerJob = filteredSupplies.reduce((acc, s) => {
+        if (!acc[s.job_id]) acc[s.job_id] = []
+        acc[s.job_id].push(`${s.supply_name} x${Number(s.quantity)}`)
+        return acc
+      }, {})
+      const rows = ['Job #,Customer,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Per Diem,Crew,Supplies,Date From,Date To']
       filteredJobs
         .filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
         .forEach(j => rows.push([
@@ -291,6 +304,7 @@ export default function Reports() {
           (otPerJob[j.id]  || 0).toFixed(1),
           (pdPerJob[j.id]  || 0),
           `"${crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : ''}"`,
+          `"${(suppliesPerJob[j.id] || []).join('; ')}"`,
           csvDateFrom, csvDateTo,
         ].join(',')))
       downloadCSV(rows, `jobs-${dateFileSuffix}.csv`)
@@ -404,6 +418,7 @@ export default function Reports() {
   if (selectedJob) {
     const job = selectedJob
     const jobEntries = filteredEntries.filter(e => e.job_id === job.id)
+    const jobSupplies = filteredSupplies.filter(s => s.job_id === job.id)
     const totalJobHours = jobEntries.reduce((s, e) => s + Number(e.hours), 0)
     const crewMap = jobEntries.reduce((acc, e) => {
       const emp = e.employees
@@ -483,6 +498,34 @@ export default function Reports() {
             ))}
           </tbody>
         </table>
+
+        <h4 style={{ color: '#555', marginBottom: '0.75rem', marginTop: '2rem' }}>Supplies Used</h4>
+        {jobSupplies.length > 0 ? (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
+            <thead>
+              <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Date</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Supply</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobSupplies.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(s => (
+                <tr key={s.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+                    {new Date(s.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </td>
+                  <td style={{ padding: '0.6rem 0.75rem' }}>{s.employees?.name || '—'}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{s.supply_name}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{Number(s.quantity)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>No supplies recorded</div>
+        )}
       </div>
     )
   }

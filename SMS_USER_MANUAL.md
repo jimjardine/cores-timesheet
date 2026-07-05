@@ -34,6 +34,7 @@ If the confirmation looks wrong, just text the correction (see below).
 | Each job | Job number + hours + what you did: "4760 6hrs rebuilt bearings" |
 | Lunch | "lunch 30", "half hour lunch", or "no lunch" |
 | Per diem | Where you're staying ("staying at Delta Halifax") or "no PD" |
+| Supplies | What you used + how many: "supplies brake cleaner x1, wire brushes x2 Job 4358" |
 
 **Job descriptions matter** — write a few words about what you actually did on each job. That goes on the client's paperwork.
 
@@ -67,6 +68,15 @@ Already got your "Done ✓" but forgot a job or got the time wrong? Text the fix
 > "Out was actually 5, not 4:30"
 
 New jobs get added and corrected times replace the old ones.
+
+## Used supplies? Text those too
+
+Anything you grab off the shelf gets charged back to the job — brake cleaner, wire brushes, rags, whatever. Text it with your hours or on its own:
+
+> "supplies brake cleaner x1, wire brushes x2 Job 4358"
+> "4760 6hrs bearings, used 2 cans brake cleaner"
+
+If you don't say which job, it goes on the first job you texted that day. Quantities like "x2", "2 cans", or "two rolls" all work. No prices needed — the office handles that.
 
 ## Forgot to text yesterday?
 
