@@ -7,6 +7,17 @@ import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
 
+const calculateExpectedHours = (timeIn, timeOut, lunchMinutes) => {
+  if (!timeIn || !timeOut) return null
+  const [inH, inM] = timeIn.split(':').map(Number)
+  const [outH, outM] = timeOut.split(':').map(Number)
+  const inMinutes = inH * 60 + inM
+  const outMinutes = outH * 60 + outM
+  const gross = (outMinutes - inMinutes) / 60
+  const lunch = (lunchMinutes || 0) / 60
+  return Math.max(0, gross - lunch)
+}
+
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('timesheets')
 
@@ -26,7 +37,11 @@ export default function AdminDashboard() {
   // ── Edit / delete ──
   const [editEntry, setEditEntry] = useState(null)
   const [editFields, setEditFields] = useState({})
+  const [editSupplies, setEditSupplies] = useState([])
+  const [timesheetJobs, setTimesheetJobs] = useState([])
   const [savingEdit, setSavingEdit] = useState(false)
+  const [addingNewJob, setAddingNewJob] = useState(false)
+  const [newJobFields, setNewJobFields] = useState({ job_id: '', hours: '', description: '' })
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [exportSummaries, setExportSummaries] = useState(true)
 
@@ -36,6 +51,7 @@ export default function AdminDashboard() {
     employee_id: '', work_date: new Date().toISOString().split('T')[0],
     time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
     entries: [{ job_id: '', hours: '', description: '' }],
+    supplies: [{ job_id: '', supply_name: '', quantity: 1 }],
     per_diem: 0, sort_order: 1
   })
   const [savingManual, setSavingManual] = useState(false)
@@ -76,7 +92,7 @@ export default function AdminDashboard() {
     setLoadingEntries(false)
   }
 
-  function openEdit(e, computedReg, computedOT) {
+  async function openEdit(e, computedReg, computedOT) {
     setEditEntry(e)
     setEditFields({
       work_date:   e.work_date,
@@ -87,6 +103,33 @@ export default function AdminDashboard() {
       per_diem:    e.per_diem ?? 0,
       sort_order:  e.sort_order ?? 1,
     })
+
+    // Fetch all entries for this employee on this date to get all jobs on the timesheet
+    const { data: allEntries } = await supabase
+      .from('timesheet_entries')
+      .select('job_id')
+      .eq('employee_id', e.employee_id)
+      .eq('work_date', e.work_date)
+
+    const jobIdsOnTimesheet = allEntries ? [...new Set(allEntries.map(entry => entry.job_id))] : [e.job_id]
+    setTimesheetJobs(jobIdsOnTimesheet)
+
+    // Fetch existing supplies for this entry
+    const { data: existingSupplies } = await supabase
+      .from('job_supplies')
+      .select('job_id, supply_name, quantity')
+      .eq('employee_id', e.employee_id)
+      .eq('work_date', e.work_date)
+
+    if (existingSupplies && existingSupplies.length > 0) {
+      setEditSupplies(existingSupplies.map(s => ({
+        job_id: s.job_id,
+        supply_name: s.supply_name,
+        quantity: s.quantity
+      })))
+    } else {
+      setEditSupplies([{ job_id: '', supply_name: '', quantity: 1 }])
+    }
   }
 
   async function saveEdit() {
@@ -107,6 +150,48 @@ export default function AdminDashboard() {
       setSavingEdit(false)
       return
     }
+
+    // Delete old supplies and insert updated ones
+    await supabase.from('job_supplies').delete().eq('employee_id', editEntry.employee_id).eq('work_date', editEntry.work_date)
+
+    const validSupplies = editSupplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
+    if (validSupplies.length > 0) {
+      const suppliesToInsert = validSupplies.map(s => ({
+        job_id: s.job_id,
+        employee_id: editEntry.employee_id,
+        work_date: editFields.work_date,
+        supply_name: s.supply_name,
+        quantity: Number(s.quantity),
+      }))
+      const { error: supplyError } = await supabase.from('job_supplies').insert(suppliesToInsert)
+      if (supplyError) {
+        alert(`Supplies save failed: ${supplyError.message}`)
+        setSavingEdit(false)
+        return
+      }
+    }
+
+    // Save new job if being added
+    if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
+      const { error: newJobError } = await supabase.from('timesheet_entries').insert({
+        employee_id: editEntry.employee_id,
+        work_date: editFields.work_date,
+        job_id: newJobFields.job_id,
+        hours: Number(newJobFields.hours),
+        description: newJobFields.description || '',
+        ot_hours: 0,
+        per_diem: 0,
+        sort_order: 999,
+      })
+      if (newJobError) {
+        alert(`Failed to add job: ${newJobError.message}`)
+        setSavingEdit(false)
+        return
+      }
+      setAddingNewJob(false)
+      setNewJobFields({ job_id: '', hours: '', description: '' })
+    }
+
     await loadTimesheets()
     setEditEntry(null)
     setSavingEdit(false)
@@ -117,6 +202,37 @@ export default function AdminDashboard() {
     if (error) alert(`Delete failed: ${error.message}`)
     setConfirmDeleteId(null)
     await loadTimesheets()
+  }
+
+  async function saveNewJobToTimesheet() {
+    if (!newJobFields.job_id || !newJobFields.hours) {
+      alert('Pick job and enter hours')
+      return
+    }
+
+    try {
+      const { error } = await supabase.from('timesheet_entries').insert({
+        employee_id: editEntry.employee_id,
+        work_date: editEntry.work_date,
+        job_id: newJobFields.job_id,
+        hours: Number(newJobFields.hours),
+        description: newJobFields.description || '',
+        ot_hours: 0,
+        per_diem: 0,
+        sort_order: 999,
+      })
+
+      if (error) {
+        alert(`Failed to add job: ${error.message}`)
+        return
+      }
+
+      await loadTimesheets()
+      setAddingNewJob(false)
+      setNewJobFields({ job_id: '', hours: '', description: '' })
+    } catch (err) {
+      alert(`Error: ${err.message}`)
+    }
   }
 
   async function saveManualEntry() {
@@ -166,12 +282,31 @@ export default function AdminDashboard() {
         alert(`Save failed: ${error.message}`)
         return
       }
+
+      // Insert supplies if any
+      const validSupplies = manualFields.supplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
+      if (validSupplies.length > 0) {
+        const suppliesToInsert = validSupplies.map(s => ({
+          job_id: s.job_id,
+          employee_id: manualFields.employee_id,
+          work_date: manualFields.work_date,
+          supply_name: s.supply_name,
+          quantity: Number(s.quantity),
+        }))
+        const { error: supplyError } = await supabase.from('job_supplies').insert(suppliesToInsert)
+        if (supplyError) {
+          alert(`Supplies save failed: ${supplyError.message}`)
+          return
+        }
+      }
+
       await loadTimesheets()
       setManualEntry(null)
       setManualFields({
         employee_id: '', work_date: new Date().toISOString().split('T')[0],
         time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
         entries: [{ job_id: '', hours: '', description: '' }],
+        supplies: [{ job_id: '', supply_name: '', quantity: 1 }],
         per_diem: 0, sort_order: 1
       })
     } finally {
@@ -431,7 +566,7 @@ export default function AdminDashboard() {
       {/* ── Edit modal ── */}
       {editEntry && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: '8px', padding: '1.75rem', width: '480px', maxWidth: '95vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '1.75rem', width: '480px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 1.25rem' }}>Edit Entry</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
@@ -448,6 +583,16 @@ export default function AdminDashboard() {
                   value={editFields.ot_hours ?? ''}
                   onChange={e => setEditFields(f => ({ ...f, ot_hours: e.target.value }))} />
               </div>
+              {editEntry?.time_in && editEntry?.time_out && (() => {
+                const expectedHours = calculateExpectedHours(editEntry.time_in, editEntry.time_out, editEntry.lunch_minutes)
+                const enteredHours = Number(editFields.reg_hours || 0) + Number(editFields.ot_hours || 0)
+                const mismatch = expectedHours && Math.abs(expectedHours - enteredHours) > 0.1
+                return mismatch ? (
+                  <div style={{ gridColumn: '1 / -1', padding: '0.75rem', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px', fontSize: '0.85rem', color: '#856404' }}>
+                    ⚠️ <strong>Time mismatch:</strong> {editEntry.time_in} to {editEntry.time_out} minus {editEntry.lunch_minutes || 0}min = {expectedHours.toFixed(1)}hrs, but you entered {enteredHours.toFixed(1)}hrs
+                  </div>
+                ) : null
+              })()}
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Job</label>
                 <select style={inputStyle} value={editFields.job_id || ''} onChange={e => setEditFields(f => ({ ...f, job_id: e.target.value }))}>
@@ -468,7 +613,49 @@ export default function AdminDashboard() {
                 </select>
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.5rem', color: '#555' }}>Supplies</div>
+              {editSupplies.map((supply, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 0.8fr 0.6fr 0.4fr', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'end' }}>
+                  <select style={inputStyle} value={supply.job_id || ''} onChange={e => {
+                    const newSupplies = [...editSupplies]
+                    newSupplies[i] = { ...supply, job_id: e.target.value }
+                    setEditSupplies(newSupplies)
+                  }}>
+                    <option value="">— select job —</option>
+                    {jobs.filter(j => timesheetJobs.includes(j.id) || j.id === editEntry.job_id).map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                  </select>
+                  <input type="text" placeholder="supply" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
+                    const newSupplies = [...editSupplies]
+                    newSupplies[i] = { ...supply, supply_name: e.target.value }
+                    setEditSupplies(newSupplies)
+                  }} />
+                  <input type="number" step="0.5" min="0" placeholder="qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
+                    const newSupplies = [...editSupplies]
+                    newSupplies[i] = { ...supply, quantity: e.target.value }
+                    setEditSupplies(newSupplies)
+                  }} />
+                  <button onClick={() => setEditSupplies(editSupplies.filter((_, idx) => idx !== i))} style={{ padding: '0.4rem 0.6rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontWeight: 600, fontSize: '0.85rem' }}>✕</button>
+                </div>
+              ))}
+            </div>
+
+            {!addingNewJob ? (
+              <button onClick={() => setAddingNewJob(true)} style={{ padding: '0.6rem 1rem', border: '1px solid #0066cc', borderRadius: '4px', background: '#f0f5ff', cursor: 'pointer', color: '#0066cc', fontWeight: 600, fontSize: '0.9rem', marginTop: '1rem', width: '100%' }}>+ Add another job to this timesheet</button>
+            ) : (
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '4px', padding: '1rem', marginTop: '1rem', background: '#f9f9f9' }}>
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: '#555' }}>Add Job</div>
+                <select style={inputStyle} value={newJobFields.job_id} onChange={e => setNewJobFields(f => ({ ...f, job_id: e.target.value }))} placeholder="Select job">
+                  <option value="">— select job —</option>
+                  {jobs.filter(j => j.status === 'open').map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                </select>
+                <input type="number" step="0.5" min="0" placeholder="hours" style={{ ...inputStyle, marginTop: '0.5rem' }} value={newJobFields.hours} onChange={e => setNewJobFields(f => ({ ...f, hours: e.target.value }))} />
+                <textarea placeholder="description" style={{ ...inputStyle, marginTop: '0.5rem', minHeight: '60px' }} value={newJobFields.description} onChange={e => setNewJobFields(f => ({ ...f, description: e.target.value }))} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
               <button onClick={() => setEditEntry(null)} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveEdit} disabled={savingEdit} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
                 {savingEdit ? 'Saving…' : 'Save'}
@@ -543,6 +730,37 @@ export default function AdminDashboard() {
                 </div>
               ))}
               <button onClick={() => setManualFields(f => ({ ...f, entries: [...f.entries, { job_id: '', hours: '', description: '' }] }))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f9f9f9', cursor: 'pointer', fontSize: '0.85rem', marginTop: '0.25rem' }}>+ Add job</button>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.5rem', color: '#555' }}>Supplies</div>
+              {manualFields.supplies.map((supply, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 0.6fr 0.8fr 0.4fr', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'end' }}>
+                  <select style={inputStyle} value={supply.job_id || ''} onChange={e => {
+                    const newSupplies = [...manualFields.supplies]
+                    newSupplies[i] = { ...supply, job_id: e.target.value }
+                    setManualFields(f => ({ ...f, supplies: newSupplies }))
+                  }}>
+                    <option value="">— select job —</option>
+                    {manualFields.entries.filter(e => e.job_id).map(e => {
+                      const job = jobs.find(j => j.id === e.job_id)
+                      return job ? <option key={job.id} value={job.id}>{job.job_number}</option> : null
+                    })}
+                  </select>
+                  <input type="text" placeholder="supply" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
+                    const newSupplies = [...manualFields.supplies]
+                    newSupplies[i] = { ...supply, supply_name: e.target.value }
+                    setManualFields(f => ({ ...f, supplies: newSupplies }))
+                  }} />
+                  <input type="number" step="0.5" min="0" placeholder="qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
+                    const newSupplies = [...manualFields.supplies]
+                    newSupplies[i] = { ...supply, quantity: e.target.value }
+                    setManualFields(f => ({ ...f, supplies: newSupplies }))
+                  }} />
+                  <button onClick={() => setManualFields(f => ({ ...f, supplies: f.supplies.filter((_, idx) => idx !== i) }))} style={{ padding: '0.4rem 0.6rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontWeight: 600, fontSize: '0.85rem' }}>✕</button>
+                </div>
+              ))}
+              <button onClick={() => setManualFields(f => ({ ...f, supplies: [...f.supplies, { job_id: '', supply_name: '', quantity: 1 }] }))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f9f9f9', cursor: 'pointer', fontSize: '0.85rem', marginTop: '0.25rem' }}>+ Add supply</button>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
