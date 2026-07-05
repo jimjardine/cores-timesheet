@@ -29,6 +29,7 @@ export default function Reports() {
   const [loading, setLoading] = useState(true)
   const [jobs, setJobs] = useState([])
   const [customers, setCustomers] = useState([])
+  const [vessels, setVessels] = useState([])
   const [employees, setEmployees] = useState([])
   const [entries, setEntries] = useState([])
 
@@ -86,9 +87,10 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, empRes, entriesRes, configRes, holidaysRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes] = await Promise.all([
       supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.from('customers').select('*').order('name'),
+      supabase.from('vessels').select('*').order('name'),
       supabase.from('employees').select('*').order('name'),
       supabase.from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
       supabase.from('payroll_config').select('key, value'),
@@ -96,6 +98,7 @@ export default function Reports() {
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
+    setVessels(vesselRes.data || [])
     setEmployees(empRes.data || [])
     setEntries(entriesRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
@@ -159,7 +162,7 @@ export default function Reports() {
     const prev = navHistory[navHistory.length - 1]
     if (prev.selectedJob) return `← ${prev.selectedJob.job_number}`
     if (prev.selectedEmployee) return `← ${prev.selectedEmployee.name}`
-    const labels = { jobs: '← Jobs Overview', customer: '← By Customer', employee: '← All Employees', payroll: '← Payroll' }
+    const labels = { jobs: '← Jobs Overview', customer: '← By Customer', vessel: '← By Vessel', employee: '← All Employees', payroll: '← Payroll' }
     return labels[prev.activeTab] || '← Back'
   }
 
@@ -304,6 +307,27 @@ export default function Reports() {
         )
       )
       downloadCSV(rows, `by-customer-${dateFileSuffix}.csv`)
+    } else if (activeTab === 'vessel') {
+      const regPerJob = {}, otPerJob = {}
+      filteredEntries.forEach(e => {
+        const { reg = 0, ot = 0 } = otMap[e.id] || {}
+        regPerJob[e.job_id] = (regPerJob[e.job_id] || 0) + reg
+        otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
+      })
+      const rows = ['Vessel,Job #,Customer,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
+      vessels.forEach(v =>
+        filteredJobs.filter(j => j.vessel_id === v.id).forEach(j =>
+          rows.push([v.name, j.job_number, j.customers?.name,
+            `"${(j.description || '').replace(/"/g, '""')}"`,
+            j.status,
+            (hoursPerJob[j.id] || 0).toFixed(1),
+            (regPerJob[j.id] || 0).toFixed(1),
+            (otPerJob[j.id]  || 0).toFixed(1),
+            csvDateFrom, csvDateTo,
+          ].join(','))
+        )
+      )
+      downloadCSV(rows, `by-vessel-${dateFileSuffix}.csv`)
     } else if (activeTab === 'employee') {
       const rows = ['Employee,Jobs Worked,Total Hours,Reg Hours,OT Hours,Per Diem,Customers,Date From,Date To']
       employees.forEach(emp => {
@@ -582,11 +606,12 @@ export default function Reports() {
       )}
 
       {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
         {[
           { label: jobStatus === 'closed' ? 'Closed Jobs' : jobStatus === 'all' ? 'Total Jobs' : 'Open Jobs',
             value: shownJobs, color: '#2d6a38', onClick: () => switchTab('jobs') },
-          { label: 'Total Customers',    value: customers.length,                       color: '#0066cc', onClick: () => switchTab('customer') },
+          { label: 'Total Customers',    value: new Set(filteredJobs.map(j => j.customer_id).filter(Boolean)).size, color: '#0066cc', onClick: () => switchTab('customer') },
+          { label: 'Total Vessels',      value: new Set(filteredJobs.map(j => j.vessel_id).filter(Boolean)).size,   color: '#5a4fcf', onClick: () => switchTab('vessel') },
           { label: 'Active Employees',   value: employees.filter(e => e.active).length, color: '#444',   onClick: () => switchTab('employee') },
           { label: 'Total Hours Logged', value: totalHours.toFixed(1),                  color: '#8B4513', onClick: () => switchTab('jobs') },
         ].map(({ label, value, color, onClick }) => (
@@ -602,7 +627,7 @@ export default function Reports() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {['jobs', 'customer', 'employee', 'payroll'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', employee: 'By Employee', payroll: 'Payroll' }[t]))}
+        {['jobs', 'customer', 'vessel', 'employee', 'payroll'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee', payroll: 'Payroll' }[t]))}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
           {tabExportBtn}
         </div>
@@ -653,25 +678,86 @@ export default function Reports() {
             const custJobs = filteredJobs.filter(j => j.customer_id === c.id)
             const custHours = custJobs.reduce((s, j) => s + (hoursPerJob[j.id] || 0), 0)
             const custCrew = new Set(filteredEntries.filter(e => custJobs.find(j => j.id === e.job_id)).map(e => e.employees?.name))
+
+            const vesselGroups = []
+            const groupMap = {}
+            custJobs.forEach(j => {
+              const key = j.vessel_id || '__no_vessel__'
+              if (!groupMap[key]) {
+                groupMap[key] = { vesselName: j.vessels?.name || 'Shop', jobs: [] }
+                vesselGroups.push(groupMap[key])
+              }
+              groupMap[key].jobs.push(j)
+            })
+            vesselGroups.sort((a, b) => {
+              if (a.vesselName === 'Shop') return 1
+              if (b.vesselName === 'Shop') return -1
+              return a.vesselName.localeCompare(b.vesselName)
+            })
+
             return (
               <div key={c.id} style={{ ...card, marginBottom: '1.5rem' }}>
                 <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                 <div style={{ color: '#888', fontSize: '0.9rem', marginBottom: '1rem' }}>
                   {custJobs.filter(j => j.status === 'open').length} open · {custHours.toFixed(1)} hrs · {custCrew.size} crew
                 </div>
+                {vesselGroups.map(g => (
+                  <div key={g.vesselName} style={{ marginBottom: '1rem' }}>
+                    <div style={{ fontWeight: 600, color: '#555', fontSize: '0.85rem', marginBottom: '0.4rem' }}>{g.vesselName}</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #eee' }}>
+                          {['JOB #', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
+                            <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'STATUS' || h === 'HOURS' ? 'center' : 'left', color: '#888', fontWeight: 600, fontSize: '0.8rem' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.jobs.map(j => (
+                          <tr key={j.id} style={{ borderBottom: '1px solid #f5f5f5', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                            <td style={{ padding: '0.5rem 0.75rem', ...linkStyle }}>{j.job_number}</td>
+                            <td style={{ padding: '0.5rem 0.75rem', color: '#555' }}>{j.description}</td>
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── By Vessel ── */}
+      {activeTab === 'vessel' && (
+        <div>
+          {vessels.map(v => {
+            const vesselJobs = filteredJobs.filter(j => j.vessel_id === v.id)
+            const vesselHours = vesselJobs.reduce((s, j) => s + (hoursPerJob[j.id] || 0), 0)
+            const vesselCrew = new Set(filteredEntries.filter(e => vesselJobs.find(j => j.id === e.job_id)).map(e => e.employees?.name))
+            if (!vesselJobs.length) return null
+            return (
+              <div key={v.id} style={{ ...card, marginBottom: '1.5rem' }}>
+                <h3 style={{ margin: '0 0 0.25rem' }}>{v.name}</h3>
+                <div style={{ color: '#888', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                  {vesselJobs.filter(j => j.status === 'open').length} open · {vesselHours.toFixed(1)} hrs · {vesselCrew.size} crew
+                </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid #eee' }}>
-                      {['JOB #', 'VESSEL', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
+                      {['JOB #', 'CUSTOMER', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
                         <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'STATUS' || h === 'HOURS' ? 'center' : 'left', color: '#888', fontWeight: 600, fontSize: '0.8rem' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {custJobs.map(j => (
+                    {vesselJobs.map(j => (
                       <tr key={j.id} style={{ borderBottom: '1px solid #f5f5f5', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                         <td style={{ padding: '0.5rem 0.75rem', ...linkStyle }}>{j.job_number}</td>
-                        <td style={{ padding: '0.5rem 0.75rem' }}>{j.vessels?.name}</td>
+                        <td style={{ padding: '0.5rem 0.75rem' }}>{j.customers?.name}</td>
                         <td style={{ padding: '0.5rem 0.75rem', color: '#555' }}>{j.description}</td>
                         <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
                         <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>

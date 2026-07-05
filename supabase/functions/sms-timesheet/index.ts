@@ -18,7 +18,8 @@ Or send it all at once:
 Using someone else's phone?
 Start with: "This is Joey"
 
-Reply HELP anytime.`
+Need the job list? Text JOBS.
+Questions? Reply HELP anytime.`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -214,6 +215,37 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
+  // ── Jobs list request ──
+  const msgLower = msgBody.toLowerCase().trim()
+  const isJobsRequest = msgLower === 'jobs' || msgLower.startsWith('jobs ')
+  if (isJobsRequest) {
+    // Extract vessel name filter if present (e.g., "jobs wave master")
+    const vesselFilter = msgLower === 'jobs' ? null : msgLower.slice(5).trim()
+
+    let query = supabase
+      .from('jobs')
+      .select('job_number, description, vessel_name')
+      .eq('status', 'open')
+
+    // If a vessel filter is provided, filter by vessel name (case-insensitive partial match)
+    if (vesselFilter) {
+      query = query.ilike('vessel_name', `%${vesselFilter}%`)
+    }
+
+    const { data: openJobs } = await query.order('job_number')
+
+    if (openJobs && openJobs.length > 0) {
+      const jobsList = openJobs
+        .map((j: any) => `${j.job_number} (${j.vessel_name || 'Unknown vessel'}${j.description ? ' — ' + j.description : ''})`)
+        .join(', ')
+      const r = vesselFilter ? `Jobs for ${vesselFilter}: ${jobsList}` : `Open jobs: ${jobsList}`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    } else {
+      const r = vesselFilter ? `No open jobs found for ${vesselFilter}.` : 'No open jobs right now.'
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+  }
+
   // ── Employee lookup (name override → phone) ──
   let employeeId: string | null = null
   let employeeName: string | null = null
@@ -230,10 +262,13 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!employeeId && fromPhone) {
-    // Any active employee can text from their own phone (office staff like Nicki included);
-    // the "This is [name]" override stays technician-only since that's for techs borrowing phones.
-    const { data: allEmps } = await supabase.from('employees').select('id, name, phone').eq('active', true)
-    const match = (allEmps || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
+    // Phone-based lookup: ANY active employee, ANY role. No role filter.
+    // Office staff (Niki), techs, everyone can text from their own phone.
+    const { data: byPhone } = await supabase
+      .from('employees')
+      .select('id, name, phone')
+      .eq('active', true)
+    const match = (byPhone || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
     if (match) { employeeId = match.id; employeeName = match.name }
   }
 

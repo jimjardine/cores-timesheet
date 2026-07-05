@@ -119,6 +119,8 @@ export default function AdminPanel() {
       setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open' })
     } else if (type === 'employee') {
       setFields({ name: record?.name || '', phone: record?.phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
+    } else if (type === 'entry') {
+      setFields({ work_date: record?.work_date || '', job_id: record?.job_id || '', hours: record?.hours || '', ot_hours: record?.ot_hours || '', per_diem: record?.per_diem || '0', description: record?.description || '' })
     }
   }
 
@@ -349,7 +351,7 @@ export default function AdminPanel() {
                         <td style={{ ...tdStyle, color: '#555' }}>
                           {job.vessels?.name || <span style={{ padding: '0.15rem 0.5rem', background: '#f0f0f0', borderRadius: '10px', fontSize: '0.78rem', color: '#888', fontWeight: 600 }}>Shop</span>}
                         </td>
-                        <td style={{ ...tdStyle, fontWeight: 600 }}>{job.job_number}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600, color: '#0066cc', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); openModal('job', job) }}>{job.job_number}</td>
                         <td style={{ ...tdStyle, color: '#555', maxWidth: '260px' }}>{job.description || '—'}</td>
                         <td style={{ ...tdStyle, textAlign: 'center' }}>
                           {entryCounts[job.id] > 0
@@ -389,7 +391,7 @@ export default function AdminPanel() {
                                   </thead>
                                   <tbody>
                                     {jobEntries[job.id].map(e => (
-                                      <tr key={e.id}>
+                                      <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => openModal('entry', e)} onMouseEnter={evt => evt.currentTarget.style.background = '#f5f9ff'} onMouseLeave={evt => evt.currentTarget.style.background = ''}>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', whiteSpace: 'nowrap', padding: '0.4rem 0.6rem' }}>
                                           {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}
                                         </td>
@@ -887,6 +889,31 @@ export default function AdminPanel() {
               <option value="false">Inactive</option>
             </select>
           </Field>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+            <button style={btnSecondary} onClick={() => setModal(null)}>Cancel</button>
+            <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal?.type === 'entry' && (
+        <Modal title="Edit Timesheet Entry" onClose={() => setModal(null)}>
+          <Field label="Date"><input type="date" style={inputStyle} {...f('work_date')} /></Field>
+          <Field label="Job">
+            <select style={inputStyle} {...f('job_id')}>
+              <option value="">— select job —</option>
+              {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} ({j.vessels?.name || 'Unknown'})</option>)}
+            </select>
+          </Field>
+          <Field label="Hours"><input type="number" step="0.5" min="0" style={inputStyle} {...f('hours')} /></Field>
+          <Field label="Per Diem">
+            <select style={inputStyle} {...f('per_diem')}>
+              <option value="0">None</option>
+              <option value="1">×1 Standard</option>
+              <option value="2">×2 Double</option>
+            </select>
+          </Field>
+          <Field label="Description"><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...f('description')} /></Field>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
             <button style={btnSecondary} onClick={() => setModal(null)}>Cancel</button>
             <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>

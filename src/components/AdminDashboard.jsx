@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import SmsReview from './SmsReview'
 
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
@@ -28,6 +29,16 @@ export default function AdminDashboard() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [exportSummaries, setExportSummaries] = useState(true)
 
+  // ── Manual entry ──
+  const [manualEntry, setManualEntry] = useState(null)
+  const [manualFields, setManualFields] = useState({
+    employee_id: '', work_date: new Date().toISOString().split('T')[0],
+    time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
+    entries: [{ job_id: '', hours: '', description: '' }],
+    per_diem: 0, sort_order: 1
+  })
+  const [savingManual, setSavingManual] = useState(false)
+
   // ── Submission Status tab ──
   const [subPreset, setSubPreset] = useState('this-week')
   const [subWeekStart, setSubWeekStart] = useState(() => {
@@ -49,9 +60,9 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     loadTimesheets()
-    supabase.from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
+    supabase.from('employees').select('*').order('name').then(({ data }) => setEmployees(data || []))
     supabase.from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
-    supabase.from('jobs').select('id, job_number, customers(name)').order('job_number').then(({ data }) => setJobs(data || []))
+    supabase.from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
 
   async function loadTimesheets() {
@@ -99,6 +110,60 @@ export default function AdminDashboard() {
     await supabase.from('timesheet_entries').delete().eq('id', id)
     setConfirmDeleteId(null)
     await loadTimesheets()
+  }
+
+  async function saveManualEntry() {
+    if (!manualFields.employee_id || !manualFields.work_date) {
+      alert('Pick employee and date')
+      return
+    }
+    const validEntries = manualFields.entries.filter(e => e.job_id && Number(e.hours) > 0)
+    if (validEntries.length === 0) {
+      alert('Add at least one job with hours')
+      return
+    }
+
+    setSavingManual(true)
+    try {
+      // Fetch payroll config for OT threshold
+      const { data: otCfg } = await supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
+      const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
+
+      // Fetch existing entries for this employee on this date to include in OT calc
+      const { data: existingToday } = await supabase.from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date)
+      const alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
+
+      // Insert entries with OT split
+      const toInsert = validEntries.map((e, i) => {
+        const hours = Number(e.hours)
+        let reg = Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
+        const ot = hours - reg
+        alreadyWorked += hours
+        return {
+          employee_id: manualFields.employee_id,
+          work_date: manualFields.work_date,
+          job_id: e.job_id,
+          hours: hours,
+          reg_hours: reg,
+          ot_hours: ot,
+          description: e.description || '',
+          per_diem: manualFields.per_diem,
+          sort_order: manualFields.sort_order + i,
+        }
+      })
+
+      await supabase.from('timesheet_entries').insert(toInsert)
+      await loadTimesheets()
+      setManualEntry(null)
+      setManualFields({
+        employee_id: '', work_date: new Date().toISOString().split('T')[0],
+        time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
+        entries: [{ job_id: '', hours: '', description: '' }],
+        per_diem: 0, sort_order: 1
+      })
+    } finally {
+      setSavingManual(false)
+    }
   }
 
   // ── Date helpers ──
@@ -333,7 +398,7 @@ export default function AdminDashboard() {
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Job</label>
                 <select style={inputStyle} value={editFields.job_id || ''} onChange={e => setEditFields(f => ({ ...f, job_id: e.target.value }))}>
                   <option value="">— select —</option>
-                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}{j.customers?.name ? ` — ${j.customers.name}` : ''}</option>)}
+                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} ({j.vessels?.name || 'Unknown'})</option>)}
                 </select>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
@@ -359,11 +424,89 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* ── Manual entry modal ── */}
+      {manualEntry && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', overflowY: 'auto' }}>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '1.75rem', width: '540px', maxWidth: '95vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', margin: '2rem auto' }}>
+            <h3 style={{ margin: '0 0 1.25rem' }}>Add Manual Timesheet</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Employee</label>
+                <select style={inputStyle} value={manualFields.employee_id || ''} onChange={e => setManualFields(f => ({ ...f, employee_id: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Date</label>
+                <input type="date" style={inputStyle} value={manualFields.work_date} onChange={e => setManualFields(f => ({ ...f, work_date: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time In</label>
+                <input type="time" style={inputStyle} value={manualFields.time_in} onChange={e => setManualFields(f => ({ ...f, time_in: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time Out</label>
+                <input type="time" style={inputStyle} value={manualFields.stated_time_out} onChange={e => setManualFields(f => ({ ...f, stated_time_out: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Lunch (min)</label>
+                <input type="number" min="0" style={inputStyle} value={manualFields.lunch_minutes} onChange={e => setManualFields(f => ({ ...f, lunch_minutes: Number(e.target.value) }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Per Diem</label>
+                <select style={inputStyle} value={manualFields.per_diem || 0} onChange={e => setManualFields(f => ({ ...f, per_diem: Number(e.target.value) }))}>
+                  <option value={0}>None</option>
+                  <option value={1}>×1 Standard</option>
+                  <option value={2}>×2 Double</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.5rem', color: '#555' }}>Jobs</div>
+              {manualFields.entries.map((entry, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 0.6fr 1.5fr 0.4fr', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'end' }}>
+                  <select style={inputStyle} value={entry.job_id || ''} onChange={e => {
+                    const newEntries = [...manualFields.entries]
+                    newEntries[i] = { ...entry, job_id: e.target.value }
+                    setManualFields(f => ({ ...f, entries: newEntries }))
+                  }}>
+                    <option value="">— select job —</option>
+                    {jobs.filter(j => j.status === 'open').map(j => <option key={j.id} value={j.id}>{j.job_number} ({j.vessels?.name || 'Unknown'})</option>)}
+                  </select>
+                  <input type="number" step="0.5" min="0" placeholder="hrs" style={inputStyle} value={entry.hours || ''} onChange={e => {
+                    const newEntries = [...manualFields.entries]
+                    newEntries[i] = { ...entry, hours: e.target.value }
+                    setManualFields(f => ({ ...f, entries: newEntries }))
+                  }} />
+                  <input type="text" placeholder="description" style={inputStyle} value={entry.description || ''} onChange={e => {
+                    const newEntries = [...manualFields.entries]
+                    newEntries[i] = { ...entry, description: e.target.value }
+                    setManualFields(f => ({ ...f, entries: newEntries }))
+                  }} />
+                  <button onClick={() => setManualFields(f => ({ ...f, entries: f.entries.filter((_, idx) => idx !== i) }))} style={{ padding: '0.4rem 0.6rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontWeight: 600, fontSize: '0.85rem' }}>✕</button>
+                </div>
+              ))}
+              <button onClick={() => setManualFields(f => ({ ...f, entries: [...f.entries, { job_id: '', hours: '', description: '' }] }))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f9f9f9', cursor: 'pointer', fontSize: '0.85rem', marginTop: '0.25rem' }}>+ Add job</button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button onClick={() => setManualEntry(null)} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={saveManualEntry} disabled={savingManual} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                {savingManual ? 'Saving…' : 'Save Entry'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <h1>Admin Dashboard</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}>Timesheets</button>
         <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
+        <button style={tabStyle('sms')} onClick={() => setActiveTab('sms')}>SMS Review</button>
       </div>
 
       {/* ── Timesheets tab ── */}
@@ -505,6 +648,7 @@ export default function AdminDashboard() {
                     <input type="checkbox" checked={exportSummaries} onChange={e => setExportSummaries(e.target.checked)} />
                     Include summaries
                   </label>
+                  <button onClick={() => setManualEntry(true)} style={{ padding: '0.45rem 1rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>+ Add Manual Entry</button>
                   <button onClick={handleExport} style={{ padding: '0.45rem 1rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Export CSV</button>
                 </div>
               </div>
@@ -638,15 +782,6 @@ export default function AdminDashboard() {
               Week of {fmtDate(subWeekStart)} – {fmtDate(new Date(new Date(subWeekStart + 'T12:00:00').setDate(new Date(subWeekStart + 'T12:00:00').getDate() + 6)).toISOString().split('T')[0])}
             </div>
 
-            {missing.length > 0 && (
-              <div style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#fff5f5', border: '1px solid #f5c6c6', borderRadius: '6px' }}>
-                <span style={{ fontWeight: 700, color: '#c0392b', marginRight: '0.75rem' }}>Missing:</span>
-                {missing.map((r, i) => (
-                  <span key={r.emp.id} style={{ color: '#c0392b' }}>{r.emp.name}{i < missing.length - 1 ? ', ' : ''}</span>
-                ))}
-              </div>
-            )}
-
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -690,6 +825,9 @@ export default function AdminDashboard() {
           </div>
         )
       })()}
+
+      {/* ── SMS Review tab ── */}
+      {activeTab === 'sms' && <SmsReview />}
 
     </div>
   )
