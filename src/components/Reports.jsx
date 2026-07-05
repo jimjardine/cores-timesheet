@@ -107,11 +107,16 @@ export default function Reports() {
   }
 
   // ── Filtering ──
-  const filteredJobs = jobs.filter(j => jobStatus === 'all' || j.status === jobStatus)
   const filteredEntries = entries.filter(e => {
     if (jobStatus !== 'all' && e.jobs?.status !== jobStatus) return false
     if (dateFrom && e.work_date < dateFrom) return false
     if (dateTo   && e.work_date > dateTo)   return false
+    return true
+  })
+  const jobsWithEntriesInPeriod = new Set(filteredEntries.map(e => e.job_id))
+  const filteredJobs = jobs.filter(j => {
+    if (jobStatus !== 'all' && j.status !== jobStatus) return false
+    if (datePreset !== 'all' && !jobsWithEntriesInPeriod.has(j.id)) return false
     return true
   })
   const dateLabel = datePreset === 'all' ? 'All time'
