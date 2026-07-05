@@ -155,6 +155,9 @@ export default function AdminDashboard() {
           description: e.description || '',
           per_diem: manualFields.per_diem,
           sort_order: manualFields.sort_order + i,
+          time_in: manualFields.time_in || null,
+          stated_time_out: manualFields.stated_time_out || null,
+          lunch_minutes: manualFields.lunch_minutes || null,
         }
       })
 
