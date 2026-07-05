@@ -2,8 +2,8 @@ import { jsPDF } from 'jspdf'
 
 // Recreates the Cores Worldwide paper "Daily Time Sheet" form, filled in with
 // whatever we have on file. Fields the app doesn't track (safety check answers,
-// signatures, extras/shop supplies/non-compliance) are left blank for hand sign-off.
-export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, jobLines }) {
+// signatures, extras/non-compliance) are left blank for hand sign-off.
+export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, jobLines, supplyLines = [] }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 40
@@ -143,7 +143,34 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
     y += 30
   }
   blankSection("Extra's")
-  blankSection('Shop Supplies')
+
+  // ── Shop Supplies (filled from job_supplies) ──
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+  doc.text('Job #', margin + 4, y + 12)
+  doc.text('Qty', margin + col1W + 4, y + 12)
+  doc.text('Shop Supplies', margin + col1W + col2W + 4, y + 12)
+  y += 16
+  const supTop = y
+  const supRowH = 16
+  const supRowCount = Math.max(supplyLines.length, 1)
+  const supBottom = supTop + supRowH * supRowCount
+  supplyLines.forEach((s, i) => {
+    const rowY = supTop + i * supRowH
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+    doc.text(String(s.jobNumber || ''), margin + 4, rowY + supRowH - 5)
+    doc.text(s.quantity != null ? String(Number(s.quantity)) : '', margin + col1W + 4, rowY + supRowH - 5)
+    doc.text(String(s.supplyName || ''), margin + col1W + col2W + 4, rowY + supRowH - 5, { maxWidth: pageW - margin - (margin + col1W + col2W) - 8 })
+  })
+  doc.setLineWidth(0.5)
+  for (let i = 0; i <= supRowCount; i++) {
+    doc.line(margin, supTop + i * supRowH, pageW - margin, supTop + i * supRowH)
+  }
+  doc.line(margin, supTop, margin, supBottom)
+  doc.line(margin + col1W, supTop, margin + col1W, supBottom)
+  doc.line(margin + col1W + col2W, supTop, margin + col1W + col2W, supBottom)
+  doc.line(pageW - margin, supTop, pageW - margin, supBottom)
+  y = supBottom + 10
+
   blankSection('Non Compliance Log')
   y += 15
 

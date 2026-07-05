@@ -376,14 +376,21 @@ export default function AdminDashboard() {
 
     // Most recent non-rejected submission — maybeSingle() errors if the employee
     // has more than one row for the date (e.g. a rejected attempt plus the real one)
-    const { data: subRows } = await supabase
-      .from('sms_submissions')
-      .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
-      .eq('employee_id', selectedEmp.id)
-      .eq('work_date', selectedDate)
-      .neq('status', 'rejected')
-      .order('updated_at', { ascending: false })
-      .limit(1)
+    const [{ data: subRows }, { data: daySupplies }] = await Promise.all([
+      supabase
+        .from('sms_submissions')
+        .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
+        .eq('employee_id', selectedEmp.id)
+        .eq('work_date', selectedDate)
+        .neq('status', 'rejected')
+        .order('updated_at', { ascending: false })
+        .limit(1),
+      supabase
+        .from('job_supplies')
+        .select('supply_name, quantity, jobs(job_number)')
+        .eq('employee_id', selectedEmp.id)
+        .eq('work_date', selectedDate),
+    ])
     const submission = subRows?.[0] || null
 
     generateDailyTimesheetPDF({
@@ -397,6 +404,11 @@ export default function AdminDashboard() {
         jobNumber: e.jobs?.job_number || '',
         hours: e.hours,
         description: e.description || '',
+      })),
+      supplyLines: (daySupplies || []).map(s => ({
+        jobNumber: s.jobs?.job_number || '',
+        quantity: s.quantity,
+        supplyName: s.supply_name,
       })),
     })
   }
