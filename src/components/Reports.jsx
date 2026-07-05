@@ -42,8 +42,11 @@ export default function Reports() {
   // Global job status filter
   const [jobStatus, setJobStatus] = useState('open')
 
-  // Jobs tab customer filter
-  const [customerFilter, setCustomerFilter] = useState('all')
+  // Tab-specific filters
+  const [jobNumberFilter, setJobNumberFilter] = useState('')
+  const [customerFilterTab, setCustomerFilterTab] = useState('all')
+  const [vesselFilterTab, setVesselFilterTab] = useState('all')
+  const [employeeFilterTab, setEmployeeFilterTab] = useState('all')
 
   // Payroll tab
   const payWeeks = recentPayWeeks(8)
@@ -278,7 +281,7 @@ export default function Reports() {
       })
       const rows = ['Job #,Customer,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Per Diem,Crew,Date From,Date To']
       filteredJobs
-        .filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+        .filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
         .forEach(j => rows.push([
           j.job_number, j.customers?.name, j.vessels?.name,
           `"${(j.description || '').replace(/"/g, '""')}"`,
@@ -299,7 +302,7 @@ export default function Reports() {
         otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
       })
       const rows = ['Customer,Job #,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
-      customers.forEach(c =>
+      customers.filter(c => customerFilterTab === 'all' || c.id === customerFilterTab).forEach(c =>
         filteredJobs.filter(j => j.customer_id === c.id).forEach(j =>
           rows.push([c.name, j.job_number, j.vessels?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
@@ -320,7 +323,7 @@ export default function Reports() {
         otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
       })
       const rows = ['Vessel,Job #,Customer,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
-      vessels.forEach(v =>
+      vessels.filter(v => vesselFilterTab === 'all' || v.id === vesselFilterTab).forEach(v =>
         filteredJobs.filter(j => j.vessel_id === v.id).forEach(j =>
           rows.push([v.name, j.job_number, j.customers?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
@@ -335,7 +338,7 @@ export default function Reports() {
       downloadCSV(rows, `by-vessel-${dateFileSuffix}.csv`)
     } else if (activeTab === 'employee') {
       const rows = ['Employee,Jobs Worked,Total Hours,Reg Hours,OT Hours,Per Diem,Customers,Date From,Date To']
-      employees.forEach(emp => {
+      employees.filter(emp => employeeFilterTab === 'all' || emp.id === employeeFilterTab).forEach(emp => {
         const ee = filteredEntries.filter(e => e.employee_id === emp.id)
         if (!ee.length) return
         const empJobs = new Set(ee.map(e => e.job_id))
@@ -643,11 +646,8 @@ export default function Reports() {
         <div>
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <label style={{ color: '#555' }}>Customer:</label>
-              <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                <option value="all">All customers</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label style={{ color: '#555' }}>Job #:</label>
+              <input type="text" placeholder="Filter by job number..." value={jobNumberFilter} onChange={e => setJobNumberFilter(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }} />
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -659,7 +659,7 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {filteredJobs.filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+              {filteredJobs.filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
                 .map(j => (
                   <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                     <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
@@ -678,7 +678,17 @@ export default function Reports() {
 
       {/* ── By Customer ── */}
       {activeTab === 'customer' && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Customer:</label>
+              <select value={customerFilterTab} onChange={e => setCustomerFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
+                <option value="all">All customers</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
               {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
@@ -687,7 +697,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+            {filteredJobs.filter(j => customerFilterTab === 'all' || j.customer_id === customerFilterTab)
               .sort((a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
@@ -702,11 +712,22 @@ export default function Reports() {
               ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {/* ── By Vessel ── */}
       {activeTab === 'vessel' && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Vessel:</label>
+              <select value={vesselFilterTab} onChange={e => setVesselFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
+                <option value="all">All vessels</option>
+                {vessels.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
               {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
@@ -715,7 +736,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {filteredJobs
+            {filteredJobs.filter(j => vesselFilterTab === 'all' || j.vessel_id === vesselFilterTab)
               .sort((a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
@@ -730,11 +751,22 @@ export default function Reports() {
               ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {/* ── By Employee ── */}
       {activeTab === 'employee' && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Employee:</label>
+              <select value={employeeFilterTab} onChange={e => setEmployeeFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
+                <option value="all">All employees</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
               {['Employee', 'Jobs Worked', 'Total Hours', 'Customers'].map(h => (
@@ -743,7 +775,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {employees.map(emp => {
+            {employees.filter(emp => employeeFilterTab === 'all' || emp.id === employeeFilterTab).map(emp => {
               const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
               const empJobs = new Set(empEntries.map(e => e.job_id))
               const empCustomers = new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean))
@@ -759,6 +791,7 @@ export default function Reports() {
             })}
           </tbody>
         </table>
+        </div>
       )}
 
       {/* ── Payroll ── */}
