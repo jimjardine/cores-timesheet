@@ -678,102 +678,58 @@ export default function Reports() {
 
       {/* ── By Customer ── */}
       {activeTab === 'customer' && (
-        <div>
-          {customers.map(c => {
-            const custJobs = filteredJobs.filter(j => j.customer_id === c.id)
-            const custHours = custJobs.reduce((s, j) => s + (hoursPerJob[j.id] || 0), 0)
-            const custCrew = new Set(filteredEntries.filter(e => custJobs.find(j => j.id === e.job_id)).map(e => e.employees?.name))
-
-            const vesselGroups = []
-            const groupMap = {}
-            custJobs.forEach(j => {
-              const key = j.vessel_id || '__no_vessel__'
-              if (!groupMap[key]) {
-                groupMap[key] = { vesselName: j.vessels?.name || 'Shop', jobs: [] }
-                vesselGroups.push(groupMap[key])
-              }
-              groupMap[key].jobs.push(j)
-            })
-            vesselGroups.sort((a, b) => {
-              if (a.vesselName === 'Shop') return 1
-              if (b.vesselName === 'Shop') return -1
-              return a.vesselName.localeCompare(b.vesselName)
-            })
-
-            return (
-              <div key={c.id} style={{ ...card, marginBottom: '1.5rem' }}>
-                <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
-                <div style={{ color: '#888', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                  {custJobs.filter(j => j.status === 'open').length} open · {custHours.toFixed(1)} hrs · {custCrew.size} crew
-                </div>
-                {vesselGroups.map(g => (
-                  <div key={g.vesselName} style={{ marginBottom: '1rem' }}>
-                    <div style={{ fontWeight: 600, color: '#555', fontSize: '0.85rem', marginBottom: '0.4rem' }}>{g.vesselName}</div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid #eee' }}>
-                          {['JOB #', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
-                            <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'STATUS' || h === 'HOURS' ? 'center' : 'left', color: '#888', fontWeight: 600, fontSize: '0.8rem' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {g.jobs.map(j => (
-                          <tr key={j.id} style={{ borderBottom: '1px solid #f5f5f5', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
-                            <td style={{ padding: '0.5rem 0.75rem', ...linkStyle }}>{j.job_number}</td>
-                            <td style={{ padding: '0.5rem 0.75rem', color: '#555' }}>{j.description}</td>
-                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
-                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
-              </div>
-            )
-          })}
-        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredJobs.filter(j => customerFilter === 'all' || j.customer_id === customerFilter)
+              .sort((a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
+              .map(j => (
+                <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                  <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
+                  <td style={{ padding: '0.75rem' }}>{j.customers?.name}</td>
+                  <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
+                  <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
       )}
 
       {/* ── By Vessel ── */}
       {activeTab === 'vessel' && (
-        <div>
-          {vessels.map(v => {
-            const vesselJobs = filteredJobs.filter(j => j.vessel_id === v.id)
-            const vesselHours = vesselJobs.reduce((s, j) => s + (hoursPerJob[j.id] || 0), 0)
-            const vesselCrew = new Set(filteredEntries.filter(e => vesselJobs.find(j => j.id === e.job_id)).map(e => e.employees?.name))
-            if (!vesselJobs.length) return null
-            return (
-              <div key={v.id} style={{ ...card, marginBottom: '1.5rem' }}>
-                <h3 style={{ margin: '0 0 0.25rem' }}>{v.name}</h3>
-                <div style={{ color: '#888', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                  {vesselJobs.filter(j => j.status === 'open').length} open · {vesselHours.toFixed(1)} hrs · {vesselCrew.size} crew
-                </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid #eee' }}>
-                      {['JOB #', 'CUSTOMER', 'DESCRIPTION', 'STATUS', 'HOURS'].map(h => (
-                        <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'STATUS' || h === 'HOURS' ? 'center' : 'left', color: '#888', fontWeight: 600, fontSize: '0.8rem' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vesselJobs.map(j => (
-                      <tr key={j.id} style={{ borderBottom: '1px solid #f5f5f5', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
-                        <td style={{ padding: '0.5rem 0.75rem', ...linkStyle }}>{j.job_number}</td>
-                        <td style={{ padding: '0.5rem 0.75rem' }}>{j.customers?.name}</td>
-                        <td style={{ padding: '0.5rem 0.75rem', color: '#555' }}>{j.description}</td>
-                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
-                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          })}
-        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredJobs
+              .sort((a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
+              .map(j => (
+                <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                  <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
+                  <td style={{ padding: '0.75rem' }}>{j.customers?.name}</td>
+                  <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
+                  <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
       )}
 
       {/* ── By Employee ── */}
