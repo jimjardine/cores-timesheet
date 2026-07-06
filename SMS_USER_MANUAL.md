@@ -1,6 +1,13 @@
 # Texting In Your Timesheet — Tech Guide
 
-Text your hours to **+1 (506) 404-6969** every work day. No app, no login — just a normal text message. Write it however you'd say it; the system figures it out.
+Submit your hours **every work day** using one of these channels:
+
+| Channel | Number | Use when |
+|---------|--------|----------|
+| **SMS/Text** | +1 (506) 404-6969 | You're at home or have cell signal |
+| **WhatsApp** | +1 555-306-6147 | You're overseas or prefer WhatsApp |
+
+Both work identically — same format, same confirmation. Pick whichever is easier for your situation. Write it however you'd say it; the system figures it out.
 
 ---
 
@@ -110,8 +117,9 @@ If you give your in and out times, it can work out the hours for you:
 
 ## Stuck?
 
-- Text **HELP** (or just **?**) any time for the cheat sheet.
-- If a message comes back with "Couldn't read that one," reword it or text Nicki directly.
+- Text or WhatsApp **HELP** (or just **?**) any time for the cheat sheet.
+- If a message comes back with "Couldn't read that one," reword it or contact Nicki directly.
+- Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 555-306-6147) — they're two different numbers for two different channels.
 
 ---
 
