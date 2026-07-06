@@ -202,8 +202,41 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
-  // ── Jobs list request (before the Claude parse — deterministic keyword) ──
   const msgLower = msgBody.toLowerCase().trim()
+
+  // ── Phone directory request ──
+  const isPhoneRequest = msgLower === 'phone#' || msgLower.startsWith('phone# ')
+  if (isPhoneRequest) {
+    const nameFilter = msgLower === 'phone#' ? null : msgLower.slice(7).trim()
+
+    const { data: employees } = await supabase
+      .from('employees')
+      .select('name, phone')
+      .eq('active', true)
+      .order('name')
+
+    if (!employees || employees.length === 0) {
+      const r = 'No active employees found.'
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    const filtered = nameFilter
+      ? employees.filter((e: any) => e.name && e.phone && e.name.toLowerCase().includes(nameFilter))
+      : employees.filter((e: any) => e.name && e.phone)
+
+    if (filtered.length === 0) {
+      const r = nameFilter ? `No match for "${nameFilter}".` : 'No employees with phone numbers.'
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    const lines = filtered.map((e: any) => `${e.name}: ${e.phone}`).join('\n')
+    const r = nameFilter
+      ? lines
+      : `Phone directory:\n\n${lines}`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── Jobs list request (before the Claude parse — deterministic keyword) ──
   const isJobsRequest = msgLower === 'jobs' || msgLower.startsWith('jobs ')
   if (isJobsRequest) {
     // Extract vessel name filter if present (e.g., "jobs wave master")
