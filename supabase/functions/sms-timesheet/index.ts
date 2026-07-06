@@ -32,6 +32,56 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10)
 }
 
+async function savePhotoToStorage(
+  supabase: any,
+  mediaUrl: string,
+  employeeId: string | null,
+  fromPhone: string,
+  workDate: string
+): Promise<{ path: string; size: number } | null> {
+  try {
+    // Download photo from Twilio
+    const photoRes = await fetch(mediaUrl)
+    if (!photoRes.ok) return null
+    const photoBlob = await photoRes.arrayBuffer()
+    const photoSize = photoBlob.byteLength
+
+    // Determine file extension from content-type
+    const contentType = photoRes.headers.get('content-type') || 'image/jpeg'
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : 'jpg'
+
+    // Store in Supabase Storage: gear-photos/YYYY-MM-DD/employee_id/timestamp.ext
+    // or gear-photos/YYYY-MM-DD/phone/timestamp.ext if no employee match
+    const ts = Date.now()
+    const subdir = employeeId || fromPhone
+    const filename = `${ts}.${ext}`
+    const path = `${workDate}/${subdir}/${filename}`
+
+    const { error: uploadError } = await supabase.storage
+      .from('gear-photos')
+      .upload(path, new Uint8Array(photoBlob), { contentType })
+
+    if (uploadError) {
+      console.error('Photo upload error:', uploadError.message)
+      return null
+    }
+
+    // Save metadata to gear_photos table
+    await supabase.from('gear_photos').insert({
+      employee_id: employeeId,
+      work_date: workDate,
+      from_phone: fromPhone,
+      storage_path: path,
+      file_size_bytes: photoSize,
+    })
+
+    return { path, size: photoSize }
+  } catch (err: any) {
+    console.error('Photo save error:', err.message)
+    return null
+  }
+}
+
 function twiML(msg: string): Response {
   const safe = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return new Response(
@@ -176,6 +226,7 @@ Deno.serve(async (req: Request) => {
   // ── Parse incoming request (Twilio form or test JSON) ──
   let fromPhone = ''
   let msgBody = ''
+  let mediaUrls: string[] = []
   const isTwilio = (req.headers.get('content-type') || '').includes('application/x-www-form-urlencoded')
 
   try {
@@ -183,10 +234,17 @@ Deno.serve(async (req: Request) => {
       const form = await req.formData()
       fromPhone = normalizePhone(form.get('From') as string || '')
       msgBody = (form.get('Body') as string || '').trim()
+      // Collect media URLs from MMS (MediaUrl0, MediaUrl1, etc)
+      const numMedia = Number(form.get('NumMedia') || 0)
+      for (let i = 0; i < numMedia; i++) {
+        const url = form.get(`MediaUrl${i}`)
+        if (url) mediaUrls.push(url as string)
+      }
     } else {
       const json = await req.json()
       fromPhone = normalizePhone(json.from_phone || '')
       msgBody = (json.body || '').trim()
+      mediaUrls = json.media_urls || []
     }
   } catch {
     const r = 'Error reading message.'
@@ -407,6 +465,17 @@ Deno.serve(async (req: Request) => {
                         : (submission?.per_diem_location != null)       ? submission.per_diem_location
                         : parsed.per_diem_location
   const mergedEmployeeId = employeeId || submission?.employee_id || null
+
+  // ── Save any photos from MMS ──
+  if (mediaUrls.length > 0) {
+    const photoResults = await Promise.all(
+      mediaUrls.map(url => savePhotoToStorage(supabase, url, mergedEmployeeId, fromPhone, workDate))
+    )
+    const savedCount = photoResults.filter(Boolean).length
+    if (savedCount > 0) {
+      console.log(`Saved ${savedCount}/${mediaUrls.length} photos`)
+    }
+  }
 
   // If we didn't find the employee name from the current message (e.g. follow-up with no name override),
   // look it up from the existing submission so the confirmation says "Done Jim" not "Done ".
