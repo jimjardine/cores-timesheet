@@ -37,8 +37,9 @@ async function savePhotoToStorage(
   mediaUrl: string,
   employeeId: string | null,
   fromPhone: string,
-  workDate: string
-): Promise<{ path: string; size: number } | null> {
+  workDate: string,
+  shipOrJob: string | null = null
+): Promise<{ path: string; size: number; id: string } | null> {
   try {
     // Download photo from Twilio
     const photoRes = await fetch(mediaUrl)
@@ -67,15 +68,22 @@ async function savePhotoToStorage(
     }
 
     // Save metadata to gear_photos table
-    await supabase.from('gear_photos').insert({
+    const { data: inserted, error: insertError } = await supabase.from('gear_photos').insert({
       employee_id: employeeId,
       work_date: workDate,
       from_phone: fromPhone,
       storage_path: path,
       file_size_bytes: photoSize,
-    })
+      ship_or_job: shipOrJob,
+      pending_context: !shipOrJob,
+    }).select('id').single()
 
-    return { path, size: photoSize }
+    if (insertError || !inserted) {
+      console.error('Photo metadata save error:', insertError?.message)
+      return null
+    }
+
+    return { path, size: photoSize, id: inserted.id }
   } catch (err: any) {
     console.error('Photo save error:', err.message)
     return null
@@ -256,11 +264,39 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
+  const today = atlanticToday()
+  const msgLower = msgBody.toLowerCase().trim()
+
   if (/^(help|\?)$/i.test(msgBody)) {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
-  const msgLower = msgBody.toLowerCase().trim()
+  // ── Check for pending photos awaiting context (ship/job) ──
+  const { data: pendingPhotos } = await supabase
+    .from('gear_photos')
+    .select('id, ship_or_job')
+    .eq('from_phone', fromPhone)
+    .eq('work_date', today)
+    .eq('pending_context', true)
+    .order('created_at', { ascending: false })
+
+  if (pendingPhotos && pendingPhotos.length > 0 && msgBody.length < 100) {
+    // Short response likely to be ship/job context — update pending photos
+    const { error: updateError } = await supabase
+      .from('gear_photos')
+      .update({
+        ship_or_job: msgBody.trim(),
+        pending_context: false,
+      })
+      .eq('from_phone', fromPhone)
+      .eq('work_date', today)
+      .eq('pending_context', true)
+
+    if (!updateError) {
+      const reply = `Got it — photo context saved.`
+      return isTwilio ? twiML(reply) : jsonReply({ reply })
+    }
+  }
 
   // ── Phone directory request ──
   const isPhoneRequest = msgLower === 'phone#' || msgLower.startsWith('phone# ')
@@ -292,6 +328,69 @@ Deno.serve(async (req: Request) => {
       ? lines
       : `Phone directory:\n\n${lines}`
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── Check for photo submission and context ──
+  const hasPhotos = mediaUrls.length > 0
+  let photoContext: string | null = null
+  if (hasPhotos) {
+    // Try to parse message to see if it mentions a job or ship
+    let hasJobContext = false
+    try {
+      const testParse = await parseWithClaude(msgBody, today)
+      // Extract context: job number from first entry or ship mentions
+      if (testParse.entries?.length > 0) {
+        photoContext = testParse.entries[0].job_number
+      }
+      hasJobContext = !!photoContext ||
+                     (msgLower.includes('wave') || msgLower.includes('nanaimo') ||
+                      msgLower.includes('ship') || msgLower.includes('boat'))
+
+      // If we found ship/boat mentions but no job, use the mentions as context
+      if (!photoContext && hasJobContext) {
+        photoContext = msgBody.trim().substring(0, 50)
+      }
+    } catch {
+      // If Claude fails, check for simple patterns
+      const match = msgBody.match(/(\d{4})/);
+      if (match) {
+        photoContext = match[1]
+        hasJobContext = true
+      } else {
+        hasJobContext = /wave|nanaimo|ship|boat/i.test(msgBody)
+        if (hasJobContext) {
+          photoContext = msgBody.trim().substring(0, 50)
+        }
+      }
+    }
+
+    if (!hasJobContext) {
+      // Save photos without context, then prompt for it
+      await Promise.all(
+        mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, null))
+      )
+
+      const firstName = (employeeName || '').split(' ')[0] || ''
+      const reply = `Got the photo${firstName ? ' ' + firstName : ''}. Which ship or job?`
+      return isTwilio ? twiML(reply) : jsonReply({ reply })
+    }
+
+    // Save photos with context, then continue to normal processing
+    // (we'll treat this as a special case that doesn't need the normal timesheet flow)
+    if (photoContext) {
+      await Promise.all(
+        mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext))
+      )
+    }
+
+    // If message was ONLY photos (no text), confirm and return
+    if (!msgBody || msgBody.length < 10) {
+      const firstName = (employeeName || '').split(' ')[0] || ''
+      const reply = `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
+      return isTwilio ? twiML(reply) : jsonReply({ reply })
+    }
+
+    // Otherwise continue to normal processing (might include timesheet entries + photos)
   }
 
   // ── Jobs list request (before the Claude parse — deterministic keyword) ──
@@ -465,17 +564,6 @@ Deno.serve(async (req: Request) => {
                         : (submission?.per_diem_location != null)       ? submission.per_diem_location
                         : parsed.per_diem_location
   const mergedEmployeeId = employeeId || submission?.employee_id || null
-
-  // ── Save any photos from MMS ──
-  if (mediaUrls.length > 0) {
-    const photoResults = await Promise.all(
-      mediaUrls.map(url => savePhotoToStorage(supabase, url, mergedEmployeeId, fromPhone, workDate))
-    )
-    const savedCount = photoResults.filter(Boolean).length
-    if (savedCount > 0) {
-      console.log(`Saved ${savedCount}/${mediaUrls.length} photos`)
-    }
-  }
 
   // If we didn't find the employee name from the current message (e.g. follow-up with no name override),
   // look it up from the existing submission so the confirmation says "Done Jim" not "Done ".
