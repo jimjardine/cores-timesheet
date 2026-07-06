@@ -1046,23 +1046,71 @@ export default function Reports() {
       })()}
 
       {/* ── Weekly Summary ── */}
-      {activeTab === 'weekly-summary' && (
-        <div>
-          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <label style={{ color: '#555', fontWeight: 600 }}>Pay Week:</label>
-              <select value={toYMD(payWeekStart)} onChange={e => setPayWeekStart(new Date(e.target.value))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                {payWeeks.map(w => {
-                  const end = new Date(w); end.setDate(end.getDate() + 6)
-                  return <option key={toYMD(w)} value={toYMD(w)}>{fmtDate(w)} – {fmtDate(end)}</option>
-                })}
-              </select>
+      {activeTab === 'weekly-summary' && (() => {
+        const weekEnd = new Date(payWeekStart)
+        weekEnd.setDate(weekEnd.getDate() + 6)
+        const weekStart = toYMD(payWeekStart)
+        const weekEndStr = toYMD(weekEnd)
+        const weekEntries = entries.filter(e => e.work_date >= weekStart && e.work_date <= weekEndStr)
+        const empIds = [...new Set(weekEntries.map(e => e.employee_id))]
+        const otMap = computeAllOT(weekEntries)
+
+        const weekData = empIds.map(eid => {
+          const emp = employees.find(e => e.id === eid)
+          const empEntries = weekEntries.filter(e => e.employee_id === eid)
+          const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
+          const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
+          const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
+          const perDiem = [...new Set(empEntries.map(e => e.per_diem).filter(Boolean))].join('; ')
+          const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
+          const supplies = supplies.filter(s => empEntries.some(e => e.id === s.timesheet_entry_id))
+          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies }
+        }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
+
+        return (
+          <div>
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <label style={{ color: '#555', fontWeight: 600 }}>Pay Week:</label>
+                <select value={weekStart} onChange={e => setPayWeekStart(new Date(e.target.value))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                  {payWeeks.map(w => {
+                    const end = new Date(w); end.setDate(end.getDate() + 6)
+                    return <option key={toYMD(w)} value={toYMD(w)}>{fmtDate(w)} – {fmtDate(end)}</option>
+                  })}
+                </select>
+              </div>
+              <button onClick={() => downloadWeeklySummary()} style={{ padding: '0.4rem 1rem', background: '#2d6a38', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Download CSV</button>
             </div>
-            <button onClick={() => downloadWeeklySummary()} style={{ padding: '0.4rem 1rem', background: '#2d6a38', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Download CSV</button>
+
+            {weekData.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No entries for this week</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies'].map(h => (
+                      <th key={h} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.9rem', fontWeight: 600, color: '#555' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {weekData.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '0.75rem', fontWeight: 600 }}>{row.emp?.name || 'Unknown'}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>{row.totalHours.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{row.regHours.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{row.otHours.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{row.perDiem || '—'}</td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
-          <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Employee hours, per diem, and supplies for the selected pay week</p>
-        </div>
-      )}
+        )
+      })()}
 
     </div>
   )
