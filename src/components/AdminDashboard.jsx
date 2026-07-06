@@ -77,15 +77,15 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     loadTimesheets()
-    supabase.from('employees').select('*').order('name').then(({ data }) => setEmployees(data || []))
-    supabase.from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
-    supabase.from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
+    supabase.schema('Cores').from('employees').select('*').order('name').then(({ data }) => setEmployees(data || []))
+    supabase.schema('Cores').from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
+    supabase.schema('Cores').from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
 
   async function loadTimesheets() {
     setLoadingEntries(true)
     const { data } = await supabase
-      .from('timesheet_entries')
+      .schema('Cores').from('timesheet_entries')
       .select('*, employees(id, name), jobs(id, job_number, description, customers(name), vessels(name))')
       .order('work_date', { ascending: false })
     setEntries(data || [])
@@ -106,7 +106,7 @@ export default function AdminDashboard() {
 
     // Fetch all entries for this employee on this date to get all jobs on the timesheet
     const { data: allEntries } = await supabase
-      .from('timesheet_entries')
+      .schema('Cores').from('timesheet_entries')
       .select('job_id')
       .eq('employee_id', e.employee_id)
       .eq('work_date', e.work_date)
@@ -116,7 +116,7 @@ export default function AdminDashboard() {
 
     // Fetch existing supplies for this entry
     const { data: existingSupplies } = await supabase
-      .from('job_supplies')
+      .schema('Cores').from('job_supplies')
       .select('job_id, supply_name, quantity')
       .eq('employee_id', e.employee_id)
       .eq('work_date', e.work_date)
@@ -136,7 +136,7 @@ export default function AdminDashboard() {
     setSavingEdit(true)
     const reg = Number(editFields.reg_hours) || 0
     const ot  = Number(editFields.ot_hours)  || 0
-    const { error } = await supabase.from('timesheet_entries').update({
+    const { error } = await supabase.schema('Cores').from('timesheet_entries').update({
       work_date:   editFields.work_date,
       job_id:      editFields.job_id,
       hours:       reg + ot,
@@ -152,7 +152,7 @@ export default function AdminDashboard() {
     }
 
     // Delete old supplies and insert updated ones
-    await supabase.from('job_supplies').delete().eq('employee_id', editEntry.employee_id).eq('work_date', editEntry.work_date)
+    await supabase.schema('Cores').from('job_supplies').delete().eq('employee_id', editEntry.employee_id).eq('work_date', editEntry.work_date)
 
     const validSupplies = editSupplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
     if (validSupplies.length > 0) {
@@ -163,7 +163,7 @@ export default function AdminDashboard() {
         supply_name: s.supply_name,
         quantity: Number(s.quantity),
       }))
-      const { error: supplyError } = await supabase.from('job_supplies').insert(suppliesToInsert)
+      const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(suppliesToInsert)
       if (supplyError) {
         alert(`Supplies save failed: ${supplyError.message}`)
         setSavingEdit(false)
@@ -173,7 +173,7 @@ export default function AdminDashboard() {
 
     // Save new job if being added
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
-      const { error: newJobError } = await supabase.from('timesheet_entries').insert({
+      const { error: newJobError } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editEntry.employee_id,
         work_date: editFields.work_date,
         job_id: newJobFields.job_id,
@@ -198,7 +198,7 @@ export default function AdminDashboard() {
   }
 
   async function deleteEntry(id) {
-    const { error } = await supabase.from('timesheet_entries').delete().eq('id', id)
+    const { error } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', id)
     if (error) alert(`Delete failed: ${error.message}`)
     setConfirmDeleteId(null)
     await loadTimesheets()
@@ -211,7 +211,7 @@ export default function AdminDashboard() {
     }
 
     try {
-      const { error } = await supabase.from('timesheet_entries').insert({
+      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editEntry.employee_id,
         work_date: editEntry.work_date,
         job_id: newJobFields.job_id,
@@ -249,11 +249,11 @@ export default function AdminDashboard() {
     setSavingManual(true)
     try {
       // Fetch payroll config for OT threshold
-      const { data: otCfg } = await supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
+      const { data: otCfg } = await supabase.schema('Cores').from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
       const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
 
       // Fetch existing entries for this employee on this date to include in OT calc
-      const { data: existingToday } = await supabase.from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date)
+      const { data: existingToday } = await supabase.schema('Cores').from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date)
       let alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
 
       // Insert entries with OT split
@@ -277,7 +277,7 @@ export default function AdminDashboard() {
         }
       })
 
-      const { error } = await supabase.from('timesheet_entries').insert(toInsert)
+      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(toInsert)
       if (error) {
         alert(`Save failed: ${error.message}`)
         return
@@ -293,7 +293,7 @@ export default function AdminDashboard() {
           supply_name: s.supply_name,
           quantity: Number(s.quantity),
         }))
-        const { error: supplyError } = await supabase.from('job_supplies').insert(suppliesToInsert)
+        const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(suppliesToInsert)
         if (supplyError) {
           alert(`Supplies save failed: ${supplyError.message}`)
           return
@@ -513,7 +513,7 @@ export default function AdminDashboard() {
     // has more than one row for the date (e.g. a rejected attempt plus the real one)
     const [{ data: subRows }, { data: daySupplies }] = await Promise.all([
       supabase
-        .from('sms_submissions')
+        .schema('Cores').from('sms_submissions')
         .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
         .eq('employee_id', selectedEmp.id)
         .eq('work_date', selectedDate)
@@ -521,7 +521,7 @@ export default function AdminDashboard() {
         .order('updated_at', { ascending: false })
         .limit(1),
       supabase
-        .from('job_supplies')
+        .schema('Cores').from('job_supplies')
         .select('supply_name, quantity, jobs(job_number)')
         .eq('employee_id', selectedEmp.id)
         .eq('work_date', selectedDate),

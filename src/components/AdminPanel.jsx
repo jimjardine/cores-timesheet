@@ -73,7 +73,7 @@ export default function AdminPanel() {
   useEffect(() => {
     if (!expandedJobId || jobEntries[expandedJobId]) return
     supabase
-      .from('timesheet_entries')
+      .schema('Cores').from('timesheet_entries')
       .select('*, employees(name)')
       .eq('job_id', expandedJobId)
       .order('work_date')
@@ -84,13 +84,13 @@ export default function AdminPanel() {
   async function loadAll() {
     setLoading(true)
     const [c, v, j, l, vc, ec, em] = await Promise.all([
-      supabase.from('customers').select('*').order('name'),
-      supabase.from('vessels').select('*, customers(name)').order('name'),
-      supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
-      supabase.from('job_status_logs').select('*').order('created_at'),
-      supabase.from('vessel_contacts').select('*').order('sort_order'),
-      supabase.from('timesheet_entries').select('job_id'),
-      supabase.from('employees').select('*').order('name'),
+      supabase.schema('Cores').from('customers').select('*').order('name'),
+      supabase.schema('Cores').from('vessels').select('*, customers(name)').order('name'),
+      supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
+      supabase.schema('Cores').from('job_status_logs').select('*').order('created_at'),
+      supabase.schema('Cores').from('vessel_contacts').select('*').order('sort_order'),
+      supabase.schema('Cores').from('timesheet_entries').select('job_id'),
+      supabase.schema('Cores').from('employees').select('*').order('name'),
     ])
     setCustomers(c.data || [])
     setVessels(v.data || [])
@@ -135,19 +135,19 @@ export default function AdminPanel() {
       if (!payload.customer_id) payload.customer_id = null
       let vesselId = record?.id
       if (record) {
-        const { error } = await supabase.from('vessels').update(payload).eq('id', record.id)
+        const { error } = await supabase.schema('Cores').from('vessels').update(payload).eq('id', record.id)
         if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
       } else {
-        const { data, error } = await supabase.from('vessels').insert(payload).select().single()
+        const { data, error } = await supabase.schema('Cores').from('vessels').insert(payload).select().single()
         if (error || !data) { alert(`Save failed: ${error?.message || 'no data returned'}`); setSaving(false); return }
         vesselId = data.id
       }
       // Sync contacts: replace all
-      const { error: delError } = await supabase.from('vessel_contacts').delete().eq('vessel_id', vesselId)
+      const { error: delError } = await supabase.schema('Cores').from('vessel_contacts').delete().eq('vessel_id', vesselId)
       if (delError) { alert(`Vessel saved but contacts failed to update: ${delError.message}`); setSaving(false); return }
       const valid = modalContacts.filter(c => c.name?.trim() || c.phone?.trim())
       if (valid.length > 0) {
-        const { error: insError } = await supabase.from('vessel_contacts').insert(
+        const { error: insError } = await supabase.schema('Cores').from('vessel_contacts').insert(
           valid.map((c, i) => ({ vessel_id: vesselId, role: c.role || 'Contact', name: c.name || null, phone: c.phone || null, sort_order: i }))
         )
         if (insError) { alert(`Vessel saved but contacts failed to save — re-enter them: ${insError.message}`); setSaving(false); return }
@@ -155,8 +155,8 @@ export default function AdminPanel() {
     } else if (type === 'employee') {
       const empPayload = { name: payload.name.trim(), phone: payload.phone.replace(/\D/g, '').slice(-10) || null, active: payload.active === 'true', role: payload.role }
       const { error } = record
-        ? await supabase.from('employees').update(empPayload).eq('id', record.id)
-        : await supabase.from('employees').insert(empPayload)
+        ? await supabase.schema('Cores').from('employees').update(empPayload).eq('id', record.id)
+        : await supabase.schema('Cores').from('employees').insert(empPayload)
       if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
     } else if (type === 'entry') {
       const entryPayload = {
@@ -167,7 +167,7 @@ export default function AdminPanel() {
         per_diem: Number(payload.per_diem) || 0,
         description: payload.description || '',
       }
-      const { error } = await supabase.from('timesheet_entries').update(entryPayload).eq('id', record.id)
+      const { error } = await supabase.schema('Cores').from('timesheet_entries').update(entryPayload).eq('id', record.id)
       if (error) {
         alert(`Save failed: ${error.message}`)
         setSaving(false)
@@ -182,8 +182,8 @@ export default function AdminPanel() {
         if (payload.status === 'open') payload.closed_at = null
       }
       const { error } = record
-        ? await supabase.from(`${type}s`).update(payload).eq('id', record.id)
-        : await supabase.from(`${type}s`).insert(payload)
+        ? await supabase.schema('Cores').from(`${type}s`).update(payload).eq('id', record.id)
+        : await supabase.schema('Cores').from(`${type}s`).insert(payload)
       if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
     }
 
@@ -205,9 +205,9 @@ export default function AdminPanel() {
     const update = toStatus === 'closed'
       ? { status: 'closed', closed_at: new Date().toISOString() }
       : { status: 'open', closed_at: null }
-    const { error: jobError } = await supabase.from('jobs').update(update).eq('id', job.id)
+    const { error: jobError } = await supabase.schema('Cores').from('jobs').update(update).eq('id', job.id)
     if (jobError) { alert(`Status change failed: ${jobError.message}`); setSaving(false); return }
-    const { error: logError } = await supabase.from('job_status_logs').insert({
+    const { error: logError } = await supabase.schema('Cores').from('job_status_logs').insert({
       job_id: job.id,
       from_status: job.status,
       to_status: toStatus,
@@ -226,7 +226,7 @@ export default function AdminPanel() {
       ? { name: quickAddName.trim(), status: 'active' }
       : { name: quickAddName.trim(), customer_id: fields.customer_id || null }
     const table = quickAdd === 'customer' ? 'customers' : 'vessels'
-    const { data, error } = await supabase.from(table).insert(payload).select().single()
+    const { data, error } = await supabase.schema('Cores').from(table).insert(payload).select().single()
     if (error) alert(`Save failed: ${error.message}`)
     if (data) {
       if (quickAdd === 'customer') {

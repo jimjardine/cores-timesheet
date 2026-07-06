@@ -35,10 +35,10 @@ export default function SmsReview() {
   const load = useCallback(async () => {
     setLoading(true)
     const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }] = await Promise.all([
-      supabase.from('sms_submissions').select('*').order('updated_at', { ascending: false }),
-      supabase.from('jobs').select('id, job_number, description').eq('status', 'open'),
-      supabase.from('employees').select('id, name').eq('active', true),
-      supabase.from('payroll_config').select('key, value'),
+      supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
+      supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
+      supabase.schema('Cores').from('employees').select('id, name').eq('active', true),
+      supabase.schema('Cores').from('payroll_config').select('key, value'),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
@@ -99,7 +99,7 @@ export default function SmsReview() {
     }))
 
     if (rows.length > 0) {
-      const { error } = await supabase.from('timesheet_entries').insert(rows)
+      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(rows)
       if (error) { alert('Error creating entries: ' + error.message); setActing(null); return }
     }
 
@@ -114,13 +114,13 @@ export default function SmsReview() {
         supply_name:       s.supply_name.trim(),
         quantity:          Number(s.quantity) > 0 ? Number(s.quantity) : 1,
       }))
-      const { error: supplyError } = await supabase.from('job_supplies').insert(supplyRows)
+      const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(supplyRows)
       if (supplyError) {
         alert(`Timesheet entries were created but supplies failed to save: ${supplyError.message}\nAdd the supplies manually.`)
       }
     }
 
-    const { error: statusError } = await supabase.from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    const { error: statusError } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
     if (statusError) {
       // Entries are already in — approving again would duplicate them
       alert(`Entries were created but the submission couldn't be marked approved: ${statusError.message}\nDo NOT approve it again — refresh and check the Timesheets tab.`)
@@ -133,7 +133,7 @@ export default function SmsReview() {
   async function reject(sub) {
     if (!confirm('Mark this submission as rejected?')) return
     setActing(sub.id)
-    const { error } = await supabase.from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    const { error } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
     if (error) alert(`Reject failed: ${error.message}`)
     await load()
     setActing(null)
@@ -190,7 +190,7 @@ export default function SmsReview() {
     // hours it shouldn't
     let alreadyWorked = 0
     if (editFields.employee_id && editFields.work_date) {
-      const { data: existing } = await supabase.from('timesheet_entries')
+      const { data: existing } = await supabase.schema('Cores').from('timesheet_entries')
         .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date)
       alreadyWorked = (existing || []).reduce((s, e) => s + Number(e.hours || 0), 0)
     }
@@ -244,7 +244,7 @@ export default function SmsReview() {
       }
     }
 
-    const { error } = await supabase.from('sms_submissions').update(updates).eq('id', editModal.id)
+    const { error } = await supabase.schema('Cores').from('sms_submissions').update(updates).eq('id', editModal.id)
     if (error) { alert('Error saving: ' + error.message); return }
     setEditModal(null)
     await load()

@@ -92,14 +92,14 @@ export default function Reports() {
   async function loadAll() {
     setLoading(true)
     const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes] = await Promise.all([
-      supabase.from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
-      supabase.from('customers').select('*').order('name'),
-      supabase.from('vessels').select('*').order('name'),
-      supabase.from('employees').select('*').order('name'),
-      supabase.from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
-      supabase.from('payroll_config').select('key, value'),
-      supabase.from('stat_holidays').select('holiday_date'),
-      supabase.from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
+      supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
+      supabase.schema('Cores').from('customers').select('*').order('name'),
+      supabase.schema('Cores').from('vessels').select('*').order('name'),
+      supabase.schema('Cores').from('employees').select('*').order('name'),
+      supabase.schema('Cores').from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
+      supabase.schema('Cores').from('payroll_config').select('key, value'),
+      supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
+      supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])

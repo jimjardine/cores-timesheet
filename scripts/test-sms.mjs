@@ -56,9 +56,10 @@ function friendlyDate(dstr) {
 const TEST_TECH_ID = 'e3044c0c-9628-46e0-9837-2526240b63c3'
 
 async function deleteSubmissions(fromPhone) {
+  // Content-Profile routes the DELETE to the Cores schema (tables moved out of public)
   await fetch(`${SUPABASE_URL}/rest/v1/sms_submissions?from_phone=eq.${fromPhone}`, {
     method: 'DELETE',
-    headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
+    headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' },
   })
 }
 
@@ -69,7 +70,7 @@ async function cleanupTestTech() {
   // expression as a future date rather than today.
   await fetch(
     `${SUPABASE_URL}/rest/v1/sms_submissions?employee_id=eq.${TEST_TECH_ID}`,
-    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` } }
+    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
   )
 }
 
