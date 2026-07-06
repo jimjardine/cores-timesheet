@@ -38,7 +38,7 @@ export default function SmsReview() {
     const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
-      supabase.schema('Cores').from('employees').select('id, name').eq('active', true),
+      supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
     ])
     setSubmissions(subs || [])
@@ -54,6 +54,7 @@ export default function SmsReview() {
   const visible = submissions.filter(s => filter === 'all' || s.status === filter)
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || 'Unknown'
+  const getEmployee = (id) => employees.find(e => e.id === id) || { name: 'Unknown', active: null }
 
   const toggle = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
@@ -363,7 +364,14 @@ export default function SmsReview() {
               style={{ background: '#fafafa', padding: '0.75rem 1rem', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: '1rem' }}>{employeeName(sub.employee_id)}</strong>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <strong style={{ fontSize: '1rem' }}>{employeeName(sub.employee_id)}</strong>
+                  {getEmployee(sub.employee_id).active === false && (
+                    <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: 4, background: '#ffd9d9', color: '#c00', fontWeight: 700, border: '1px solid #ffaaaa' }}>
+                      INACTIVE
+                    </span>
+                  )}
+                </div>
                 <span style={{ color: '#555' }}>{fmtDate(sub.work_date)}</span>
                 <span style={{ fontSize: '0.8rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: STATUS_COLORS[sub.status] + '22', color: STATUS_COLORS[sub.status], fontWeight: 600, border: `1px solid ${STATUS_COLORS[sub.status]}44` }}>
                   {sub.status}
