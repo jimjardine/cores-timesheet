@@ -539,12 +539,12 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!employeeId && fromPhone) {
-    // Phone-based lookup: ANY active employee, ANY role. No role filter.
-    // Office staff (Niki), techs, everyone can text from their own phone.
+    // Phone-based lookup: search ALL employees (active + inactive).
+    // We'll handle inactive employees but flag them for Nicki.
+    // No role filter — Niki, techs, everyone can text from their own phone.
     const { data: byPhone } = await supabase
       .from('employees')
-      .select('id, name, phone')
-      .eq('active', true)
+      .select('id, name, phone, active')
     const match = (byPhone || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
     if (match) { employeeId = match.id; employeeName = match.name }
   }
@@ -692,13 +692,10 @@ Deno.serve(async (req: Request) => {
   let pendingQuestions: string[] = []
   const firstName = (employeeName || '').split(' ')[0] || ''
 
-  if (missingEmployee && !isFollowUp) {
-    reply = `Hi! Couldn't match your number to an employee.\nReply: "This is [your name]"`
-    pendingQuestions = ['Who is this?']
-
-  } else if (missingEmployee && isFollowUp) {
-    // Still can't identify them — hold for Nicki
-    reply = `Couldn't find "${parsed.name_override || 'that name'}" in the system. Nicki will sort it out.`
+  if (missingEmployee) {
+    // Employee couldn't be identified (unknown phone or unmatched name).
+    // Save immediately for Nicki instead of asking for follow-up.
+    reply = `Got it. Nicki will match this to you and get it into the system.`
     nextStatus = 'submitted'
     flags.push('employee not identified — needs manual assignment')
 
