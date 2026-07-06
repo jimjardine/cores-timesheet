@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS "Cores".gear_photos (
   message_text text,
   ship_or_job text,
   pending_context boolean NOT NULL DEFAULT false,
+  photo_latitude numeric,
+  photo_longitude numeric,
+  photo_timestamp timestamp with time zone,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
 
   CONSTRAINT fk_employee FOREIGN KEY (employee_id) REFERENCES "Cores".employees(id) ON DELETE SET NULL
@@ -16,3 +19,4 @@ CREATE TABLE IF NOT EXISTS "Cores".gear_photos (
 
 CREATE INDEX idx_gear_photos_employee_date ON "Cores".gear_photos(employee_id, work_date);
 CREATE INDEX idx_gear_photos_phone_date ON "Cores".gear_photos(from_phone, work_date);
+CREATE INDEX idx_gear_photos_location ON "Cores".gear_photos(photo_latitude, photo_longitude) WHERE photo_latitude IS NOT NULL;

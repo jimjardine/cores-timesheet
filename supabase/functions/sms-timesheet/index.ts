@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
+import piexif from "npm:piexifjs@0.1.12"
 
 const HELP_TEXT = `Cores Timesheets
 
@@ -30,6 +31,58 @@ Questions? Reply HELP anytime.`
 
 function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10)
+}
+
+function extractExifData(jpegBuffer: ArrayBuffer): { lat?: number; lng?: number; timestamp?: string } {
+  try {
+    // piexif requires a Uint8Array
+    const data = new Uint8Array(jpegBuffer)
+    const exifStr = piexif.load(data)
+
+    const result: { lat?: number; lng?: number; timestamp?: string } = {}
+
+    // Extract GPS coordinates
+    if (exifStr.GPS) {
+      const gps = exifStr.GPS
+      if (gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
+        const lat = gps[piexif.GPSIFD.GPSLatitude]
+        const lng = gps[piexif.GPSIFD.GPSLongitude]
+        const latRef = gps[piexif.GPSIFD.GPSLatitudeRef] as string
+        const lngRef = gps[piexif.GPSIFD.GPSLongitudeRef] as string
+
+        // Convert from rational to decimal degrees
+        const toDecimal = (coord: any[]) => {
+          const [deg, min, sec] = coord
+          return deg[0] / deg[1] + (min[0] / min[1]) / 60 + (sec[0] / sec[1]) / 3600
+        }
+
+        result.lat = toDecimal(lat) * (latRef === 'S' ? -1 : 1)
+        result.lng = toDecimal(lng) * (lngRef === 'W' ? -1 : 1)
+      }
+    }
+
+    // Extract timestamp (DateTimeOriginal preferred, fallback to DateTime)
+    if (exifStr.Exif) {
+      const exif = exifStr.Exif
+      let timestamp = exif[piexif.ExifIFD.DateTimeOriginal] || exif[piexif.ExifIFD.DateTime]
+      if (timestamp && typeof timestamp === 'string') {
+        // Format: "YYYY:MM:DD HH:MM:SS" → ISO string
+        const cleaned = timestamp.replace(/:/g, '-', 10).replace(/ /, 'T') + 'Z'
+        result.timestamp = cleaned
+      }
+    } else if (exifStr['0th']?.[piexif.ImageIFD.DateTime]) {
+      let timestamp = exifStr['0th'][piexif.ImageIFD.DateTime]
+      if (typeof timestamp === 'string') {
+        const cleaned = timestamp.replace(/:/g, '-', 10).replace(/ /, 'T') + 'Z'
+        result.timestamp = cleaned
+      }
+    }
+
+    return result
+  } catch (err: any) {
+    console.error('EXIF extraction error:', err.message)
+    return {}
+  }
 }
 
 async function savePhotoToStorage(
@@ -67,6 +120,9 @@ async function savePhotoToStorage(
       return null
     }
 
+    // Extract EXIF data (GPS, timestamp)
+    const exifData = extractExifData(photoBlob)
+
     // Save metadata to gear_photos table
     const { data: inserted, error: insertError } = await supabase.from('gear_photos').insert({
       employee_id: employeeId,
@@ -76,6 +132,9 @@ async function savePhotoToStorage(
       file_size_bytes: photoSize,
       ship_or_job: shipOrJob,
       pending_context: !shipOrJob,
+      photo_latitude: exifData.lat || null,
+      photo_longitude: exifData.lng || null,
+      photo_timestamp: exifData.timestamp || null,
     }).select('id').single()
 
     if (insertError || !inserted) {
