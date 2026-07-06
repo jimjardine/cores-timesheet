@@ -23,7 +23,8 @@ function recentPayWeeks(n = 8) {
   return weeks
 }
 function fmtDate(d) { return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) }
-function toYMD(d) { return d.toISOString().split('T')[0] }
+// Local calendar date — toISOString() is UTC and rolls to tomorrow after 9pm Atlantic
+function toYMD(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 export default function Reports() {
   const [loading, setLoading] = useState(true)
@@ -70,7 +71,7 @@ export default function Reports() {
     if (preset === 'this-week') {
       const s = getPayWeekStart(today)
       const e = new Date(s); e.setDate(e.getDate() + 6)
-      setDateFrom(toYMD(s)); setDateTo(toYMD(e) > todayStr ? todayStr : toYMD(e)); return
+      setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return
     }
     if (preset === 'last-week') {
       const s = getPayWeekStart(today); s.setDate(s.getDate() - 7)
@@ -79,7 +80,8 @@ export default function Reports() {
     }
     if (preset === 'this-month') {
       const s = new Date(today.getFullYear(), today.getMonth(), 1)
-      setDateFrom(toYMD(s)); setDateTo(todayStr); return
+      const e = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+      setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return
     }
     if (preset === 'last-30') {
       const s = new Date(today); s.setDate(s.getDate() - 30)
@@ -252,10 +254,18 @@ export default function Reports() {
         inOrder.forEach(e => {
           if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
           const hrs = Number(e.hours)
-          if (e.ot_hours !== null && e.ot_hours !== undefined) {
+          if (e.is_stat_pay) {
+            // Auto-granted stat pay: straight 8 reg, doesn't consume the weekly
+            // reg allowance and doesn't count as hours worked that day
+            map[e.id] = { reg: hrs, ot: 0, manual: true }
+          } else if (e.ot_hours !== null && e.ot_hours !== undefined) {
             const ot = Number(e.ot_hours), reg = hrs - ot
             map[e.id] = { reg, ot, manual: true }
             dayHoursSoFar += hrs; weeklyRegSoFar += reg
+          } else if (statHolidays.has(e.work_date)) {
+            // Work on a stat holiday is all OT
+            map[e.id] = { reg: 0, ot: hrs }
+            dayHoursSoFar += hrs
           } else {
             const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
             const dailyReg           = Math.min(hrs, dailyRegRemaining)
@@ -873,7 +883,8 @@ export default function Reports() {
         const totalRegular = dayBreakdowns.reduce((s, d) => s + d.regularHours, 0)
         const totalOT      = dayBreakdowns.reduce((s, d) => s + d.otHours, 0)
         const totalPerDiem = dayBreakdowns.reduce((s, d) => s + d.dayPerDiem, 0)
-        const statDays     = dayBreakdowns.filter(d => d.isStat && d.dayHours > 0)
+        // Flag stat days with hours actually WORKED (the auto 8-hr stat-pay entry doesn't count)
+        const statDays     = dayBreakdowns.filter(d => d.isStat && d.dayEntries.some(e => !e.is_stat_pay))
 
         const thStyle = { padding: '0.65rem 0.75rem', textAlign: 'center', fontWeight: 600, color: '#555', whiteSpace: 'nowrap' }
         const tdC     = { padding: '0.65rem 0.75rem', textAlign: 'center' }
@@ -919,7 +930,7 @@ export default function Reports() {
                 {/* Stat holiday notice */}
                 {statDays.length > 0 && (
                   <div style={{ marginBottom: '1rem', padding: '0.6rem 1rem', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '6px', fontSize: '0.9rem', color: '#7a5c00' }}>
-                    Stat holiday{statDays.length > 1 ? 's' : ''} this week (+{statMultiplier}× on top of regular/OT rate):
+                    Worked on stat holiday{statDays.length > 1 ? 's' : ''} this week (8h stat pay granted separately; worked hours are OT):
                     {' '}{statDays.map(d => `${d.day.toLocaleDateString('en-GB', { weekday: 'short' })} ${fmtDate(d.day)} — ${d.day.toLocaleDateString('en-GB', { month: 'long', day: 'numeric' })}`).join(', ')}
                   </div>
                 )}

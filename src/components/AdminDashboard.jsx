@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
+import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
@@ -48,7 +49,7 @@ export default function AdminDashboard() {
   // ── Manual entry ──
   const [manualEntry, setManualEntry] = useState(null)
   const [manualFields, setManualFields] = useState({
-    employee_id: '', work_date: new Date().toISOString().split('T')[0],
+    employee_id: '', work_date: toYMD(new Date()),
     time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
     entries: [{ job_id: '', hours: '', description: '' }],
     supplies: [{ job_id: '', supply_name: '', quantity: 1 }],
@@ -173,13 +174,15 @@ export default function AdminDashboard() {
 
     // Save new job if being added
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
+      // Work on a stat holiday is all OT
+      const statDay = await isStatHoliday(editFields.work_date)
       const { error: newJobError } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editEntry.employee_id,
         work_date: editFields.work_date,
         job_id: newJobFields.job_id,
         hours: Number(newJobFields.hours),
         description: newJobFields.description || '',
-        ot_hours: 0,
+        ot_hours: statDay ? Number(newJobFields.hours) : 0,
         per_diem: 0,
         sort_order: 999,
       })
@@ -192,6 +195,7 @@ export default function AdminDashboard() {
       setNewJobFields({ job_id: '', hours: '', description: '' })
     }
 
+    await ensureStatPay(editEntry.employee_id, editFields.work_date)
     await loadTimesheets()
     setEditEntry(null)
     setSavingEdit(false)
@@ -211,13 +215,15 @@ export default function AdminDashboard() {
     }
 
     try {
+      // Work on a stat holiday is all OT
+      const statDay = await isStatHoliday(editEntry.work_date)
       const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editEntry.employee_id,
         work_date: editEntry.work_date,
         job_id: newJobFields.job_id,
         hours: Number(newJobFields.hours),
         description: newJobFields.description || '',
-        ot_hours: 0,
+        ot_hours: statDay ? Number(newJobFields.hours) : 0,
         per_diem: 0,
         sort_order: 999,
       })
@@ -227,6 +233,7 @@ export default function AdminDashboard() {
         return
       }
 
+      await ensureStatPay(editEntry.employee_id, editEntry.work_date)
       await loadTimesheets()
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
@@ -252,14 +259,17 @@ export default function AdminDashboard() {
       const { data: otCfg } = await supabase.schema('Cores').from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
       const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
 
+      // Work on a stat holiday is all OT — the 8 reg hrs come from the auto stat-pay entry
+      const statDay = await isStatHoliday(manualFields.work_date)
+
       // Fetch existing entries for this employee on this date to include in OT calc
-      const { data: existingToday } = await supabase.schema('Cores').from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date)
+      const { data: existingToday } = await supabase.schema('Cores').from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date).eq('is_stat_pay', false)
       let alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
 
       // Insert entries with OT split
       const toInsert = validEntries.map((e, i) => {
         const hours = Number(e.hours)
-        const reg = Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
+        const reg = statDay ? 0 : Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
         const ot = hours - reg
         alreadyWorked += hours
         return {
@@ -300,10 +310,11 @@ export default function AdminDashboard() {
         }
       }
 
+      await ensureStatPay(manualFields.employee_id, manualFields.work_date)
       await loadTimesheets()
       setManualEntry(null)
       setManualFields({
-        employee_id: '', work_date: new Date().toISOString().split('T')[0],
+        employee_id: '', work_date: toYMD(new Date()),
         time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
         entries: [{ job_id: '', hours: '', description: '' }],
         supplies: [{ job_id: '', supply_name: '', quantity: 1 }],
@@ -315,7 +326,8 @@ export default function AdminDashboard() {
   }
 
   // ── Date helpers ──
-  function toYMD(d) { return d.toISOString().split('T')[0] }
+  // Local calendar date — toISOString() is UTC and rolls to tomorrow after 9pm Atlantic
+  function toYMD(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
   function getPayWeekStart(date) {
     const d = new Date(date)
     d.setDate(d.getDate() - ((d.getDay() - 4 + 7) % 7))
@@ -327,9 +339,9 @@ export default function AdminDashboard() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const todayStr = toYMD(today)
     if (preset === 'all')        { setDateFrom(''); setDateTo(''); return }
-    if (preset === 'this-week')  { const s = getPayWeekStart(today); const e = new Date(s); e.setDate(e.getDate() + 6); setDateFrom(toYMD(s)); setDateTo(toYMD(e) > todayStr ? todayStr : toYMD(e)); return }
+    if (preset === 'this-week')  { const s = getPayWeekStart(today); const e = new Date(s); e.setDate(e.getDate() + 6); setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return }
     if (preset === 'last-week')  { const s = getPayWeekStart(today); s.setDate(s.getDate() - 7); const e = new Date(s); e.setDate(e.getDate() + 6); setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return }
-    if (preset === 'this-month') { setDateFrom(toYMD(new Date(today.getFullYear(), today.getMonth(), 1))); setDateTo(todayStr); return }
+    if (preset === 'this-month') { setDateFrom(toYMD(new Date(today.getFullYear(), today.getMonth(), 1))); setDateTo(toYMD(new Date(today.getFullYear(), today.getMonth() + 1, 0))); return }
     if (preset === 'last-30')    { const s = new Date(today); s.setDate(s.getDate() - 30); setDateFrom(toYMD(s)); setDateTo(todayStr); return }
   }
 

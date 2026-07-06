@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
+import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 
 const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -125,6 +126,7 @@ export default function SmsReview() {
       // Entries are already in — approving again would duplicate them
       alert(`Entries were created but the submission couldn't be marked approved: ${statusError.message}\nDo NOT approve it again — refresh and check the Timesheets tab.`)
     }
+    await ensureStatPay(sub.employee_id, sub.work_date)
     await load()
     setActing(null)
   }
@@ -191,10 +193,12 @@ export default function SmsReview() {
     let alreadyWorked = 0
     if (editFields.employee_id && editFields.work_date) {
       const { data: existing } = await supabase.schema('Cores').from('timesheet_entries')
-        .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date)
+        .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date).eq('is_stat_pay', false)
       alreadyWorked = (existing || []).reduce((s, e) => s + Number(e.hours || 0), 0)
     }
-    let regLeft = Math.max(0, otThreshold - alreadyWorked)
+    // Work on a stat holiday is all OT — no reg allowance at all
+    const statDay = editFields.work_date ? await isStatHoliday(editFields.work_date) : false
+    let regLeft = statDay ? 0 : Math.max(0, otThreshold - alreadyWorked)
     const entries = cleaned.map(e => {
       const hours = Math.round(e.hours * 100) / 100
       const reg   = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100

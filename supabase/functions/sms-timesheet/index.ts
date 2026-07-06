@@ -411,13 +411,16 @@ Deno.serve(async (req: Request) => {
   // ── OT breakdown ──
   // Fetch daily threshold + any hours already approved for this employee today
   // so second/third texts in a day get correct OT attribution
-  const [{ data: otCfg }, { data: priorEntries }] = await Promise.all([
+  const [{ data: otCfg }, { data: priorEntries }, { data: statRows }] = await Promise.all([
     supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single(),
     mergedEmployeeId
-      ? supabase.from('timesheet_entries').select('hours').eq('employee_id', mergedEmployeeId).eq('work_date', workDate)
+      ? supabase.from('timesheet_entries').select('hours').eq('employee_id', mergedEmployeeId).eq('work_date', workDate).eq('is_stat_pay', false)
       : Promise.resolve({ data: [] }),
+    supabase.from('stat_holidays').select('holiday_date').eq('holiday_date', workDate),
   ])
-  const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
+  // Work on a stat holiday is all OT — the 8 reg hrs come from the auto stat-pay entry
+  const isStatDay = (statRows || []).length > 0
+  const dailyOTThreshold = isStatDay ? 0 : (otCfg ? Number(otCfg.value) : 8)
   const alreadyWorkedHours = (priorEntries || []).reduce((s: number, e: any) => s + Number(e.hours || 0), 0)
   const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
   const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)
