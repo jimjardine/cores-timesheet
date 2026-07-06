@@ -1063,8 +1063,8 @@ export default function Reports() {
           const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
           const perDiem = [...new Set(empEntries.map(e => e.per_diem).filter(Boolean))].join('; ')
           const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
-          const supplies = supplies.filter(s => empEntries.some(e => e.id === s.timesheet_entry_id))
-          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies }
+          const empSupplies = supplies.filter(s => empEntries.some(e => e.id === s.timesheet_entry_id))
+          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies }
         }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
 
         return (
