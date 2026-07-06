@@ -2,6 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
 import piexif from "npm:piexifjs@0.1.12"
 
+// Handles both SMS (via Twilio) and WhatsApp (via Twilio Messaging API)
+// Webhook payload is identical for both; Twilio routes based on channel config
 const HELP_TEXT = `Cores Timesheets
 
 Send jobs as you finish them:
@@ -19,13 +21,18 @@ Or send it all at once:
 Used supplies? Add them so they get billed:
 "supplies brake cleaner x1, wire brushes x2 Job 4358"
 
+Gear photos? Text photos with ship name or job #.
+(e.g. photo + "Wave Master" or photo + "4760")
+
 Using someone else's phone?
 Start with: "This is Joey"
 
 Need the job list? Text JOBS.
 Job details? Text JOBS + boat name.
 (e.g. "JOBS nanaimo")
-Questions? Reply HELP anytime.`
+Questions? Reply HELP anytime.
+
+💬 Use WhatsApp or SMS — works both ways.`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
