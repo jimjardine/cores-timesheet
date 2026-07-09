@@ -125,6 +125,30 @@ function jsonReply(data: unknown, status = 200): Response {
   })
 }
 
+// Proactive outbound send — everything else in this file only replies within
+// an inbound Twilio webhook request (TwiML). This is the one path that pushes
+// a message unprompted (used for manual-entry confirmation requests).
+async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
+  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
+
+  const from = '+19024046969' // existing Cores Twilio number
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ To: to, From: from, Body: body }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    return { ok: false, error: `Twilio send failed (${res.status}): ${detail.slice(0, 200)}` }
+  }
+  return { ok: true }
+}
+
 // Atlantic Time (UTC-4 summer / UTC-3.5 NS — using -4 as safe approximation)
 function atlanticToday(): string {
   const now = new Date(Date.now() - 4 * 60 * 60 * 1000)
@@ -270,6 +294,42 @@ Deno.serve(async (req: Request) => {
       }
     } else {
       const json = await req.json()
+
+      // App-triggered action (not a Twilio webhook) — request an employee's
+      // confirmation of a manual entry Nicki just typed in
+      if (json.action === 'request_confirmation') {
+        const { data: employee } = await supabase
+          .from('employees').select('id, name, phone').eq('id', json.employee_id).single()
+        if (!employee?.phone) {
+          return jsonReply({ ok: false, error: 'No phone number on file for this employee' })
+        }
+
+        const { data: pending } = await supabase
+          .from('timesheet_entries')
+          .select('hours, jobs(job_number)')
+          .eq('employee_id', json.employee_id)
+          .eq('work_date', json.work_date)
+          .eq('entry_source', 'manual')
+          .eq('confirmation_status', 'pending')
+        if (!pending || pending.length === 0) {
+          return jsonReply({ ok: false, error: 'No pending manual entries found for that day' })
+        }
+
+        const summary = pending.map((e: any) => `${e.jobs?.job_number || 'job'} ${Number(e.hours)}hrs`).join(', ')
+        const msg = `Nicki logged your timesheet for ${friendlyDate(json.work_date)}: ${summary}. Reply to this text to confirm.`
+        const sendResult = await sendTwilioSms(employee.phone, msg)
+
+        await supabase
+          .from('timesheet_entries')
+          .update({ confirmation_requested_at: new Date().toISOString() })
+          .eq('employee_id', json.employee_id)
+          .eq('work_date', json.work_date)
+          .eq('entry_source', 'manual')
+          .eq('confirmation_status', 'pending')
+
+        return jsonReply(sendResult)
+      }
+
       fromPhone = normalizePhone(json.from_phone || '')
       msgBody = (json.body || '').trim()
       mediaUrls = json.media_urls || []
@@ -462,6 +522,37 @@ Deno.serve(async (req: Request) => {
     } else {
       const r = vesselFilter ? `No open jobs found for ${vesselFilter}.` : 'No open jobs right now.'
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+  }
+
+  // ── Reply to a pending manual-entry confirmation ──
+  // Deterministic check before Claude parsing so a plain "yes" never gets
+  // fed to the parser. Skipped if there's an active collecting/submitted
+  // conversation so we don't hijack a normal in-progress submission.
+  if (fromPhone) {
+    const { data: byPhone } = await supabase.from('employees').select('id, name, phone')
+    const phoneMatch = (byPhone || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
+
+    if (phoneMatch) {
+      const { data: activeConvo } = await supabase
+        .from('sms_submissions').select('id')
+        .eq('from_phone', fromPhone).in('status', ['collecting', 'submitted']).limit(1)
+
+      if (!activeConvo || activeConvo.length === 0) {
+        const { data: pendingConfirm } = await supabase
+          .from('timesheet_entries').select('id')
+          .eq('employee_id', phoneMatch.id).eq('confirmation_status', 'pending')
+
+        if (pendingConfirm && pendingConfirm.length > 0) {
+          await supabase
+            .from('timesheet_entries')
+            .update({ confirmation_status: 'confirmed', confirmed_at: new Date().toISOString(), confirmation_reply_text: msgBody })
+            .eq('employee_id', phoneMatch.id).eq('confirmation_status', 'pending')
+
+          const r = 'Thanks, got it — logged as confirmed.'
+          return isTwilio ? twiML(r) : jsonReply({ reply: r })
+        }
+      }
     }
   }
 

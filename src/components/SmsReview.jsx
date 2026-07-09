@@ -104,6 +104,9 @@ export default function SmsReview() {
       time_in:         sub.time_in || null,
       stated_time_out: sub.stated_time_out || null,
       lunch_minutes:   sub.lunch_minutes ?? null,
+      // The text itself is the employee's confirmation — no follow-up needed
+      entry_source:         'sms',
+      confirmation_status:  'not_required',
     }))
 
     if (rows.length > 0) {
@@ -313,9 +316,16 @@ export default function SmsReview() {
               <button
                 onClick={sendTest}
                 disabled={testLoading || !testMsg.trim()}
-                style={{ padding: '0.4rem 1.2rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                style={{
+                  padding: '0.4rem 1.2rem',
+                  background: (testLoading || !testMsg.trim()) ? '#ccc' : '#0066cc',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: (testLoading || !testMsg.trim()) ? 'default' : 'pointer',
+                }}
               >
-                {testLoading ? 'Sending…' : 'Send'}
+                {testLoading ? 'Sending…' : (testReply && !testMsg.trim() ? 'Sent ✓' : 'Send')}
               </button>
               {testReply && (
                 <div style={{ background: '#e8f4e8', border: '1px solid #9c9', borderRadius: 6, padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.85rem', whiteSpace: 'pre-wrap', flex: 1 }}>

@@ -6,6 +6,8 @@ import { ensureStatPay, cleanupStatPay, isStatHoliday } from '../utils/statPay'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
 
+const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
@@ -197,12 +199,15 @@ export default function AdminDashboard() {
         ot_hours: statDay ? Number(newJobFields.hours) : 0,
         per_diem: 0,
         sort_order: 999,
+        entry_source: 'manual',
+        confirmation_status: 'pending',
       })
       if (newJobError) {
         alert(`Failed to add job: ${newJobError.message}`)
         setSavingEdit(false)
         return
       }
+      await requestEntryConfirmation(editEntry.employee_id, editFields.work_date)
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     }
@@ -246,6 +251,8 @@ export default function AdminDashboard() {
         ot_hours: statDay ? Number(newJobFields.hours) : 0,
         per_diem: 0,
         sort_order: 999,
+        entry_source: 'manual',
+        confirmation_status: 'pending',
       })
 
       if (error) {
@@ -253,12 +260,29 @@ export default function AdminDashboard() {
         return
       }
 
+      await requestEntryConfirmation(editEntry.employee_id, editEntry.work_date)
       await ensureStatPay(editEntry.employee_id, editEntry.work_date)
       await loadTimesheets()
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     } catch (err) {
       alert(`Error: ${err.message}`)
+    }
+  }
+
+  // Text the employee to confirm a manually-entered timesheet — best-effort,
+  // reports a soft alert on failure rather than blocking the save that already happened
+  async function requestEntryConfirmation(employeeId, workDate) {
+    try {
+      const res = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ action: 'request_confirmation', employee_id: employeeId, work_date: workDate }),
+      })
+      const data = await res.json()
+      if (!data.ok) alert(`Entries saved, but couldn't text the employee to confirm: ${data.error}`)
+    } catch (e) {
+      alert(`Entries saved, but the confirmation text failed to send: ${e.message}`)
     }
   }
 
@@ -304,6 +328,9 @@ export default function AdminDashboard() {
           time_in: manualFields.time_in || null,
           stated_time_out: manualFields.stated_time_out || null,
           lunch_minutes: manualFields.lunch_minutes || null,
+          // Nicki typed this in herself — the employee hasn't confirmed it yet
+          entry_source: 'manual',
+          confirmation_status: 'pending',
         }
       })
 
@@ -312,6 +339,8 @@ export default function AdminDashboard() {
         alert(`Save failed: ${error.message}`)
         return
       }
+
+      await requestEntryConfirmation(manualFields.employee_id, manualFields.work_date)
 
       // Insert supplies if any
       const validSupplies = manualFields.supplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
@@ -923,7 +952,15 @@ export default function AdminDashboard() {
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38', fontWeight: 600 }}>{reg.toFixed(1)}</td>
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ddd', fontWeight: ot > 0 ? 600 : 400 }}>{ot > 0 ? ot.toFixed(1) : '—'}</td>
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: perDiem > 0 ? '#8B4513' : '#ddd' }}>{perDiem > 0 ? `×${perDiem}` : '—'}</td>
-                              <td style={{ padding: '0.75rem', color: '#555' }}>{e.description ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', color: '#555' }}>
+                                {e.description ?? '—'}
+                                {e.entry_source === 'manual' && e.confirmation_status === 'pending' && (
+                                  <span title="Waiting on the employee to reply and confirm this entry" style={{ marginLeft: '0.5rem', padding: '0.1rem 0.45rem', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#fdf0d5', color: '#8a6100', whiteSpace: 'nowrap' }}>Awaiting confirmation</span>
+                                )}
+                                {e.entry_source === 'manual' && e.confirmation_status === 'confirmed' && (
+                                  <span title={`Confirmed${e.confirmed_at ? ' ' + new Date(e.confirmed_at).toLocaleString() : ''}${e.confirmation_reply_text ? ` — replied "${e.confirmation_reply_text}"` : ''}`} style={{ marginLeft: '0.5rem', padding: '0.1rem 0.45rem', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#e3f3e3', color: '#2d6a38', whiteSpace: 'nowrap' }}>✓ Confirmed</span>
+                                )}
+                              </td>
                               <td style={{ padding: '0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
                                 {isConfirmingDelete ? (
                                   <span>
