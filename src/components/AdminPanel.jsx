@@ -64,7 +64,6 @@ export default function AdminPanel() {
   const [expandedJobId, setExpandedJobId] = useState(null)
   const [jobLogs, setJobLogs] = useState([])
   const [jobEntries, setJobEntries] = useState({}) // { [jobId]: entries[] }
-  const [entryCounts, setEntryCounts] = useState({}) // { [jobId]: count }
   const [vesselContacts, setVesselContacts] = useState([])
   const [modalContacts, setModalContacts] = useState([]) // contacts being edited in vessel modal
 
@@ -83,13 +82,12 @@ export default function AdminPanel() {
 
   async function loadAll() {
     setLoading(true)
-    const [c, v, j, l, vc, ec, em] = await Promise.all([
+    const [c, v, j, l, vc, em] = await Promise.all([
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*, customers(name)').order('name'),
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('job_status_logs').select('*').order('created_at'),
       supabase.schema('Cores').from('vessel_contacts').select('*').order('sort_order'),
-      supabase.schema('Cores').from('timesheet_entries').select('job_id'),
       supabase.schema('Cores').from('employees').select('*').order('name'),
     ])
     setCustomers(c.data || [])
@@ -98,11 +96,6 @@ export default function AdminPanel() {
     setJobLogs(l.data || [])
     setVesselContacts(vc.data || [])
     setEmployees(em.data || [])
-    const counts = {}
-    for (const { job_id } of (ec.data || [])) {
-      if (job_id) counts[job_id] = (counts[job_id] || 0) + 1
-    }
-    setEntryCounts(counts)
     setLoading(false)
   }
 
@@ -118,7 +111,7 @@ export default function AdminPanel() {
         { role: 'Captain', name: '', phone: '' },
       ])
     } else if (type === 'job') {
-      setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open' })
+      setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open', work_order_number: record?.work_order_number || '' })
     } else if (type === 'employee') {
       setFields({ name: record?.name || '', phone: record?.phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     } else if (type === 'entry') {
@@ -273,8 +266,8 @@ export default function AdminPanel() {
       if (sortCol === 'job_number') { av = a.job_number; bv = b.job_number }
       else if (sortCol === 'customer') { av = a.customers?.name || ''; bv = b.customers?.name || '' }
       else if (sortCol === 'vessel') { av = a.vessels?.name || ''; bv = b.vessels?.name || '' }
+      else if (sortCol === 'work_order_number') { av = a.work_order_number || ''; bv = b.work_order_number || '' }
       else if (sortCol === 'description') { av = a.description || ''; bv = b.description || '' }
-      else if (sortCol === 'entries') { av = entryCounts[a.id] || 0; bv = entryCounts[b.id] || 0 }
       else if (sortCol === 'status') { av = a.status; bv = b.status }
       else { av = a.job_number; bv = b.job_number }
       const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
@@ -348,14 +341,11 @@ export default function AdminPanel() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {[['customer','Customer'],['vessel','Vessel'],['job_number','Job #'],['description','Description']].map(([col, label]) => (
+                  {[['customer','Customer'],['vessel','Vessel'],['job_number','Job #'],['work_order_number','WO #'],['description','Description']].map(([col, label]) => (
                     <th key={col} style={{ ...thStyle, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }} onClick={() => toggleSort(col)}>
                       {label} {sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{ color: '#ccc' }}>↕</span>}
                     </th>
                   ))}
-                  <th style={{ ...thStyle, textAlign: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('entries')}>
-                    Entries {sortCol === 'entries' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{ color: '#ccc' }}>↕</span>}
-                  </th>
                   <th style={{ ...thStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('status')}>
                     Status {sortCol === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{ color: '#ccc' }}>↕</span>}
                   </th>
@@ -378,12 +368,8 @@ export default function AdminPanel() {
                           {job.vessels?.name || <span style={{ padding: '0.15rem 0.5rem', background: '#f0f0f0', borderRadius: '10px', fontSize: '0.78rem', color: '#888', fontWeight: 600 }}>Shop</span>}
                         </td>
                         <td style={{ ...tdStyle, fontWeight: 600, color: '#0066cc', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); openModal('job', job) }}>{job.job_number}</td>
+                        <td style={{ ...tdStyle, color: '#555' }}>{job.work_order_number || '—'}</td>
                         <td style={{ ...tdStyle, color: '#555', maxWidth: '260px' }}>{job.description || '—'}</td>
-                        <td style={{ ...tdStyle, textAlign: 'center' }}>
-                          {entryCounts[job.id] > 0
-                            ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#e8eef8', color: '#0055aa' }}>{entryCounts[job.id]}</span>
-                            : <span style={{ color: '#ddd' }}>—</span>}
-                        </td>
                         <td style={tdStyle}>
                           <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: job.status === 'open' ? '#e6f4ea' : '#f0f0f0', color: job.status === 'open' ? '#2d6a38' : '#888' }}>
                             {job.status}
@@ -505,7 +491,9 @@ export default function AdminPanel() {
               </tr>
             </thead>
             <tbody>
-              {customers.filter(c => customerStatusFilter === 'all' || (c.status || 'active') === customerStatusFilter).map(c => {
+              {customers
+                .filter(c => customerStatusFilter === 'all' || (c.status || 'active') === customerStatusFilter)
+                .map(c => {
                 const custJobs = jobs.filter(j => j.customer_id === c.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
                 const isExpanded = expandedId === c.id
                 return (
@@ -849,6 +837,7 @@ export default function AdminPanel() {
       {modal?.type === 'job' && (
         <Modal title={modal.record ? 'Edit Job' : 'New Job'} onClose={() => { setModal(null); setQuickAdd(null) }}>
           <Field label="Job Number"><input style={inputStyle} {...f('job_number')} /></Field>
+          <Field label="Work Order # (Sage)"><input style={inputStyle} {...f('work_order_number')} /></Field>
           <Field label="Customer">
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <select style={{ ...inputStyle, flex: 1 }} {...f('customer_id')}

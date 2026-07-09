@@ -1,6 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
-import piexif from "npm:piexifjs@0.1.12"
 
 // Handles both SMS (via Twilio) and WhatsApp (via Twilio Messaging API)
 // Webhook payload is identical for both; Twilio routes based on channel config
@@ -40,56 +39,11 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10)
 }
 
-function extractExifData(jpegBuffer: ArrayBuffer): { lat?: number; lng?: number; timestamp?: string } {
-  try {
-    // piexif requires a Uint8Array
-    const data = new Uint8Array(jpegBuffer)
-    const exifStr = piexif.load(data)
-
-    const result: { lat?: number; lng?: number; timestamp?: string } = {}
-
-    // Extract GPS coordinates
-    if (exifStr.GPS) {
-      const gps = exifStr.GPS
-      if (gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
-        const lat = gps[piexif.GPSIFD.GPSLatitude]
-        const lng = gps[piexif.GPSIFD.GPSLongitude]
-        const latRef = gps[piexif.GPSIFD.GPSLatitudeRef] as string
-        const lngRef = gps[piexif.GPSIFD.GPSLongitudeRef] as string
-
-        // Convert from rational to decimal degrees
-        const toDecimal = (coord: any[]) => {
-          const [deg, min, sec] = coord
-          return deg[0] / deg[1] + (min[0] / min[1]) / 60 + (sec[0] / sec[1]) / 3600
-        }
-
-        result.lat = toDecimal(lat) * (latRef === 'S' ? -1 : 1)
-        result.lng = toDecimal(lng) * (lngRef === 'W' ? -1 : 1)
-      }
-    }
-
-    // Extract timestamp (DateTimeOriginal preferred, fallback to DateTime)
-    if (exifStr.Exif) {
-      const exif = exifStr.Exif
-      let timestamp = exif[piexif.ExifIFD.DateTimeOriginal] || exif[piexif.ExifIFD.DateTime]
-      if (timestamp && typeof timestamp === 'string') {
-        // Format: "YYYY:MM:DD HH:MM:SS" → ISO string
-        const cleaned = timestamp.replace(/:/g, '-', 10).replace(/ /, 'T') + 'Z'
-        result.timestamp = cleaned
-      }
-    } else if (exifStr['0th']?.[piexif.ImageIFD.DateTime]) {
-      let timestamp = exifStr['0th'][piexif.ImageIFD.DateTime]
-      if (typeof timestamp === 'string') {
-        const cleaned = timestamp.replace(/:/g, '-', 10).replace(/ /, 'T') + 'Z'
-        result.timestamp = cleaned
-      }
-    }
-
-    return result
-  } catch (err: any) {
-    console.error('EXIF extraction error:', err.message)
-    return {}
-  }
+function extractExifData(_jpegBuffer: ArrayBuffer): { lat?: number; lng?: number; timestamp?: string } {
+  // Disabled: piexifjs (npm:piexifjs@0.1.12) isn't a real published version and pulling
+  // in a real one broke boot in the edge runtime. Re-enable once a working, edge-compatible
+  // EXIF library is confirmed via a real deploy test.
+  return {}
 }
 
 async function savePhotoToStorage(
@@ -246,7 +200,7 @@ Rules:
 - stated_time_out: "HH:MM" 24-hour only if they explicitly said when they finished/left — else null
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
-- entries: [{job_number:"4-digit string", hours:number, description:"verbatim from message"}] — only real job work
+- entries: [{job_number:"4-digit string", hours:number|null, description:"verbatim from message"}] — only real job work. hours: the number ONLY if the worker explicitly stated hours for that specific job ("4760 6hrs", "3.5 hours on 4862") — otherwise null. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the time bounds after parsing.
 - supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase.
 - is_help_request: true only if the entire message is a help request
 

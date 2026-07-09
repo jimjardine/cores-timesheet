@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import MultiSelectDropdown from './MultiSelectDropdown'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -46,15 +47,17 @@ export default function Reports() {
 
   // Tab-specific filters
   const [jobNumberFilter, setJobNumberFilter] = useState('')
-  const [customerFilterTab, setCustomerFilterTab] = useState('all')
-  const [vesselFilterTab, setVesselFilterTab] = useState('all')
-  const [employeeFilterTab, setEmployeeFilterTab] = useState('all')
+  const [customerFilterIds, setCustomerFilterIds] = useState([])
+  const [vesselFilterIds, setVesselFilterIds] = useState([])
+  const [hideEmptyOptions, setHideEmptyOptions] = useState(false)
+  const [employeeFilterIds, setEmployeeFilterIds] = useState([])
 
   // Payroll tab
   const payWeeks = recentPayWeeks(8)
   const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
 
-  const [payEmployee, setPayEmployee] = useState('')
+  const [payEmployeeIds, setPayEmployeeIds] = useState([])
+  const [payEmpDropdownOpen, setPayEmpDropdownOpen] = useState(false)
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
 
@@ -127,9 +130,11 @@ export default function Reports() {
     return true
   })
   const jobsWithEntriesInPeriod = new Set(filteredEntries.map(e => e.job_id))
+  const jobIdsWithEntries = new Set(entries.map(e => e.job_id).filter(Boolean))
   const filteredJobs = jobs.filter(j => {
     if (jobStatus !== 'all' && j.status !== jobStatus) return false
     if (datePreset !== 'all' && !jobsWithEntriesInPeriod.has(j.id)) return false
+    if (hideEmptyOptions && !jobIdsWithEntries.has(j.id)) return false
     return true
   })
   const dateLabel = datePreset === 'all' ? 'All time'
@@ -143,9 +148,6 @@ export default function Reports() {
   const hoursPerJob = filteredEntries.reduce((acc, e) => { acc[e.job_id] = (acc[e.job_id] || 0) + Number(e.hours); return acc }, {})
   const crewPerJob  = filteredEntries.reduce((acc, e) => { if (!acc[e.job_id]) acc[e.job_id] = new Set(); acc[e.job_id].add(e.employees?.name); return acc }, {})
   const hoursPerEmp = filteredEntries.reduce((acc, e) => { const id = e.employee_id; acc[id] = (acc[id] || 0) + Number(e.hours); return acc }, {})
-  const totalHours  = filteredEntries.reduce((s, e) => s + Number(e.hours), 0)
-  const openJobs    = jobs.filter(j => j.status === 'open').length
-  const shownJobs   = filteredJobs.length
 
   // ── Navigation helpers ──
   function goToJob(job) {
@@ -373,7 +375,7 @@ export default function Reports() {
         otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
       })
       const rows = ['Customer,Job #,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
-      customers.filter(c => customerFilterTab === 'all' || c.id === customerFilterTab).forEach(c =>
+      customers.filter(c => customerFilterIds.length === 0 || customerFilterIds.includes(c.id)).forEach(c =>
         filteredJobs.filter(j => j.customer_id === c.id).forEach(j =>
           rows.push([c.name, j.job_number, j.vessels?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
@@ -394,7 +396,7 @@ export default function Reports() {
         otPerJob[e.job_id]  = (otPerJob[e.job_id]  || 0) + ot
       })
       const rows = ['Vessel,Job #,Customer,Description,Status,Total Hours,Reg Hours,OT Hours,Date From,Date To']
-      vessels.filter(v => vesselFilterTab === 'all' || v.id === vesselFilterTab).forEach(v =>
+      vessels.filter(v => vesselFilterIds.length === 0 || vesselFilterIds.includes(v.id)).forEach(v =>
         filteredJobs.filter(j => j.vessel_id === v.id).forEach(j =>
           rows.push([v.name, j.job_number, j.customers?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
@@ -409,7 +411,7 @@ export default function Reports() {
       downloadCSV(rows, `by-vessel-${dateFileSuffix}.csv`)
     } else if (activeTab === 'employee') {
       const rows = ['Employee,Jobs Worked,Total Hours,Reg Hours,OT Hours,Per Diem,Customers,Date From,Date To']
-      employees.filter(emp => employeeFilterTab === 'all' || emp.id === employeeFilterTab).forEach(emp => {
+      employees.filter(emp => employeeFilterIds.length === 0 || employeeFilterIds.includes(emp.id)).forEach(emp => {
         const ee = filteredEntries.filter(e => e.employee_id === emp.id)
         if (!ee.length) return
         const empJobs = new Set(ee.map(e => e.job_id))
@@ -422,11 +424,10 @@ export default function Reports() {
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
     } else if (activeTab === 'payroll') {
-      const emp = employees.find(e => e.id === payEmployee)
       const weekEnd = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
       const days = getPayWeekDays(payWeekStart)
       const weekDates = new Set(days.map(toYMD))
-      const weekEntries = entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date))
+      const weekEntries = entries.filter(e => payEmployeeIds.includes(e.employee_id) && weekDates.has(e.work_date))
       const otMap = computeEntryOT(weekEntries)
       const rows = ['Employee,Day,Date,Job #,Customer,Total Hours,Reg Hours,OT Hours,Per Diem,Description,Week From,Week To']
       weekEntries
@@ -434,7 +435,7 @@ export default function Reports() {
         .forEach(e => {
           const { reg = 0, ot = 0 } = otMap[e.id] || {}
           rows.push([
-            emp?.name,
+            e.employees?.name,
             new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
             e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
             Number(e.hours).toFixed(1), reg.toFixed(1), ot.toFixed(1),
@@ -443,7 +444,10 @@ export default function Reports() {
             toYMD(payWeekStart), toYMD(weekEnd),
           ].join(','))
         })
-      downloadCSV(rows, `payroll-${emp?.name?.replace(/\s+/g, '-') || 'unknown'}-${toYMD(payWeekStart)}.csv`)
+      const fileTag = payEmployeeIds.length === 1
+        ? (employees.find(e => e.id === payEmployeeIds[0])?.name?.replace(/\s+/g, '-') || 'unknown')
+        : payEmployeeIds.length === employees.length ? 'everyone' : `${payEmployeeIds.length}-employees`
+      downloadCSV(rows, `payroll-${fileTag}-${toYMD(payWeekStart)}.csv`)
     }
   }
 
@@ -659,7 +663,7 @@ export default function Reports() {
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 style={{ margin: 0 }}>Reports</h1>
+          <h1 style={{ margin: 0 }}>Job Reports</h1>
           <p style={{ color: '#888', margin: '0.25rem 0 0' }}>Cores Worldwide — as of {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -713,25 +717,10 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
-        {[
-          { label: jobStatus === 'closed' ? 'Closed Jobs' : jobStatus === 'all' ? 'Total Jobs' : 'Open Jobs',
-            value: shownJobs, color: '#2d6a38', onClick: () => switchTab('jobs') },
-          { label: 'Total Customers',    value: new Set(filteredJobs.map(j => j.customer_id).filter(Boolean)).size, color: '#0066cc', onClick: () => switchTab('customer') },
-          { label: 'Total Vessels',      value: new Set(filteredJobs.map(j => j.vessel_id).filter(Boolean)).size,   color: '#5a4fcf', onClick: () => switchTab('vessel') },
-          { label: 'Active Employees',   value: employees.filter(e => e.active).length, color: '#444',   onClick: () => switchTab('employee') },
-          { label: 'Total Hours Logged', value: totalHours.toFixed(1),                  color: '#8B4513', onClick: () => switchTab('jobs') },
-        ].map(({ label, value, color, onClick }) => (
-          <div key={label} onClick={onClick} style={{ ...card, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
-            onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.12)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
-            onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)';  e.currentTarget.style.transform = 'translateY(0)' }}>
-            <div style={{ fontSize: '2rem', fontWeight: 700, color }}>{value}</div>
-            <div style={{ color: '#888', fontSize: '0.9rem', marginTop: '0.25rem' }}>{label}</div>
-            <div style={{ color: '#ccc', fontSize: '0.75rem', marginTop: '0.4rem' }}>click to view →</div>
-          </div>
-        ))}
-      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#555', cursor: 'pointer', marginBottom: '1rem', fontSize: '0.9rem' }}>
+        <input type="checkbox" checked={hideEmptyOptions} onChange={e => setHideEmptyOptions(e.target.checked)} />
+        Only show items with time logged against them
+      </label>
 
       {/* Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
@@ -744,10 +733,24 @@ export default function Reports() {
       {/* ── Jobs Overview ── */}
       {activeTab === 'jobs' && (
         <div>
-          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Job #:</label>
               <input type="text" placeholder="Filter by job number..." value={jobNumberFilter} onChange={e => setJobNumberFilter(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Customer:</label>
+              <MultiSelectDropdown
+                options={customers.filter(c => !hideEmptyOptions || jobs.some(j => j.customer_id === c.id && jobIdsWithEntries.has(j.id)))}
+                selectedIds={customerFilterIds} onChange={setCustomerFilterIds}
+                placeholder="All customers" allLabel="All customers" minWidth={180} />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Vessel:</label>
+              <MultiSelectDropdown
+                options={vessels.filter(v => !hideEmptyOptions || jobs.some(j => j.vessel_id === v.id && jobIdsWithEntries.has(j.id)))}
+                selectedIds={vesselFilterIds} onChange={setVesselFilterIds}
+                placeholder="All vessels" allLabel="All vessels" minWidth={180} />
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -759,7 +762,10 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {filteredJobs.filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
+              {filteredJobs
+                .filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
+                .filter(j => customerFilterIds.length === 0 || customerFilterIds.includes(j.customer_id))
+                .filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id))
                 .map(j => (
                   <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                     <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
@@ -782,10 +788,10 @@ export default function Reports() {
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Customer:</label>
-              <select value={customerFilterTab} onChange={e => setCustomerFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
-                <option value="all">All customers</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiSelectDropdown
+                options={customers.filter(c => !hideEmptyOptions || jobs.some(j => j.customer_id === c.id && jobIdsWithEntries.has(j.id)))}
+                selectedIds={customerFilterIds} onChange={setCustomerFilterIds}
+                placeholder="All customers" allLabel="All customers" />
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -797,7 +803,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.filter(j => customerFilterTab === 'all' || j.customer_id === customerFilterTab)
+            {filteredJobs.filter(j => customerFilterIds.length === 0 || customerFilterIds.includes(j.customer_id))
               .sort((a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
@@ -821,10 +827,10 @@ export default function Reports() {
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Vessel:</label>
-              <select value={vesselFilterTab} onChange={e => setVesselFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
-                <option value="all">All vessels</option>
-                {vessels.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
+              <MultiSelectDropdown
+                options={vessels.filter(v => !hideEmptyOptions || jobs.some(j => j.vessel_id === v.id && jobIdsWithEntries.has(j.id)))}
+                selectedIds={vesselFilterIds} onChange={setVesselFilterIds}
+                placeholder="All vessels" allLabel="All vessels" />
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -836,7 +842,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.filter(j => vesselFilterTab === 'all' || j.vessel_id === vesselFilterTab)
+            {filteredJobs.filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id))
               .sort((a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
@@ -860,10 +866,10 @@ export default function Reports() {
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Employee:</label>
-              <select value={employeeFilterTab} onChange={e => setEmployeeFilterTab(e.target.value)} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
-                <option value="all">All employees</option>
-                {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
+              <MultiSelectDropdown
+                options={employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))}
+                selectedIds={employeeFilterIds} onChange={setEmployeeFilterIds}
+                placeholder="All employees" allLabel="All employees" />
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -875,8 +881,9 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {employees.filter(emp => employeeFilterTab === 'all' || emp.id === employeeFilterTab).map(emp => {
+            {employees.filter(emp => employeeFilterIds.length === 0 || employeeFilterIds.includes(emp.id)).map(emp => {
               const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
+              if (empEntries.length === 0) return null
               const empJobs = new Set(empEntries.map(e => e.job_id))
               const empCustomers = new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean))
               const empHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
@@ -905,8 +912,8 @@ export default function Reports() {
         const weekEnd    = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
         const days       = getPayWeekDays(payWeekStart)
         const weekDates  = new Set(days.map(toYMD))
-        const emp        = employees.find(e => e.id === payEmployee)
-        const weekEntries = payEmployee ? entries.filter(e => e.employee_id === payEmployee && weekDates.has(e.work_date)) : []
+        const payEmpOptions = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
+        const weekEntries = entries.filter(e => payEmployeeIds.includes(e.employee_id) && weekDates.has(e.work_date))
         const byDate     = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
 
         const entryOtMap = computeEntryOT(weekEntries)
@@ -940,12 +947,43 @@ export default function Reports() {
           <div>
             {/* Selectors */}
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <div>
+              <div style={{ position: 'relative' }}>
                 <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Employee</label>
-                <select value={payEmployee} onChange={e => setPayEmployee(e.target.value)} style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '200px' }}>
-                  <option value="">— select —</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <button
+                  onClick={() => setPayEmpDropdownOpen(o => !o)}
+                  style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '220px', textAlign: 'left', background: '#fff', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: payEmployeeIds.length ? '#333' : '#999' }}>
+                    {payEmployeeIds.length === 0
+                      ? '— select —'
+                      : payEmployeeIds.length === payEmpOptions.length
+                        ? 'Everyone'
+                        : payEmployeeIds.length <= 2
+                          ? payEmployeeIds.map(id => employees.find(e => e.id === id)?.name).filter(Boolean).join(', ')
+                          : `${payEmployeeIds.length} selected`}
+                  </span>
+                  <span style={{ color: '#aaa' }}>▾</span>
+                </button>
+                {payEmpDropdownOpen && (
+                  <>
+                    <div onClick={() => setPayEmpDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+                    <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '0.25rem', background: '#fff', border: '1px solid #ccc', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', width: '260px', maxHeight: '320px', overflowY: 'auto', zIndex: 20 }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' }}>
+                        <button onClick={() => setPayEmployeeIds(payEmpOptions.map(e => e.id))} style={{ background: 'none', border: 'none', color: '#0066cc', cursor: 'pointer', fontSize: '0.82rem', padding: 0 }}>Select all</button>
+                        <button onClick={() => setPayEmployeeIds([])} style={{ background: 'none', border: 'none', color: '#0066cc', cursor: 'pointer', fontSize: '0.82rem', padding: 0 }}>Clear</button>
+                      </div>
+                      {payEmpOptions.map(e => (
+                        <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 0.75rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                          <input
+                            type="checkbox"
+                            checked={payEmployeeIds.includes(e.id)}
+                            onChange={ev => setPayEmployeeIds(prev => ev.target.checked ? [...prev, e.id] : prev.filter(id => id !== e.id))}
+                          />
+                          {e.name}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
               <div>
                 <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Pay Week</label>
@@ -955,8 +993,8 @@ export default function Reports() {
               </div>
             </div>
 
-            {!payEmployee ? (
-              <div style={{ ...card, textAlign: 'center', padding: '3rem', color: '#aaa' }}>Select an employee to view their pay week</div>
+            {payEmployeeIds.length === 0 ? (
+              <div style={{ ...card, textAlign: 'center', padding: '3rem', color: '#aaa' }}>Select one or more employees to view the pay week</div>
             ) : (
               <>
                 {/* Summary bar */}
@@ -1016,6 +1054,7 @@ export default function Reports() {
                               const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
                               return (
                                 <div key={e.id} style={{ marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
+                                  {payEmployeeIds.length > 1 && <span style={{ fontWeight: 600, marginRight: '0.4rem' }}>{e.employees?.name}:</span>}
                                   <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
                                   <span style={{ color: '#aaa', margin: '0 0.4rem', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
                                   <span style={{ color: '#2d6a38', fontSize: '0.85rem', marginRight: '0.3rem' }}>{reg.toFixed(1)}reg</span>

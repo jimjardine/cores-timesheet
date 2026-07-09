@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, isStatHoliday } from '../utils/statPay'
+import MultiSelectDropdown from './MultiSelectDropdown'
 
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
@@ -26,7 +27,9 @@ export default function AdminDashboard() {
   const [entries, setEntries] = useState([])
   const [employees, setEmployees] = useState([])
   const [loadingEntries, setLoadingEntries] = useState(true)
-  const [filterEmployee, setFilterEmployee] = useState('')
+  const [filterEmployeeIds, setFilterEmployeeIds] = useState([])
+  const [printingAll, setPrintingAll] = useState(false)
+  const [printAllProgress, setPrintAllProgress] = useState(null)
   const [datePreset, setDatePreset] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -103,6 +106,9 @@ export default function AdminDashboard() {
       description: e.description || '',
       per_diem:    e.per_diem ?? 0,
       sort_order:  e.sort_order ?? 1,
+      time_in:          e.time_in ? e.time_in.substring(0, 5) : '',
+      stated_time_out:  e.stated_time_out ? e.stated_time_out.substring(0, 5) : '',
+      lunch_minutes:    e.lunch_minutes ?? '',
     })
 
     // Fetch all entries for this employee on this date to get all jobs on the timesheet
@@ -145,6 +151,9 @@ export default function AdminDashboard() {
       description: editFields.description,
       per_diem:    Number(editFields.per_diem),
       sort_order:  Number(editFields.sort_order),
+      time_in:         editFields.time_in || null,
+      stated_time_out: editFields.stated_time_out || null,
+      lunch_minutes:   editFields.lunch_minutes === '' ? null : Number(editFields.lunch_minutes),
     }).eq('id', editEntry.id)
     if (error) {
       alert(`Save failed: ${error.message}`)
@@ -349,7 +358,7 @@ export default function AdminDashboard() {
   const filteredEntries = entries.filter(e => {
     if (dateFrom && e.work_date < dateFrom) return false
     if (dateTo   && e.work_date > dateTo)   return false
-    if (filterEmployee && e.employees?.name !== filterEmployee) return false
+    if (filterEmployeeIds.length > 0 && !filterEmployeeIds.includes(e.employee_id)) return false
     return true
   })
 
@@ -515,9 +524,8 @@ export default function AdminDashboard() {
     link.click()
   }
 
-  async function handlePrintTimesheet() {
-    if (!selectedEmp || !selectedDate) return
-    const dayEntries = entries.filter(e => e.employee_id === selectedEmp.id && e.work_date === selectedDate)
+  async function printTimesheetFor(emp, workDate) {
+    const dayEntries = entries.filter(e => e.employee_id === emp.id && e.work_date === workDate)
       .sort((a, b) => (a.sort_order ?? 1) - (b.sort_order ?? 1))
     const totalHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
 
@@ -527,25 +535,28 @@ export default function AdminDashboard() {
       supabase
         .schema('Cores').from('sms_submissions')
         .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
-        .eq('employee_id', selectedEmp.id)
-        .eq('work_date', selectedDate)
+        .eq('employee_id', emp.id)
+        .eq('work_date', workDate)
         .neq('status', 'rejected')
         .order('updated_at', { ascending: false })
         .limit(1),
       supabase
         .schema('Cores').from('job_supplies')
         .select('supply_name, quantity, jobs(job_number)')
-        .eq('employee_id', selectedEmp.id)
-        .eq('work_date', selectedDate),
+        .eq('employee_id', emp.id)
+        .eq('work_date', workDate),
     ])
     const submission = subRows?.[0] || null
+    // Prefer the times saved on the timesheet entries themselves (works for both
+    // manual and SMS-originated entries) — sms_submissions only exists for SMS entries.
+    const entryWithTime = dayEntries.find(e => e.time_in || e.stated_time_out)
 
     generateDailyTimesheetPDF({
-      employeeName: selectedEmp.name,
-      workDate: selectedDate,
-      timeIn: submission?.time_in || null,
-      timeOut: submission?.stated_time_out || submission?.calculated_time_out || null,
-      lunchMinutes: submission?.lunch_minutes ?? null,
+      employeeName: emp.name,
+      workDate: workDate,
+      timeIn: entryWithTime?.time_in || submission?.time_in || null,
+      timeOut: entryWithTime?.stated_time_out || submission?.stated_time_out || submission?.calculated_time_out || null,
+      lunchMinutes: entryWithTime?.lunch_minutes ?? submission?.lunch_minutes ?? null,
       totalHours,
       jobLines: dayEntries.map(e => ({
         jobNumber: e.jobs?.job_number || '',
@@ -558,6 +569,28 @@ export default function AdminDashboard() {
         supplyName: s.supply_name,
       })),
     })
+  }
+
+  async function handlePrintTimesheet() {
+    if (!selectedEmp || !selectedDate) return
+    await printTimesheetFor(selectedEmp, selectedDate)
+  }
+
+  async function handlePrintAllTimesheets() {
+    if (timesheetRows.length === 0 || printingAll) return
+    setPrintingAll(true)
+    setPrintAllProgress({ done: 0, total: timesheetRows.length })
+    for (let i = 0; i < timesheetRows.length; i++) {
+      const row = timesheetRows[i]
+      if (row.employee) {
+        await printTimesheetFor(row.employee, row.date)
+        // Small gap between downloads so the browser doesn't treat them as a popup flood
+        await new Promise(r => setTimeout(r, 300))
+      }
+      setPrintAllProgress({ done: i + 1, total: timesheetRows.length })
+    }
+    setPrintingAll(false)
+    setPrintAllProgress(null)
   }
 
   const tabStyle = (tab) => ({
@@ -595,13 +628,25 @@ export default function AdminDashboard() {
                   value={editFields.ot_hours ?? ''}
                   onChange={e => setEditFields(f => ({ ...f, ot_hours: e.target.value }))} />
               </div>
-              {editEntry?.time_in && editEntry?.time_out && (() => {
-                const expectedHours = calculateExpectedHours(editEntry.time_in, editEntry.time_out, editEntry.lunch_minutes)
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time In</label>
+                <input type="time" style={inputStyle} value={editFields.time_in || ''} onChange={e => setEditFields(f => ({ ...f, time_in: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time Out</label>
+                <input type="time" style={inputStyle} value={editFields.stated_time_out || ''} onChange={e => setEditFields(f => ({ ...f, stated_time_out: e.target.value }))} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Lunch (min)</label>
+                <input type="number" min="0" style={inputStyle} value={editFields.lunch_minutes ?? ''} onChange={e => setEditFields(f => ({ ...f, lunch_minutes: e.target.value }))} />
+              </div>
+              {editFields.time_in && editFields.stated_time_out && (() => {
+                const expectedHours = calculateExpectedHours(editFields.time_in, editFields.stated_time_out, editFields.lunch_minutes)
                 const enteredHours = Number(editFields.reg_hours || 0) + Number(editFields.ot_hours || 0)
                 const mismatch = expectedHours && Math.abs(expectedHours - enteredHours) > 0.1
                 return mismatch ? (
                   <div style={{ gridColumn: '1 / -1', padding: '0.75rem', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px', fontSize: '0.85rem', color: '#856404' }}>
-                    ⚠️ <strong>Time mismatch:</strong> {editEntry.time_in} to {editEntry.time_out} minus {editEntry.lunch_minutes || 0}min = {expectedHours.toFixed(1)}hrs, but you entered {enteredHours.toFixed(1)}hrs
+                    ⚠️ <strong>Time mismatch:</strong> {editFields.time_in} to {editFields.stated_time_out} minus {editFields.lunch_minutes || 0}min = {expectedHours.toFixed(1)}hrs, but you entered {enteredHours.toFixed(1)}hrs
                   </div>
                 ) : null
               })()}
@@ -788,9 +833,9 @@ export default function AdminDashboard() {
       <h1>Admin Dashboard</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployee('') }}>Timesheets</button>
-        <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
+        <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployeeIds([]) }}>Timesheets</button>
         <button style={tabStyle('sms')} onClick={() => setActiveTab('sms')}>SMS Review</button>
+        <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
       </div>
 
       {/* ── Timesheets tab ── */}
@@ -799,14 +844,11 @@ export default function AdminDashboard() {
           {/* Filters — always visible */}
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
-              <select value={filterEmployee} onChange={e => {
-                setFilterEmployee(e.target.value)
-                setSelectedEmp(null)
-                setSelectedDate(null)
-              }} style={{ padding: '0.45rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.95rem', minWidth: '200px' }}>
-                <option value="">All employees</option>
-                {employees.map(emp => <option key={emp.id} value={emp.name}>{emp.name}</option>)}
-              </select>
+              <MultiSelectDropdown
+                options={employees}
+                selectedIds={filterEmployeeIds}
+                onChange={ids => { setFilterEmployeeIds(ids); setSelectedEmp(null); setSelectedDate(null) }}
+                placeholder="All employees" allLabel="All employees" />
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 {[['all','All time'],['this-week','This pay week'],['last-week','Last pay week'],['this-month','This month'],['last-30','Last 30 days'],['custom','Custom']].map(([key, label]) => (
                   <button key={key} onClick={() => applyPreset(key)} style={{
@@ -842,7 +884,9 @@ export default function AdminDashboard() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
                   <button onClick={() => { setSelectedEmp(null); setSelectedDate(null) }}
                     style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
-                    ← {filterEmployee || 'All employees'}
+                    ← {filterEmployeeIds.length === 1
+                      ? (employees.find(e => e.id === filterEmployeeIds[0])?.name || 'All employees')
+                      : filterEmployeeIds.length === 0 ? 'All employees' : `${filterEmployeeIds.length} employees`}
                   </button>
                   <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedEmp.name}</span>
                   <span style={{ color: '#555', fontSize: '0.95rem' }}>{selectedDate ? fmtDate(selectedDate) : 'All dates'}</span>
@@ -937,6 +981,10 @@ export default function AdminDashboard() {
                   </label>
                   <button onClick={() => setManualEntry(true)} style={{ padding: '0.45rem 1rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>+ Add Manual Entry</button>
                   <button onClick={handleExport} style={{ padding: '0.45rem 1rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Export CSV</button>
+                  <button onClick={handlePrintAllTimesheets} disabled={printingAll || timesheetRows.length === 0}
+                    style={{ padding: '0.45rem 1rem', background: printingAll ? '#99b8d9' : '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: printingAll ? 'default' : 'pointer', fontSize: '0.9rem' }}>
+                    {printingAll ? `Printing ${printAllProgress?.done ?? 0}/${printAllProgress?.total ?? 0}…` : `Print All PDFs (${timesheetRows.length})`}
+                  </button>
                 </div>
               </div>
 
@@ -963,7 +1011,7 @@ export default function AdminDashboard() {
                     {timesheetRows.map(row => (
                       <tr key={row.key} style={{ borderBottom: '1px solid #eee', cursor: 'pointer' }}
                         onClick={() => {
-                          setFilterEmployee(row.employee?.name || '')
+                          setFilterEmployeeIds(row.employee ? [row.employee.id] : [])
                           setSelectedEmp(row.employee)
                           setSelectedDate(row.date)
                         }}
@@ -1027,7 +1075,7 @@ export default function AdminDashboard() {
             ot:    ee.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0),
             pd:    ee.reduce((s, e) => s + Number(e.per_diem || 0), 0),
           }
-        }).sort((a, b) => a.submitted - b.submitted || a.emp.name.localeCompare(b.emp.name))
+        }).sort((a, b) => b.submitted - a.submitted || a.emp.name.localeCompare(b.emp.name))
 
         const missing = rows.filter(r => !r.submitted)
         const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -1084,7 +1132,7 @@ export default function AdminDashboard() {
                     onClick={() => {
                       if (!submitted) return
                       const we = new Date(ws); we.setDate(we.getDate() + 6)
-                      setFilterEmployee(emp.name)
+                      setFilterEmployeeIds([emp.id])
                       setSelectedEmp(emp)
                       setSelectedDate(null)
                       setDateFrom(subWeekStart)
