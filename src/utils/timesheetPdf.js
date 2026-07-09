@@ -66,7 +66,10 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   doc.line(margin + 65, y + 3, pageW - margin, y + 3)
   y += 26
 
-  // ── Daily Safety Check (left blank for hand sign-off) ──
+  // ── Daily Safety Check ──
+  // Deliberately pre-checked "Yes" (Jim, 2026-07-09): techs flag safety issues
+  // directly if there are any, so the default assumption on the printed form
+  // is all-clear. Do not change to blank without asking.
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
   doc.text('Daily Safety Check:', margin, y)
   y += 16
