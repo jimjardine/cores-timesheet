@@ -71,6 +71,7 @@ export default function SmsReview() {
       })
       const data = await res.json()
       setTestReply(data.reply || JSON.stringify(data))
+      setTestMsg('')
       await load()
     } catch (e) {
       setTestReply('Error: ' + e.message)
