@@ -353,6 +353,8 @@ Deno.serve(async (req: Request) => {
   // ── Check for photo submission and context ──
   const hasPhotos = mediaUrls.length > 0
   let photoContext: string | null = null
+  let employeeId: string | null = null
+  let employeeName: string | null = null
   if (hasPhotos) {
     // Try to parse message to see if it mentions a job or ship
     let hasJobContext = false
@@ -463,8 +465,6 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const today = atlanticToday()
-
   // ── Parse with Claude ──
   let parsed: any = {
     entries: [], supplies: [], name_override: null, work_date: null,
@@ -485,9 +485,6 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Employee lookup (name override → phone) ──
-  let employeeId: string | null = null
-  let employeeName: string | null = null
-
   if (parsed.name_override) {
     const { data: byName } = await supabase
       .from('employees')
@@ -716,7 +713,6 @@ Deno.serve(async (req: Request) => {
         return `${e.job_number}: ${e.hours}hrs reg`
       }).join('\n')
 
-    const totalRegToday = totalTodayHours - (alreadyWorkedHours > dailyOTThreshold ? alreadyWorkedHours - dailyOTThreshold : 0) - totalOTHours
     const totalOTToday  = Math.max(0, totalTodayHours - dailyOTThreshold)
     const totalLine = alreadyWorkedHours > 0
       ? `Today total: ${totalTodayHours}hrs (${Math.min(totalTodayHours, dailyOTThreshold)}reg + ${totalOTToday > 0 ? totalOTToday + 'OT' : '0OT'}) — ${alreadyWorkedHours}hrs already logged`
