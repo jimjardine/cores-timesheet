@@ -1,6 +1,4 @@
 import React, { useState } from 'react'
-import { mockAuthContext, mockEmployees } from './mockAuth'
-import WorkerTimesheet from './components/WorkerTimesheet'
 import AdminDashboard from './components/AdminDashboard'
 import Reports from './components/Reports'
 import AdminPanel from './components/AdminPanel'
@@ -25,60 +23,6 @@ function App() {
       {adminView === 'reports' && <Reports />}
       {adminView === 'dashboard' && <AdminDashboard />}
       {adminView === 'admin' && <AdminPanel />}
-    </div>
-  )
-}
-
-function LoginScreen({ onLogin }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-    
-    const { user, error: authError } = await mockAuthContext.signIn(email, password)
-    
-    if (authError) {
-      setError(authError.message)
-    } else if (user) {
-      const isAdmin = email === 'admin@cores.com'
-      onLogin(user, isAdmin)
-    }
-    setLoading(false)
-  }
-
-  return (
-    <div className="login-container">
-      <h1>Cores Worldwide Timesheet</h1>
-      <form onSubmit={handleLogin}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button type="submit" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign In'}
-        </button>
-      </form>
-      {error && <p className="error">{error}</p>}
-      <div style={{ marginTop: '2rem', fontSize: '0.9rem', color: '#666' }}>
-        <p><strong>Test credentials:</strong></p>
-        <p>Worker: worker@cores.com / test123</p>
-        <p>Admin: admin@cores.com / test123</p>
-      </div>
     </div>
   )
 }

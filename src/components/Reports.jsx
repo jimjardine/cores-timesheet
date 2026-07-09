@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
+import { computeOTMap } from '../utils/otCalc'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -174,7 +175,6 @@ export default function Reports() {
     setSelectedEmployee(null)
     setActiveTab(tab)
     if (opts.status !== undefined) setJobStatus(opts.status)
-    if (opts.customer !== undefined) setCustomerFilter(opts.customer)
   }
 
   function backLabel() {
@@ -221,7 +221,8 @@ export default function Reports() {
       const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
       const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
       const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
-      const perDiem = [...new Set(empEntries.map(e => e.per_diem).filter(Boolean))].join('; ')
+      // per_diem is a per-entry multiplier — sum it across the week (matches Payroll tab)
+      const perDiem = empEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
       const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
       const jobHours = empEntries.map(e => `${e.jobs?.job_number}:${e.hours}hrs`).join(' | ')
       const suppliesStr = empSupplies.length > 0 ? empSupplies.map(s => `${s.supply_name}x${s.quantity}`).join('; ') : 'none'
@@ -231,7 +232,7 @@ export default function Reports() {
         totalHours.toFixed(2),
         regHours.toFixed(2),
         otHours.toFixed(2),
-        perDiem || 'none',
+        perDiem > 0 ? perDiem : 'none',
         jobNums,
         jobHours,
         suppliesStr
@@ -284,50 +285,11 @@ export default function Reports() {
 
   // Compute reg/OT per entry for any set of entries (handles multiple employees + weeks)
   function computeAllOT(entriesToProcess) {
-    const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
-    const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
-    const map = {}
-    // Group by employee, then by pay week
-    const byEmp = entriesToProcess.reduce((acc, e) => {
-      if (!acc[e.employee_id]) acc[e.employee_id] = {}
-      const ws = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
-      if (!acc[e.employee_id][ws]) acc[e.employee_id][ws] = []
-      acc[e.employee_id][ws].push(e)
-      return acc
-    }, {})
-    Object.values(byEmp).forEach(weeks => {
-      Object.values(weeks).forEach(weekEnts => {
-        const inOrder = [...weekEnts].sort((a, b) =>
-          a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
-        )
-        let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
-        inOrder.forEach(e => {
-          if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
-          const hrs = Number(e.hours)
-          if (e.is_stat_pay) {
-            // Auto-granted stat pay: straight 8 reg, doesn't consume the weekly
-            // reg allowance and doesn't count as hours worked that day
-            map[e.id] = { reg: hrs, ot: 0, manual: true }
-          } else if (e.ot_hours !== null && e.ot_hours !== undefined) {
-            const ot = Number(e.ot_hours), reg = hrs - ot
-            map[e.id] = { reg, ot, manual: true }
-            dayHoursSoFar += hrs; weeklyRegSoFar += reg
-          } else if (statHolidays.has(e.work_date)) {
-            // Work on a stat holiday is all OT
-            map[e.id] = { reg: 0, ot: hrs }
-            dayHoursSoFar += hrs
-          } else {
-            const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
-            const dailyReg           = Math.min(hrs, dailyRegRemaining)
-            const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
-            const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
-            map[e.id]                = { reg: actualReg, ot: (hrs - dailyReg) + (dailyReg - actualReg) }
-            dayHoursSoFar           += hrs; weeklyRegSoFar += actualReg
-          }
-        })
-      })
+    return computeOTMap(entriesToProcess, {
+      dailyThreshold:  payrollConfig.daily_ot_threshold  ?? 8,
+      weeklyThreshold: payrollConfig.weekly_ot_threshold ?? 40,
+      statHolidays,
     })
-    return map
   }
 
   // Single-week version used by payroll tab display
@@ -336,6 +298,10 @@ export default function Reports() {
   }
 
   function exportCurrentTab() {
+    // Weekly Summary has its own week-scoped export — delegate so the shared
+    // tab-bar button isn't a silent no-op there
+    if (activeTab === 'weekly-summary') { downloadWeeklySummary(); return }
+
     const otMap = computeAllOT(filteredEntries)
 
     if (activeTab === 'jobs') {
@@ -1101,7 +1067,8 @@ export default function Reports() {
           const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
           const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
           const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
-          const perDiem = [...new Set(empEntries.map(e => e.per_diem).filter(Boolean))].join('; ')
+          // per_diem is a per-entry multiplier — sum it across the week (matches Payroll tab)
+          const perDiem = empEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
           const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
           // job_supplies rows carry their own employee_id + work_date — match on those
           const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
@@ -1141,7 +1108,7 @@ export default function Reports() {
                       <td style={{ padding: '0.75rem', textAlign: 'center' }}>{row.totalHours.toFixed(1)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{row.regHours.toFixed(1)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{row.otHours.toFixed(1)}</td>
-                      <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{row.perDiem || '—'}</td>
+                      <td style={{ padding: '0.75rem', color: row.perDiem > 0 ? '#8B4513' : '#555', fontSize: '0.9rem' }}>{row.perDiem > 0 ? `×${row.perDiem}` : '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
                     </tr>

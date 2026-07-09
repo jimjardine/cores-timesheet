@@ -107,24 +107,30 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   doc.text('Record: Make, Model, and Serial # or equipment/engine you are working on', col3X + 4, y + 8)
   y += 14
 
-  const tableTop = y
-  const rowH = 16
-  const rowCount = Math.max(jobLines.length, 3)
-  const tableBottom = tableTop + rowH * rowCount
-
-  jobLines.forEach((line, i) => {
-    const rowY = tableTop + i * rowH
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
-    doc.text(String(line.jobNumber || ''), margin + 4, rowY + rowH - 5)
-    doc.text(line.hours != null ? Number(line.hours).toFixed(1) : '', margin + col1W + 4, rowY + rowH - 5)
-    doc.text(String(line.description || ''), col3X + 4, rowY + rowH - 5, { maxWidth: pageW - margin - col3X - 8 })
+  // Rows grow with wrapped description text so long entries don't overlap
+  // the next row
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+  const descMaxW = pageW - margin - col3X - 8
+  const lineH = 11
+  const minRowH = 16
+  const rowData = jobLines.map(line => {
+    const wrapped = doc.splitTextToSize(String(line.description || ''), descMaxW)
+    return { ...line, wrapped, h: Math.max(minRowH, wrapped.length * lineH + 5) }
   })
+  while (rowData.length < 3) rowData.push({ jobNumber: '', hours: null, wrapped: [], h: minRowH })
 
-  // Grid lines
+  const tableTop = y
+  let rowY = tableTop
   doc.setLineWidth(0.5)
-  for (let i = 0; i <= rowCount; i++) {
-    doc.line(margin, tableTop + i * rowH, pageW - margin, tableTop + i * rowH)
-  }
+  doc.line(margin, tableTop, pageW - margin, tableTop)
+  rowData.forEach(r => {
+    doc.text(String(r.jobNumber || ''), margin + 4, rowY + 11)
+    doc.text(r.hours != null && r.hours !== '' ? Number(r.hours).toFixed(1) : '', margin + col1W + 4, rowY + 11)
+    r.wrapped.forEach((ln, i) => doc.text(ln, col3X + 4, rowY + 11 + i * lineH))
+    rowY += r.h
+    doc.line(margin, rowY, pageW - margin, rowY)
+  })
+  const tableBottom = rowY
   doc.line(margin, tableTop, margin, tableBottom)
   doc.line(margin + col1W, tableTop, margin + col1W, tableBottom)
   doc.line(col3X, tableTop, col3X, tableBottom)

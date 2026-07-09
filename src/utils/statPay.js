@@ -61,3 +61,25 @@ export async function ensureStatPay(employeeId, workDate) {
     if (error) console.error(`Stat pay grant failed for ${stat.holiday_date}: ${error.message}`)
   }
 }
+
+// Counterpart to ensureStatPay: if the employee no longer has any real
+// (non-stat-pay) entries in the pay week containing workDate, the automatic
+// stat entries in that week are unearned — remove them. Called after deletes
+// and after edits that move an entry's date out of a week.
+export async function cleanupStatPay(employeeId, workDate) {
+  if (!employeeId || !workDate) return
+  const [weekStart, weekEnd] = payWeekRange(workDate)
+
+  const { data: worked } = await cores().from('timesheet_entries')
+    .select('id')
+    .eq('employee_id', employeeId).eq('is_stat_pay', false)
+    .gte('work_date', weekStart).lte('work_date', weekEnd)
+    .limit(1)
+  if (worked && worked.length > 0) return
+
+  const { error } = await cores().from('timesheet_entries')
+    .delete()
+    .eq('employee_id', employeeId).eq('is_stat_pay', true)
+    .gte('work_date', weekStart).lte('work_date', weekEnd)
+  if (error) console.error(`Stat pay cleanup failed for week of ${workDate}: ${error.message}`)
+}

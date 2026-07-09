@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
-import { ensureStatPay, isStatHoliday } from '../utils/statPay'
+import { ensureStatPay, cleanupStatPay, isStatHoliday } from '../utils/statPay'
 import MultiSelectDropdown from './MultiSelectDropdown'
+import { computeOTMap } from '../utils/otCalc'
 
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
@@ -36,6 +37,7 @@ export default function AdminDashboard() {
   const [selectedEmp, setSelectedEmp] = useState(null)
   const [selectedDate, setSelectedDate] = useState(null)
   const [payrollConfig, setPayrollConfig] = useState({})
+  const [statHolidays, setStatHolidays] = useState(new Set())
   const [jobs, setJobs] = useState([])
 
   // ── Edit / delete ──
@@ -83,6 +85,7 @@ export default function AdminDashboard() {
     loadTimesheets()
     supabase.schema('Cores').from('employees').select('*').order('name').then(({ data }) => setEmployees(data || []))
     supabase.schema('Cores').from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
+    supabase.schema('Cores').from('stat_holidays').select('holiday_date').then(({ data }) => setStatHolidays(new Set((data || []).map(r => r.holiday_date))))
     supabase.schema('Cores').from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
 
@@ -205,14 +208,22 @@ export default function AdminDashboard() {
     }
 
     await ensureStatPay(editEntry.employee_id, editFields.work_date)
+    // If the entry moved to a different date, the OLD week may have lost its
+    // last real entry — clean up any now-unearned stat pay there
+    if (editFields.work_date !== editEntry.work_date) {
+      await cleanupStatPay(editEntry.employee_id, editEntry.work_date)
+    }
     await loadTimesheets()
     setEditEntry(null)
     setSavingEdit(false)
   }
 
-  async function deleteEntry(id) {
-    const { error } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', id)
+  async function deleteEntry(entry) {
+    const { error } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id)
     if (error) alert(`Delete failed: ${error.message}`)
+    // If that was the employee's last real entry in the pay week, the auto
+    // stat-pay entries for that week are no longer earned — remove them
+    else await cleanupStatPay(entry.employee_id, entry.work_date)
     setConfirmDeleteId(null)
     await loadTimesheets()
   }
@@ -392,38 +403,11 @@ export default function AdminDashboard() {
   const totalPD  = timesheetRows.reduce((s, r) => s + r.pd, 0)
 
   function computeEntryOT(empEntries) {
-    const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
-    const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
-    const byPayWeek = empEntries.reduce((acc, e) => {
-      const ws = toYMD(getPayWeekStart(new Date(e.work_date + 'T12:00:00')))
-      if (!acc[ws]) acc[ws] = []
-      acc[ws].push(e)
-      return acc
-    }, {})
-    const map = {}
-    Object.values(byPayWeek).forEach(weekEnts => {
-      const inOrder = [...weekEnts].sort((a, b) =>
-        a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
-      )
-      let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
-      inOrder.forEach(e => {
-        if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
-        const hrs = Number(e.hours)
-        if (e.ot_hours !== null && e.ot_hours !== undefined) {
-          const ot = Number(e.ot_hours), reg = hrs - ot
-          map[e.id] = { reg, ot, manual: true }
-          dayHoursSoFar += hrs; weeklyRegSoFar += reg
-        } else {
-          const dailyRegRemaining  = Math.max(0, dailyThreshold - dayHoursSoFar)
-          const dailyReg           = Math.min(hrs, dailyRegRemaining)
-          const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
-          const actualReg          = Math.min(dailyReg, weeklyRegRemaining)
-          map[e.id]                = { reg: actualReg, ot: (hrs - dailyReg) + (dailyReg - actualReg) }
-          dayHoursSoFar           += hrs; weeklyRegSoFar += actualReg
-        }
-      })
+    return computeOTMap(empEntries, {
+      dailyThreshold:  payrollConfig.daily_ot_threshold  ?? 8,
+      weeklyThreshold: payrollConfig.weekly_ot_threshold ?? 40,
+      statHolidays,
     })
-    return map
   }
 
   function handleExport() {
@@ -944,7 +928,7 @@ export default function AdminDashboard() {
                                 {isConfirmingDelete ? (
                                   <span>
                                     <span style={{ fontSize: '0.85rem', color: '#c0392b', marginRight: '0.5rem' }}>Delete?</span>
-                                    <button onClick={() => deleteEntry(e.id)} style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', background: '#c0392b', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
+                                    <button onClick={() => deleteEntry(e)} style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', background: '#c0392b', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
                                     <button onClick={() => setConfirmDeleteId(null)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}>No</button>
                                   </span>
                                 ) : (

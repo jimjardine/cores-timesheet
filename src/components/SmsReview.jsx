@@ -280,7 +280,8 @@ export default function SmsReview() {
   return (
     <div style={{ padding: '1.5rem', maxWidth: 900, margin: '0 auto' }}>
 
-      {/* Test harness */}
+      {/* Test harness — dev builds only, hidden from the client */}
+      {import.meta.env.DEV && (
       <div style={{ marginBottom: '1.5rem', border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
         <div
           onClick={() => setTestOpen(p => !p)}
@@ -324,6 +325,7 @@ export default function SmsReview() {
           </div>
         )}
       </div>
+      )}
 
       {/* Filter + title */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
