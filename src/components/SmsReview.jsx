@@ -98,6 +98,11 @@ export default function SmsReview() {
       // per_diem is a multiplier (×1 standard, ×2 double), not a dollar amount
       per_diem:    i === 0 && hasPD ? 1 : 0,
       sort_order:  i + 1,
+      // Carry the day's shift times onto the entries so the Edit modal and PDF
+      // work even if the sms_submission is later cleaned up
+      time_in:         sub.time_in || null,
+      stated_time_out: sub.stated_time_out || null,
+      lunch_minutes:   sub.lunch_minutes ?? null,
     }))
 
     if (rows.length > 0) {

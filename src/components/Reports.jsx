@@ -215,7 +215,8 @@ export default function Reports() {
     empIds.forEach(eid => {
       const emp = employees.find(e => e.id === eid)
       const empEntries = byEmp[eid] || []
-      const empSupplies = supplies.filter(s => empEntries.some(e => e.id === s.timesheet_entry_id || e.work_date === toYMD(new Date(s.created_at))))
+      // job_supplies rows carry their own employee_id + work_date — match on those
+      const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
 
       const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
       const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
@@ -1102,7 +1103,8 @@ export default function Reports() {
           const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
           const perDiem = [...new Set(empEntries.map(e => e.per_diem).filter(Boolean))].join('; ')
           const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
-          const empSupplies = supplies.filter(s => empEntries.some(e => e.id === s.timesheet_entry_id))
+          // job_supplies rows carry their own employee_id + work_date — match on those
+          const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
           return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies }
         }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
 
@@ -1111,7 +1113,7 @@ export default function Reports() {
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <label style={{ color: '#555', fontWeight: 600 }}>Pay Week:</label>
-                <select value={weekStart} onChange={e => setPayWeekStart(new Date(e.target.value))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <select value={weekStart} onChange={e => setPayWeekStart(new Date(e.target.value + 'T12:00:00'))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
                   {payWeeks.map(w => {
                     const end = new Date(w); end.setDate(end.getDate() + 6)
                     return <option key={toYMD(w)} value={toYMD(w)}>{fmtDate(w)} – {fmtDate(end)}</option>
