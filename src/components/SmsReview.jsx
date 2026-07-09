@@ -24,7 +24,7 @@ export default function SmsReview() {
 
   // Test harness
   const [testOpen, setTestOpen]   = useState(false)
-  const [testPhone, setTestPhone] = useState('5068557322')
+  const [testPhone, setTestPhone] = useState('5068667302')
   const [testMsg, setTestMsg]     = useState('')
   const [testReply, setTestReply] = useState(null)
   const [testLoading, setTestLoading] = useState(false)
@@ -84,13 +84,13 @@ export default function SmsReview() {
     const hasPD = sub.per_diem_location && sub.per_diem_location !== 'none'
     const entries = sub.entries || []
 
-    // Map job numbers to IDs
+    // Map job numbers to IDs — case-insensitive so "shop"/"Shop"/"SHOP" all match
     const jobMap = {}
-    jobs.forEach(j => { jobMap[j.job_number] = j.id })
+    jobs.forEach(j => { jobMap[j.job_number.toUpperCase()] = j.id })
 
     const rows = entries.map((e, i) => ({
       employee_id: sub.employee_id,
-      job_id:      jobMap[e.job_number] || null,
+      job_id:      jobMap[(e.job_number || '').toUpperCase()] || null,
       work_date:   sub.work_date,
       hours:       Number(e.hours),
       ot_hours:    Number(e.ot_hours ?? 0),
@@ -114,7 +114,7 @@ export default function SmsReview() {
     const supplies = (sub.supplies || []).filter(s => s.supply_name?.trim())
     if (supplies.length > 0) {
       const supplyRows = supplies.map(s => ({
-        job_id:            jobMap[s.job_number] || null,
+        job_id:            jobMap[(s.job_number || '').toUpperCase()] || null,
         sms_submission_id: sub.id,
         employee_id:       sub.employee_id,
         work_date:         sub.work_date,
@@ -423,7 +423,7 @@ export default function SmsReview() {
                     </thead>
                     <tbody>
                       {sub.entries.map((e, i) => {
-                        const matchedJob = jobs.find(j => j.job_number === e.job_number)
+                        const matchedJob = jobs.find(j => j.job_number.toUpperCase() === (e.job_number || '').toUpperCase())
                         const reg = e.reg_hours ?? e.hours
                         const ot  = e.ot_hours ?? 0
                         return (
@@ -473,7 +473,7 @@ export default function SmsReview() {
                     </thead>
                     <tbody>
                       {sub.supplies.map((s, i) => {
-                        const matchedJob = jobs.find(j => j.job_number === s.job_number)
+                        const matchedJob = jobs.find(j => j.job_number.toUpperCase() === (s.job_number || '').toUpperCase())
                         return (
                           <tr key={i} style={{ borderTop: '1px solid #eee' }}>
                             <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600 }}>{s.supply_name}</td>
@@ -595,7 +595,7 @@ export default function SmsReview() {
               </thead>
               <tbody>
                 {editFields.entries.map((e, i) => {
-                  const matched = jobs.some(j => j.job_number === e.job_number.trim())
+                  const matched = jobs.some(j => j.job_number.toUpperCase() === e.job_number.trim().toUpperCase())
                   return (
                     <tr key={i}>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
@@ -638,7 +638,7 @@ export default function SmsReview() {
               onClick={addEntryRow}
               style={{ marginTop: '0.35rem', padding: '0.25rem 0.7rem', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
             >+ Add job</button>
-            {editFields.entries.some(e => e.job_number.trim() && !jobs.some(j => j.job_number === e.job_number.trim())) && (
+            {editFields.entries.some(e => e.job_number.trim() && !jobs.some(j => j.job_number.toUpperCase() === e.job_number.trim().toUpperCase())) && (
               <div style={{ fontSize: '0.75rem', color: '#c00', marginTop: '0.3rem' }}>
                 Red job numbers don't match any open job — they'll save, but won't link to a job record.
               </div>
@@ -659,7 +659,7 @@ export default function SmsReview() {
               </thead>
               <tbody>
                 {(editFields.supplies || []).map((s, i) => {
-                  const matched = jobs.some(j => j.job_number === s.job_number.trim())
+                  const matched = jobs.some(j => j.job_number.toUpperCase() === s.job_number.trim().toUpperCase())
                   return (
                     <tr key={i}>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
