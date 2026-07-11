@@ -63,6 +63,7 @@ export default function AdminDashboard() {
     per_diem: 0, sort_order: 1
   })
   const [savingManual, setSavingManual] = useState(false)
+  const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
   const [subPreset, setSubPreset] = useState('this-week')
@@ -271,7 +272,7 @@ export default function AdminDashboard() {
   }
 
   // Text the employee to confirm a manually-entered timesheet — best-effort,
-  // reports a soft alert on failure rather than blocking the save that already happened
+  // surfaces a dismissible banner on failure rather than blocking with alert()
   async function requestEntryConfirmation(employeeId, workDate) {
     try {
       const res = await fetch(FUNCTION_URL, {
@@ -280,9 +281,9 @@ export default function AdminDashboard() {
         body: JSON.stringify({ action: 'request_confirmation', employee_id: employeeId, work_date: workDate }),
       })
       const data = await res.json()
-      if (!data.ok) alert(`Entries saved, but couldn't text the employee to confirm: ${data.error}`)
+      if (!data.ok) setConfirmationWarning(`Entries saved, but couldn't text the employee to confirm: ${data.error}`)
     } catch (e) {
-      alert(`Entries saved, but the confirmation text failed to send: ${e.message}`)
+      setConfirmationWarning(`Entries saved, but the confirmation text failed to send: ${e.message}`)
     }
   }
 
@@ -854,6 +855,12 @@ export default function AdminDashboard() {
       {/* ── Timesheets tab ── */}
       {activeTab === 'timesheets' && (
         <>
+          {confirmationWarning && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', padding: '0.65rem 1rem', background: '#fdf0d5', border: '1px solid #f0d090', borderRadius: '6px', color: '#8a6100', fontSize: '0.9rem' }}>
+              <span>{confirmationWarning}</span>
+              <button onClick={() => setConfirmationWarning(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#8a6100', fontSize: '1.1rem', lineHeight: 1, padding: 0 }}>×</button>
+            </div>
+          )}
           {/* Filters — always visible */}
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
