@@ -220,8 +220,8 @@ Rules:
 - Workers text casually: expect ALL CAPS, all lowercase, typos, and run-on sentences. Match all phrases below case-insensitively.
 - name_override: first name string if they said "this is [name]", "it's [name]", "for [name]" (any casing — "THIS IS JOEY" counts) — else null
 - work_date: "YYYY-MM-DD" if a date is mentioned (resolve "yesterday", day names, "June 30", etc.) — else null
-- time_in: "HH:MM" 24-hour if a start time is mentioned — else null
-- stated_time_out: "HH:MM" 24-hour only if they explicitly said when they finished/left — else null
+- time_in: "HH:MM" 24-hour if a start time is mentioned anywhere in the message — else null. A time range on a job ("4709 9 to 5") counts as mentioning the shift's start time even without an "in"/"started" keyword — extract the first time as time_in.
+- stated_time_out: "HH:MM" 24-hour if they said when they finished/left anywhere in the message — else null. A time range on a job ("4709 9 to 5") counts here too — extract the second time as stated_time_out, the same way "worked 4760 all day, in 7 out 5" would.
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string or SHOP", hours:number|null, description:"verbatim from message"}] — only real job work. Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
@@ -691,6 +691,16 @@ Deno.serve(async (req: Request) => {
     allEntries = allEntries.map((e: any) =>
       (!e.hours || Number(e.hours) === 0) ? { ...e, hours: each } : e
     )
+  }
+
+  // Single job for the whole day + known shift bounds: the job's hours MUST equal the
+  // bounded elapsed time. Claude sometimes fills entries[].hours from a bare time range on
+  // the job itself ("4709 9 to 5" -> hours: 8, the raw span) despite being told not to —
+  // recompute from the bounds rather than trust that number, since there's no ambiguity
+  // to preserve when there's only one job.
+  if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut) {
+    const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
+    if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours }]
   }
 
   // ── Calculate time_out from hours + lunch ──
