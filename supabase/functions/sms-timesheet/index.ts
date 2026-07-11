@@ -54,10 +54,24 @@ async function savePhotoToStorage(
   workDate: string,
   shipOrJob: string | null = null
 ): Promise<{ path: string; size: number; id: string } | null> {
+  const t0 = Date.now()
   try {
-    // Download photo from Twilio
-    const photoRes = await fetch(mediaUrl)
-    if (!photoRes.ok) return null
+    // Download photo from Twilio — media URLs (SMS/MMS and WhatsApp alike) require
+    // Basic Auth with the account's own credentials; an unauthenticated fetch gets a 401.
+    // Twilio itself only waits ~15s for our whole webhook response before it gives up
+    // (Error 11200), so there's no point letting a stalled download run any longer than
+    // that — cap it well under Twilio's own patience and fail fast instead of hanging.
+    const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
+    const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+    const photoRes = await fetch(mediaUrl, {
+      headers: sid && token ? { 'Authorization': 'Basic ' + btoa(`${sid}:${token}`) } : {},
+      signal: AbortSignal.timeout(8000),
+    })
+    console.error(`Photo download took ${Date.now() - t0}ms, status ${photoRes.status}`)
+    if (!photoRes.ok) {
+      console.error('Photo download failed:', photoRes.status, mediaUrl)
+      return null
+    }
     const photoBlob = await photoRes.arrayBuffer()
     const photoSize = photoBlob.byteLength
 
@@ -76,6 +90,7 @@ async function savePhotoToStorage(
       .from('gear-photos')
       .upload(path, new Uint8Array(photoBlob), { contentType })
 
+    console.error(`Photo upload took ${Date.now() - t0}ms total, size ${photoSize}b`)
     if (uploadError) {
       console.error('Photo upload error:', uploadError.message)
       return null
@@ -105,7 +120,7 @@ async function savePhotoToStorage(
 
     return { path, size: photoSize, id: inserted.id }
   } catch (err: any) {
-    console.error('Photo save error:', err.message)
+    console.error(`Photo save error after ${Date.now() - t0}ms:`, err.name, err.message)
     return null
   }
 }
@@ -339,7 +354,7 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(r) : jsonReply({ error: r }, 400)
   }
 
-  if (!msgBody) {
+  if (!msgBody && mediaUrls.length === 0) {
     const r = 'Got an empty message. Reply HELP for tips.'
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
@@ -349,6 +364,20 @@ Deno.serve(async (req: Request) => {
 
   if (/^(help|\?)$/i.test(msgBody)) {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
+  }
+
+  // ── Employee lookup by phone (name-override, if any, is applied further down once
+  // Claude has parsed the message — but photos short-circuit before that point, so this
+  // phone-based match needs to happen up here to get attributed to gear photos too). ──
+  let employeeId: string | null = null
+  let employeeName: string | null = null
+  if (fromPhone) {
+    const { data: byPhone } = await supabase
+      .from('employees')
+      .select('id, name, phone, whatsapp_phone, active')
+    const match = (byPhone || []).find((e: any) =>
+      (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
+    if (match) { employeeId = match.id; employeeName = match.name }
   }
 
   // ── Check for pending photos awaiting context (ship/job) ──
@@ -361,12 +390,14 @@ Deno.serve(async (req: Request) => {
     .order('created_at', { ascending: false })
 
   if (pendingPhotos && pendingPhotos.length > 0 && msgBody.length < 100) {
-    // Short response likely to be ship/job context — update pending photos
+    // Short response likely to be ship/job context — update pending photos. Also backfill
+    // employee_id: these were saved before identity could be resolved (no caption yet).
     const { error: updateError } = await supabase
       .from('gear_photos')
       .update({
         ship_or_job: msgBody.trim(),
         pending_context: false,
+        ...(employeeId ? { employee_id: employeeId } : {}),
       })
       .eq('from_phone', fromPhone)
       .eq('work_date', today)
@@ -413,62 +444,64 @@ Deno.serve(async (req: Request) => {
   // ── Check for photo submission and context ──
   const hasPhotos = mediaUrls.length > 0
   let photoContext: string | null = null
-  let employeeId: string | null = null
-  let employeeName: string | null = null
   if (hasPhotos) {
-    // Try to parse message to see if it mentions a job or ship
+    // Try to spot a job or ship mention in the caption. Check deterministically first —
+    // a bare job number ("4847") has no hours attached, so the full timesheet parser
+    // (which only extracts entries that look like real logged time) sees no entry at
+    // all and would wrongly conclude there's no context.
     let hasJobContext = false
-    try {
-      const testParse = await parseWithClaude(msgBody, today)
-      // Extract context: job number from first entry or ship mentions
-      if (testParse.entries?.length > 0) {
-        photoContext = testParse.entries[0].job_number
-      }
-      hasJobContext = !!photoContext ||
-                     (msgLower.includes('wave') || msgLower.includes('nanaimo') ||
-                      msgLower.includes('ship') || msgLower.includes('boat'))
-
-      // If we found ship/boat mentions but no job, use the mentions as context
-      if (!photoContext && hasJobContext) {
-        photoContext = msgBody.trim().substring(0, 50)
-      }
-    } catch {
-      // If Claude fails, check for simple patterns
-      const match = msgBody.match(/(\d{4})/);
-      if (match) {
-        photoContext = match[1]
-        hasJobContext = true
-      } else {
-        hasJobContext = /wave|nanaimo|ship|boat/i.test(msgBody)
-        if (hasJobContext) {
-          photoContext = msgBody.trim().substring(0, 50)
+    const jobNumberMatch = msgBody.match(/\b(\d{4})\b/)
+    if (jobNumberMatch) {
+      photoContext = jobNumberMatch[1]
+      hasJobContext = true
+    } else if (/wave|nanaimo|ship|boat/i.test(msgBody)) {
+      photoContext = msgBody.trim().substring(0, 50)
+      hasJobContext = true
+    } else if (msgBody) {
+      // Caption doesn't match either simple pattern — fall back to the full parser
+      // in case it's phrased as a normal timesheet entry ("4847 6hrs bearings").
+      try {
+        const testParse = await parseWithClaude(msgBody, today)
+        const candidate = testParse.entries?.[0]?.job_number
+        // Only trust it if it actually looks like a job number — Claude can otherwise
+        // echo back nonsense captions ("I don't know") verbatim as a "job_number".
+        if (candidate && /^(\d{4}|SHOP)$/i.test(candidate)) {
+          photoContext = candidate
+          hasJobContext = true
         }
+      } catch {
+        // no-op — hasJobContext stays false, photo gets saved pending context
       }
     }
 
     if (!hasJobContext) {
       // Save photos without context, then prompt for it
-      await Promise.all(
+      const saved = await Promise.all(
         mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, null))
       )
-
       const firstName = (employeeName || '').split(' ')[0] || ''
-      const reply = `Got the photo${firstName ? ' ' + firstName : ''}. Which ship or job?`
+      const reply = saved.some(r => r !== null)
+        ? `Got the photo${firstName ? ' ' + firstName : ''}. Which ship or job?`
+        : `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact Nicki if it keeps failing.`
       return isTwilio ? twiML(reply) : jsonReply({ reply })
     }
 
     // Save photos with context, then continue to normal processing
     // (we'll treat this as a special case that doesn't need the normal timesheet flow)
+    let anyPhotoSaved = false
     if (photoContext) {
-      await Promise.all(
+      const saved = await Promise.all(
         mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext))
       )
+      anyPhotoSaved = saved.some(r => r !== null)
     }
 
     // If message was ONLY photos (no text), confirm and return
     if (!msgBody || msgBody.length < 10) {
       const firstName = (employeeName || '').split(' ')[0] || ''
-      const reply = `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
+      const reply = anyPhotoSaved
+        ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
+        : `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact Nicki if it keeps failing.`
       return isTwilio ? twiML(reply) : jsonReply({ reply })
     }
 
@@ -576,10 +609,11 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
   }
 
-  // ── Employee lookup (name override → phone) ──
-  // Tracks whether identity came from an explicit "This is X" this turn, as opposed to
-  // the phone-fallback guess below — an explicit override always wins, but a guess must
-  // not clobber an existing conversation's already-established identity (see mergedEmployeeId).
+  // ── Employee name override ──
+  // employeeId/employeeName were already resolved by phone further up (see above, needed
+  // early for gear-photo attribution). An explicit "This is X" always wins over that phone
+  // guess — tracked separately since a guess must not clobber an existing conversation's
+  // already-established identity (see mergedEmployeeId), but an explicit override should.
   let employeeIdFromNameOverride = false
   if (parsed.name_override) {
     const { data: byName } = await supabase
@@ -590,18 +624,6 @@ Deno.serve(async (req: Request) => {
       .eq('role', 'technician')
       .limit(1)
     if (byName?.length) { employeeId = byName[0].id; employeeName = byName[0].name; employeeIdFromNameOverride = true }
-  }
-
-  if (!employeeId && fromPhone) {
-    // Phone-based lookup: search ALL employees (active + inactive).
-    // We'll handle inactive employees but flag them for Nicki.
-    // No role filter — Niki, techs, everyone can text from their own phone.
-    const { data: byPhone } = await supabase
-      .from('employees')
-      .select('id, name, phone, whatsapp_phone, active')
-    const match = (byPhone || []).find((e: any) =>
-      (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
-    if (match) { employeeId = match.id; employeeName = match.name }
   }
 
   // ── Work date ──

@@ -684,6 +684,9 @@ export default function SmsReview() {
               <tbody>
                 {(editFields.supplies || []).map((s, i) => {
                   const matched = jobs.some(j => j.job_number.toUpperCase() === s.job_number.trim().toUpperCase())
+                  const entryJobNumbers = [...new Set(
+                    editFields.entries.map(e => e.job_number.trim()).filter(Boolean)
+                  )]
                   return (
                     <tr key={i}>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
@@ -703,12 +706,19 @@ export default function SmsReview() {
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
-                        <input
+                        <select
                           value={s.job_number}
                           onChange={ev => setSupplyField(i, 'job_number', ev.target.value)}
-                          placeholder="4760"
                           style={{ ...inp, borderColor: s.job_number.trim() && !matched ? '#e08080' : '#ccc' }}
-                        />
+                        >
+                          <option value="">—</option>
+                          {entryJobNumbers.map(jn => (
+                            <option key={jn} value={jn}>{jn}</option>
+                          ))}
+                          {s.job_number.trim() && !entryJobNumbers.includes(s.job_number.trim()) && (
+                            <option value={s.job_number}>{s.job_number}</option>
+                          )}
+                        </select>
                       </td>
                       <td>
                         <button
