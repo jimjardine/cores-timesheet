@@ -51,7 +51,14 @@ export default function SmsReview() {
 
   useEffect(() => { load() }, [load])
 
-  const visible = submissions.filter(s => filter === 'all' || s.status === filter)
+  // "Pending" also surfaces still-open conversations (status='collecting') — otherwise a
+  // tech who never answers a follow-up question (lunch/PD/supplies) vanishes from view
+  // entirely, since it never reaches 'submitted' on its own.
+  const visible = submissions.filter(s => {
+    if (filter === 'all') return true
+    if (filter === 'submitted') return s.status === 'submitted' || s.status === 'collecting'
+    return s.status === filter
+  })
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || 'Unknown'
   const getEmployee = (id) => employees.find(e => e.id === id) || { name: 'Unknown', active: null }
@@ -370,6 +377,12 @@ export default function SmsReview() {
         if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
         if (sub.per_diem_location == null)             flags.push('per diem unknown')
         if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) flags.push(`time delta ${sub.delta_minutes > 0 ? '+' : ''}${sub.delta_minutes}min`)
+        if (sub.status === 'collecting' && (sub.pending_questions || []).length > 0) {
+          flags.push(`⏳ awaiting reply — ${sub.pending_questions.join(' | ')}`)
+        }
+        if (sub.status === 'submitted' && (sub.pending_questions || []).length > 0) {
+          flags.push('⏱ no reply received — auto-closed')
+        }
 
         const isExpanded = !!expanded[sub.id]
 
