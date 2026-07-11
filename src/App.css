@@ -171,3 +171,17 @@ body {
   text-decoration: underline;
   font-weight: 500;
 }
+
+.manual-doc h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+.manual-doc h2 { font-size: 1.15rem; margin: 1.5rem 0 0.75rem; color: #222; }
+.manual-doc h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; color: #333; }
+.manual-doc p { margin: 0 0 0.85rem; line-height: 1.55; color: #333; }
+.manual-doc ul, .manual-doc ol { margin: 0 0 0.85rem 1.4rem; line-height: 1.55; }
+.manual-doc li { margin-bottom: 0.3rem; }
+.manual-doc strong { color: #111; }
+.manual-doc blockquote { margin: 0 0 0.85rem; padding: 0.6rem 1rem; background: #f5f8ff; border-left: 3px solid #0066cc; color: #333; font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; }
+.manual-doc code { background: #f0f0f0; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.9em; }
+.manual-doc hr { border: none; border-top: 1px solid #eee; margin: 1.25rem 0; }
+.manual-doc table { border-collapse: collapse; width: 100%; margin: 0 0 1rem; font-size: 0.9rem; }
+.manual-doc th, .manual-doc td { border: 1px solid #ddd; padding: 0.5rem 0.65rem; text-align: left; }
+.manual-doc th { background: #f5f5f5; font-weight: 600; }

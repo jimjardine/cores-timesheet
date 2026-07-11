@@ -67,6 +67,14 @@ If you leave something out (like lunch or per diem), you'll get **one** quick qu
 
 Answer it and you're done. It won't nag you past that — anything still missing gets flagged for Nicki to sort out.
 
+## Getting a confirmation text from Nicki?
+
+Sometimes Nicki adds a shift manually in the office (if you couldn't text it in, or if she's fixing something). When she does, she'll ask you to confirm it:
+
+> Hi Joey, Nicki added: Fri 4760 6hrs rebuilt bearings, 4862 2hrs fuel lines, out 4, lunch 30. Reply YES to confirm or text the fix.
+
+Just text back **YES** (or "yep", "yup", "confirm" — anything affirmative) and it's locked in. If it's wrong, text the correction instead of "yes" and the fix replaces it.
+
 ## Made a mistake? Just text again
 
 Already got your "Done ✓" but forgot a job or got the time wrong? Text the fix — same day, same number:
