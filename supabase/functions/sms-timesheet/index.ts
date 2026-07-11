@@ -530,8 +530,9 @@ Deno.serve(async (req: Request) => {
   // fed to the parser. Skipped if there's an active collecting/submitted
   // conversation so we don't hijack a normal in-progress submission.
   if (fromPhone) {
-    const { data: byPhone } = await supabase.from('employees').select('id, name, phone')
-    const phoneMatch = (byPhone || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
+    const { data: byPhone } = await supabase.from('employees').select('id, name, phone, whatsapp_phone')
+    const phoneMatch = (byPhone || []).find((e: any) =>
+      (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
 
     if (phoneMatch) {
       const { data: activeConvo } = await supabase
@@ -597,8 +598,9 @@ Deno.serve(async (req: Request) => {
     // No role filter — Niki, techs, everyone can text from their own phone.
     const { data: byPhone } = await supabase
       .from('employees')
-      .select('id, name, phone, active')
-    const match = (byPhone || []).find((e: any) => e.phone && normalizePhone(e.phone) === fromPhone)
+      .select('id, name, phone, whatsapp_phone, active')
+    const match = (byPhone || []).find((e: any) =>
+      (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
     if (match) { employeeId = match.id; employeeName = match.name }
   }
 

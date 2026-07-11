@@ -128,7 +128,7 @@ export default function AdminPanel() {
     } else if (type === 'job') {
       setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open', work_order_number: record?.work_order_number || '' })
     } else if (type === 'employee') {
-      setFields({ name: record?.name || '', phone: record?.phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
+      setFields({ name: record?.name || '', phone: record?.phone || '', whatsapp_phone: record?.whatsapp_phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     } else if (type === 'entry') {
       setFields({ work_date: record?.work_date || '', job_id: record?.job_id || '', hours: record?.hours ?? '', ot_hours: record?.ot_hours ?? '', per_diem: record?.per_diem ?? '0', description: record?.description || '' })
     }
@@ -161,7 +161,13 @@ export default function AdminPanel() {
         if (insError) { alert(`Vessel saved but contacts failed to save — re-enter them: ${insError.message}`); setSaving(false); return }
       }
     } else if (type === 'employee') {
-      const empPayload = { name: payload.name.trim(), phone: payload.phone.replace(/\D/g, '').slice(-10) || null, active: payload.active === 'true', role: payload.role }
+      const empPayload = {
+        name: payload.name.trim(),
+        phone: payload.phone.replace(/\D/g, '').slice(-10) || null,
+        whatsapp_phone: (payload.whatsapp_phone || '').replace(/\D/g, '').slice(-10) || null,
+        active: payload.active === 'true',
+        role: payload.role,
+      }
       const { error } = record
         ? await supabase.schema('Cores').from('employees').update(empPayload).eq('id', record.id)
         : await supabase.schema('Cores').from('employees').insert(empPayload)
@@ -961,6 +967,7 @@ export default function AdminPanel() {
         <Modal title={modal.record ? 'Edit Employee' : 'New Employee'} onClose={() => setModal(null)}>
           <Field label="Name"><input style={inputStyle} {...f('name')} placeholder="First Last" /></Field>
           <Field label="Cell Number"><input type="tel" style={inputStyle} {...f('phone')} placeholder="e.g. 902-555-1234" /></Field>
+          <Field label="WhatsApp Number (if different)"><input type="tel" style={inputStyle} {...f('whatsapp_phone')} placeholder="Only needed if different from Cell Number" /></Field>
           <Field label="Role">
             <select style={inputStyle} {...f('role')}>
               <option value="technician">Technician</option>
