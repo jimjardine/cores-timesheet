@@ -516,7 +516,7 @@ export default function SmsReview() {
                         }}>
                           {m.text}
                           <div style={{ fontSize: '0.7rem', color: '#999', marginTop: 2 }}>
-                            {m.direction === 'in' ? 'Worker' : 'System'} · {m.ts ? new Date(m.ts).toLocaleTimeString() : ''}
+                            {m.direction === 'in' ? `Worker (${sub.from_phone})` : 'System'} · {m.ts ? new Date(m.ts).toLocaleTimeString() : ''}
                           </div>
                         </div>
                       ))}
