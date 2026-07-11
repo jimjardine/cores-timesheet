@@ -576,6 +576,10 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Employee lookup (name override → phone) ──
+  // Tracks whether identity came from an explicit "This is X" this turn, as opposed to
+  // the phone-fallback guess below — an explicit override always wins, but a guess must
+  // not clobber an existing conversation's already-established identity (see mergedEmployeeId).
+  let employeeIdFromNameOverride = false
   if (parsed.name_override) {
     const { data: byName } = await supabase
       .from('employees')
@@ -584,7 +588,7 @@ Deno.serve(async (req: Request) => {
       .eq('active', true)
       .eq('role', 'technician')
       .limit(1)
-    if (byName?.length) { employeeId = byName[0].id; employeeName = byName[0].name }
+    if (byName?.length) { employeeId = byName[0].id; employeeName = byName[0].name; employeeIdFromNameOverride = true }
   }
 
   if (!employeeId && fromPhone) {
@@ -671,11 +675,18 @@ Deno.serve(async (req: Request) => {
   const mergedPerDiem   = (isCorrection && parsed.per_diem_location != null) ? parsed.per_diem_location
                         : (submission?.per_diem_location != null)       ? submission.per_diem_location
                         : parsed.per_diem_location
-  const mergedEmployeeId = employeeId || submission?.employee_id || null
+  // An explicit "This is X" this turn always wins (it's a deliberate statement, possibly a
+  // correction). Otherwise, prefer whichever employee the conversation already belongs to —
+  // a follow-up reply like "no pd" has no name override, so without this the phone-fallback
+  // lookup above would silently reattribute the whole submission to whoever's phone sent it,
+  // even though "This is Andrew" already established it belongs to Andrew.
+  const mergedEmployeeId = employeeIdFromNameOverride ? employeeId : (submission?.employee_id || employeeId || null)
 
-  // If we didn't find the employee name from the current message (e.g. follow-up with no name override),
-  // look it up from the existing submission so the confirmation says "Done Jim" not "Done ".
-  if (!employeeName && mergedEmployeeId) {
+  // employeeName must describe whoever mergedEmployeeId actually is. On a follow-up with no
+  // name override, the phone-fallback lookup above may have set employeeName to the phone
+  // owner (e.g. Jim) even though mergedEmployeeId correctly stayed Andrew's — re-resolve
+  // whenever mergedEmployeeId isn't the identity this turn's own lookups landed on.
+  if (mergedEmployeeId && mergedEmployeeId !== employeeId) {
     const { data: empRow } = await supabase.from('employees').select('name').eq('id', mergedEmployeeId).single()
     if (empRow) employeeName = empRow.name
   }
