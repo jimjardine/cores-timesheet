@@ -45,17 +45,17 @@ export default function AdminPanel() {
   const [saving, setSaving] = useState(false)
   const [employees, setEmployees] = useState([])
 
-  // ── Tech manual ──
-  const [manualDocOpen, setManualDocOpen] = useState(false)
-  const [manualDocHtml, setManualDocHtml] = useState('')
+  // ── Tech docs (manual + cheat sheet) ──
+  const [docModal, setDocModal] = useState(null) // { title, url } | null
+  const [docHtmlCache, setDocHtmlCache] = useState({})
 
-  function openTechManual() {
-    setManualDocOpen(true)
-    if (!manualDocHtml) {
-      fetch('/SMS_USER_MANUAL.md')
+  function openDoc(title, url) {
+    setDocModal({ title, url })
+    if (!docHtmlCache[url]) {
+      fetch(url)
         .then(res => res.text())
-        .then(text => setManualDocHtml(marked.parse(text)))
-        .catch(() => setManualDocHtml('<p>Could not load the manual.</p>'))
+        .then(text => setDocHtmlCache(c => ({ ...c, [url]: marked.parse(text) })))
+        .catch(() => setDocHtmlCache(c => ({ ...c, [url]: '<p>Could not load this document.</p>' })))
     }
   }
   const [empStatusFilter, setEmpStatusFilter] = useState('active')
@@ -299,24 +299,29 @@ export default function AdminPanel() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <h1 style={{ marginTop: 0 }}>Admin</h1>
-        <button onClick={openTechManual} style={{ fontSize: '0.9rem', color: '#0066cc', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
-          📖 Tech Manual
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.3rem' }}>
+          <button onClick={() => openDoc('Tech Manual', '/SMS_USER_MANUAL.md')} style={{ fontSize: '0.9rem', color: '#0066cc', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+            📖 Tech Manual
+          </button>
+          <button onClick={() => openDoc('Cheat Sheet', '/SMS_CHEAT_SHEET.md')} style={{ fontSize: '0.85rem', color: '#0066cc', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+            📋 Cheat Sheet
+          </button>
+        </div>
       </div>
 
-      {manualDocOpen && (
-        <div onClick={() => setManualDocOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', overflowY: 'auto' }}>
+      {docModal && (
+        <div onClick={() => setDocModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', overflowY: 'auto' }}>
           <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '8px', width: '680px', maxWidth: '95vw', maxHeight: '85vh', margin: '2rem auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', borderBottom: '1px solid #eee' }}>
-              <strong>Tech Manual</strong>
-              <button onClick={() => setManualDocOpen(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.3rem', color: '#888', padding: 0, lineHeight: 1 }}>×</button>
+              <strong>{docModal.title}</strong>
+              <button onClick={() => setDocModal(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.3rem', color: '#888', padding: 0, lineHeight: 1 }}>×</button>
             </div>
             <div
               className="manual-doc"
               style={{ padding: '1.5rem', overflowY: 'auto' }}
-              dangerouslySetInnerHTML={{ __html: manualDocHtml }}
+              dangerouslySetInnerHTML={{ __html: docHtmlCache[docModal.url] || '' }}
             />
           </div>
         </div>
