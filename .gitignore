@@ -7,3 +7,4 @@ dist/
 RESUME_TOMORROW.md
 .timelog
 .claude/settings.local.json
+cores_backup_*.sql

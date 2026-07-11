@@ -1,0 +1,24 @@
+name: Backup Cores schema
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # ~4-5am Atlantic, low traffic
+  workflow_dispatch: {}    # allow manual trigger too
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Dump Cores schema
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          supabase db dump --db-url "$SUPABASE_DB_URL" --schema Cores -f cores_backup_$(date +%Y%m%d_%H%M%S).sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cores-schema-backup
+          path: cores_backup_*.sql
+          retention-days: 90
