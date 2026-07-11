@@ -740,6 +740,11 @@ Deno.serve(async (req: Request) => {
   const missingLunch    = mergedLunch == null
   const missingPerDiem  = mergedPerDiem == null
 
+  // Opt-in thorough mode — worker has to ask for it by including "timesheets" in their text.
+  // Off by default: supplies are otherwise never prompted for, only ever volunteered.
+  const wantsDetail     = /\btimesheets?\b/i.test(msgBody)
+  const missingSupplies = wantsDetail && allSupplies.length === 0
+
   // Fields Nicki will need to fill in (shown in review screen)
   const flags: string[] = []
   if (!mergedTimeIn) flags.push('start time missing')
@@ -767,20 +772,23 @@ Deno.serve(async (req: Request) => {
     nextStatus = 'submitted'
     flags.push('no job entries — needs manual entry')
 
-  } else if (missingLunch || missingPerDiem) {
+  } else if (missingLunch || missingPerDiem || missingSupplies) {
     // Ask for missing fields. On the first ask we bundle both; on subsequent asks we only
     // re-ask fields that were the sole pending question last time (i.e. we already gave them
     // one full round dedicated to that field — now just submit).
     const prevPendingQuestions: string[] = submission?.pending_questions || []
     const pdWasAloneLastTime  = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('per diem')
     const lunchWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('lunch')
-    const shouldAskPD    = missingPerDiem  && !pdWasAloneLastTime
-    const shouldAskLunch = missingLunch    && !lunchWasAloneLastTime
+    const suppliesWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('supplies')
+    const shouldAskPD       = missingPerDiem   && !pdWasAloneLastTime
+    const shouldAskLunch    = missingLunch     && !lunchWasAloneLastTime
+    const shouldAskSupplies = missingSupplies  && !suppliesWasAloneLastTime
 
-    if (shouldAskLunch || shouldAskPD) {
+    if (shouldAskLunch || shouldAskPD || shouldAskSupplies) {
       const qs: string[] = []
-      if (shouldAskLunch) qs.push('lunch? ("lunch 30" or "no lunch")')
-      if (shouldAskPD)    qs.push('per diem tonight? (location or "no PD")')
+      if (shouldAskLunch)    qs.push('lunch? ("lunch 30" or "no lunch")')
+      if (shouldAskPD)       qs.push('per diem tonight? (location or "no PD")')
+      if (shouldAskSupplies) qs.push('any shop supplies used? (e.g. "brake cleaner x1") or "none"')
       const entrySummary = allEntriesWithOT.map((e: any) => `${e.job_number} ${e.hours}hrs`).join(', ')
       reply = isFollowUp
         ? `Question: ${qs.join(' | ')}`
@@ -789,8 +797,9 @@ Deno.serve(async (req: Request) => {
     } else {
       // Already asked those questions individually — accept what we have
       nextStatus = 'submitted'
-      if (missingLunch)   flags.push('lunch unknown')
-      if (missingPerDiem) flags.push('per diem unknown')
+      if (missingLunch)    flags.push('lunch unknown')
+      if (missingPerDiem)  flags.push('per diem unknown')
+      if (missingSupplies) flags.push('supplies unknown')
     }
   }
 
