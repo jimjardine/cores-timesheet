@@ -605,20 +605,45 @@ Deno.serve(async (req: Request) => {
   // ── Work date ──
   const workDate = parsed.work_date || today
 
-  // ── Find existing submission for this day ──
-  // Priority: collecting (mid-conversation) → submitted (re-open and add more entries)
+  // ── Find existing submission ──
+  // A 'collecting' conversation is a question still awaiting this exact reply — there's only
+  // ever one truly in-progress per phone, so match on phone alone, not work_date, for the
+  // phone-based lookup specifically. A follow-up reply ("no supplies", "no pd") often doesn't
+  // repeat whatever date the original report was for, so requiring work_date to match today
+  // would miss a backdated report's open question entirely and start a brand new (wrongly-
+  // attributed) submission instead.
+  //
+  // The employee-id fallback (different phone, same person — e.g. borrowed someone else's
+  // phone) stays scoped to work_date: without that, two genuinely unrelated conversations that
+  // happen to share the same "This is X" name on different days/phones would incorrectly merge.
   let submission: any = null
-  for (const status of ['collecting', 'submitted']) {
-    if (submission) break
+  {
     const { data: byPhone } = await supabase
       .from('sms_submissions').select('*')
-      .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', status)
+      .eq('from_phone', fromPhone).eq('status', 'collecting')
       .order('created_at', { ascending: false }).limit(1)
-    if (byPhone?.length) { submission = byPhone[0]; break }
-    if (employeeId) {
+    if (byPhone?.length) submission = byPhone[0]
+    else if (employeeId) {
       const { data: byEmp } = await supabase
         .from('sms_submissions').select('*')
-        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', status)
+        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'collecting')
+        .order('created_at', { ascending: false }).limit(1)
+      if (byEmp?.length) submission = byEmp[0]
+    }
+  }
+
+  // A 'submitted' conversation (correction/reopen flow) does need to match the specific day —
+  // "actually I finished at 6" should correct that day's record, not some other day's.
+  if (!submission) {
+    const { data: byPhone } = await supabase
+      .from('sms_submissions').select('*')
+      .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', 'submitted')
+      .order('created_at', { ascending: false }).limit(1)
+    if (byPhone?.length) submission = byPhone[0]
+    else if (employeeId) {
+      const { data: byEmp } = await supabase
+        .from('sms_submissions').select('*')
+        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'submitted')
         .order('created_at', { ascending: false }).limit(1)
       if (byEmp?.length) submission = byEmp[0]
     }
