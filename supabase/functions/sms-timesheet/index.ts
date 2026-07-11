@@ -740,10 +740,9 @@ Deno.serve(async (req: Request) => {
   const missingLunch    = mergedLunch == null
   const missingPerDiem  = mergedPerDiem == null
 
-  // Opt-in thorough mode — worker has to ask for it by including "timesheets" in their text.
-  // Off by default: supplies are otherwise never prompted for, only ever volunteered.
-  const wantsDetail     = /\btimesheets?\b/i.test(msgBody)
-  const missingSupplies = wantsDetail && allSupplies.length === 0
+  // Ask about supplies the same way lunch/per diem are asked about — every time,
+  // if none were mentioned in the original text.
+  const missingSupplies = allSupplies.length === 0
 
   // Fields Nicki will need to fill in (shown in review screen)
   const flags: string[] = []

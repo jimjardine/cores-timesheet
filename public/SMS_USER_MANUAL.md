@@ -93,9 +93,7 @@ Anything you grab off the shelf gets charged back to the job — brake cleaner, 
 
 If you don't say which job, it goes on the first job you texted that day. Quantities like "x2", "2 cans", or "two rolls" all work. No prices needed — the office handles that.
 
-Normally we never ask if you used supplies — it's on you to mention them. Want to be asked? Add the word **"timesheets"** anywhere in your text and you'll get one extra question about it along with lunch/per diem:
-
-> "In 7:30, 4760 6hrs bearings, out 4, lunch 30, no PD, timesheets"
+If you don't mention supplies in your text, you'll get asked about them — same as lunch and per diem.
 
 ## Forgot to text yesterday?
 
