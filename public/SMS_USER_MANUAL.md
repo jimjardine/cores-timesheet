@@ -63,7 +63,7 @@ It stitches your texts together into one timesheet for the day.
 
 If you leave something out (like lunch or per diem), you'll get **one** quick question back, something like:
 
-> Quick: lunch? ("lunch 30" or "no lunch") | per diem tonight? (location or "no PD")
+> Question: lunch? ("lunch 30" or "no lunch") | per diem tonight? (location or "no PD")
 
 Answer it and you're done. It won't nag you past that — anything still missing gets flagged for Nicki to sort out.
 

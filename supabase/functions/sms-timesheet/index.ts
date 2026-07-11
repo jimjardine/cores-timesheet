@@ -773,8 +773,8 @@ Deno.serve(async (req: Request) => {
       if (shouldAskPD)    qs.push('per diem tonight? (location or "no PD")')
       const entrySummary = allEntriesWithOT.map((e: any) => `${e.job_number} ${e.hours}hrs`).join(', ')
       reply = isFollowUp
-        ? `Quick: ${qs.join(' | ')}`
-        : `Got it ${firstName} — ${entrySummary}\n\nQuick: ${qs.join(' | ')}`
+        ? `Question: ${qs.join(' | ')}`
+        : `Got it ${firstName} — ${entrySummary}\n\nQuestion: ${qs.join(' | ')}`
       pendingQuestions = qs
     } else {
       // Already asked those questions individually — accept what we have
