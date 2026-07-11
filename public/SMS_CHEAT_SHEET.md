@@ -1,6 +1,6 @@
 # Daily Text — Cheat Sheet
 
-Text this to **+1 (506) 404-6969** (or WhatsApp **+1 555-306-6147**) every work day:
+Text this to **+1 (506) 404-6969** (or WhatsApp **+1 (415) 523-8886** — first time, send `join cookies-could` once before your first real message) every work day:
 
 > In 7:30, 4760 6hrs rebuilt port engine bearings, 4862 2hrs fuel lines, out 4, lunch 30, no PD
 

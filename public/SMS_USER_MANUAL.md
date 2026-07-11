@@ -5,9 +5,11 @@ Submit your hours **every work day** using one of these channels:
 | Channel | Number | Use when |
 |---------|--------|----------|
 | **SMS/Text** | +1 (506) 404-6969 | You're at home or have cell signal |
-| **WhatsApp** | +1 555-306-6147 | You're overseas or prefer WhatsApp |
+| **WhatsApp** | +1 (415) 523-8886 | You're overseas or prefer WhatsApp |
 
 Both work identically — same format, same confirmation. Pick whichever is easier for your situation. Write it however you'd say it; the system figures it out.
+
+**First time using WhatsApp?** One-time setup: send **`join cookies-could`** to +1 (415) 523-8886 on WhatsApp before your first real message. You'll get a confirmation back, then you're set. (If it's been a few days since you last used WhatsApp for this and it stops replying, just send the join message again.)
 
 ---
 
@@ -129,7 +131,7 @@ If you give your in and out times, it can work out the hours for you:
 
 - Text or WhatsApp **HELP** (or just **?**) any time for the cheat sheet.
 - If a message comes back with "Couldn't read that one," reword it or contact Nicki directly.
-- Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 555-306-6147) — they're two different numbers for two different channels.
+- Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 415 523-8886) — they're two different numbers for two different channels.
 
 ---
 
