@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { marked } from 'marked'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
@@ -65,20 +64,6 @@ export default function AdminDashboard() {
   })
   const [savingManual, setSavingManual] = useState(false)
   const [confirmationWarning, setConfirmationWarning] = useState(null)
-
-  // ── Tech manual ──
-  const [manualDocOpen, setManualDocOpen] = useState(false)
-  const [manualDocHtml, setManualDocHtml] = useState('')
-
-  function openTechManual() {
-    setManualDocOpen(true)
-    if (!manualDocHtml) {
-      fetch('/SMS_USER_MANUAL.md')
-        .then(res => res.text())
-        .then(text => setManualDocHtml(marked.parse(text)))
-        .catch(() => setManualDocHtml('<p>Could not load the manual.</p>'))
-    }
-  }
 
   // ── Submission Status tab ──
   const [subPreset, setSubPreset] = useState('this-week')
@@ -859,28 +844,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ margin: 0 }}>Admin Dashboard</h1>
-        <button onClick={openTechManual} style={{ fontSize: '0.9rem', color: '#0066cc', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
-          📖 Tech Manual
-        </button>
-      </div>
-
-      {manualDocOpen && (
-        <div onClick={() => setManualDocOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', overflowY: 'auto' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '8px', width: '680px', maxWidth: '95vw', maxHeight: '85vh', margin: '2rem auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', borderBottom: '1px solid #eee' }}>
-              <strong>Tech Manual</strong>
-              <button onClick={() => setManualDocOpen(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.3rem', color: '#888', padding: 0, lineHeight: 1 }}>×</button>
-            </div>
-            <div
-              className="manual-doc"
-              style={{ padding: '1.5rem', overflowY: 'auto' }}
-              dangerouslySetInnerHTML={{ __html: manualDocHtml }}
-            />
-          </div>
-        </div>
-      )}
+      <h1>Admin Dashboard</h1>
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         <button style={tabStyle('timesheets')} onClick={() => { setActiveTab('timesheets'); setSelectedEmp(null); setSelectedDate(null); setFilterEmployeeIds([]) }}>Timesheets</button>
