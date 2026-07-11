@@ -409,7 +409,7 @@ export default function SmsReview() {
                 {/* Time row */}
                 <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.75rem', fontSize: '0.9rem', flexWrap: 'wrap' }}>
                   <span><strong>In:</strong> {fmt12(sub.time_in)}</span>
-                  <span><strong>Out:</strong> {fmt12(sub.calculated_time_out || sub.stated_time_out)}</span>
+                  <span><strong>Out:</strong> {fmt12(sub.stated_time_out || sub.calculated_time_out)}</span>
                   <span><strong>Lunch:</strong> {sub.lunch_minutes != null ? (sub.lunch_minutes === 0 ? 'None' : `${sub.lunch_minutes}min`) : '?'}</span>
                   {sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 0 && (
                     <span style={{ color: Math.abs(sub.delta_minutes) > 15 ? '#c00' : '#888' }}>
