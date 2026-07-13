@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
@@ -56,7 +56,7 @@ export default function Reports() {
   const [jobNumberFilter, setJobNumberFilter] = useState('')
   const [customerFilterIds, setCustomerFilterIds] = useState([])
   const [vesselFilterIds, setVesselFilterIds] = useState([])
-  const [hideEmptyOptions, setHideEmptyOptions] = useState(false)
+  const [hideEmptyOptions, setHideEmptyOptions] = useState(true)
   const [employeeFilterIds, setEmployeeFilterIds] = useState([])
 
   // Payroll tab
@@ -64,6 +64,7 @@ export default function Reports() {
   const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
 
   const [payEmployeeIds, setPayEmployeeIds] = useState([])
+  const payEmployeeIdsDefaulted = useRef(false)
   const [payEmpDropdownOpen, setPayEmpDropdownOpen] = useState(false)
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
@@ -104,6 +105,17 @@ export default function Reports() {
   }
 
   useEffect(() => { loadAll() }, [])
+
+  // Default the Payroll tab's employee filter to everyone (matching whatever the
+  // "only show items with time logged" toggle currently allows) the first time
+  // employee data loads — but only once, so it never overrides a user's own
+  // selection afterward.
+  useEffect(() => {
+    if (payEmployeeIdsDefaulted.current || employees.length === 0) return
+    payEmployeeIdsDefaulted.current = true
+    const withEntries = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
+    setPayEmployeeIds(withEntries.map(e => e.id))
+  }, [employees, entries, hideEmptyOptions])
 
   async function loadAll() {
     setLoading(true)
