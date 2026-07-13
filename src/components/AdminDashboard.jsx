@@ -111,6 +111,7 @@ export default function AdminDashboard() {
   async function openEdit(e, computedReg, computedOT) {
     setEditEntry(e)
     setEditFields({
+      employee_id: e.employee_id,
       work_date:   e.work_date,
       job_id:      e.job_id,
       reg_hours:   fmtHours(computedReg ?? Number(e.hours) - Number(e.ot_hours ?? 0)),
@@ -156,6 +157,7 @@ export default function AdminDashboard() {
     const reg = Number(editFields.reg_hours) || 0
     const ot  = Number(editFields.ot_hours)  || 0
     const { error } = await supabase.schema('Cores').from('timesheet_entries').update({
+      employee_id: editFields.employee_id,
       work_date:   editFields.work_date,
       job_id:      editFields.job_id,
       hours:       reg + ot,
@@ -173,14 +175,15 @@ export default function AdminDashboard() {
       return
     }
 
-    // Delete old supplies and insert updated ones
+    // Delete old supplies (tied to whoever/whatever date this entry originally belonged
+    // to) and insert updated ones under the current employee/date, in case either changed
     await supabase.schema('Cores').from('job_supplies').delete().eq('employee_id', editEntry.employee_id).eq('work_date', editEntry.work_date)
 
     const validSupplies = editSupplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
     if (validSupplies.length > 0) {
       const suppliesToInsert = validSupplies.map(s => ({
         job_id: s.job_id,
-        employee_id: editEntry.employee_id,
+        employee_id: editFields.employee_id,
         work_date: editFields.work_date,
         supply_name: s.supply_name,
         quantity: Number(s.quantity),
@@ -198,7 +201,7 @@ export default function AdminDashboard() {
       // Work on a stat holiday is all OT
       const statDay = await isStatHoliday(editFields.work_date)
       const { error: newJobError } = await supabase.schema('Cores').from('timesheet_entries').insert({
-        employee_id: editEntry.employee_id,
+        employee_id: editFields.employee_id,
         work_date: editFields.work_date,
         job_id: newJobFields.job_id,
         hours: Number(newJobFields.hours),
@@ -214,15 +217,16 @@ export default function AdminDashboard() {
         setSavingEdit(false)
         return
       }
-      await requestEntryConfirmation(editEntry.employee_id, editFields.work_date)
+      await requestEntryConfirmation(editFields.employee_id, editFields.work_date)
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     }
 
-    await ensureStatPay(editEntry.employee_id, editFields.work_date)
-    // If the entry moved to a different date, the OLD week may have lost its
-    // last real entry — clean up any now-unearned stat pay there
-    if (editFields.work_date !== editEntry.work_date) {
+    await ensureStatPay(editFields.employee_id, editFields.work_date)
+    // If the entry moved to a different date and/or a different employee, the OLD
+    // employee's OLD date may have lost its last real entry — clean up any now-unearned
+    // stat pay there
+    if (editFields.work_date !== editEntry.work_date || editFields.employee_id !== editEntry.employee_id) {
       await cleanupStatPay(editEntry.employee_id, editEntry.work_date)
     }
     await loadTimesheets()
@@ -634,6 +638,12 @@ export default function AdminDashboard() {
           <div style={{ background: '#fff', borderRadius: '8px', padding: '1.75rem', width: '480px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 1.25rem' }}>Edit Entry</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Employee</label>
+                <select style={inputStyle} value={editFields.employee_id || ''} onChange={e => setEditFields(f => ({ ...f, employee_id: e.target.value }))}>
+                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Date</label>
                 <input type="date" style={inputStyle} {...ef('work_date')} />
