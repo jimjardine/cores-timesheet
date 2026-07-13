@@ -44,12 +44,13 @@ export default function GearPhotos() {
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
+    const jobId = jobs.find(j => j.job_number.toUpperCase() === value.trim().toUpperCase())?.id || null
     const { error } = await supabase.schema('Cores').from('gear_photos')
-      .update({ ship_or_job: value, pending_context: !value })
+      .update({ ship_or_job: value, job_id: jobId, pending_context: !value })
       .eq('id', photo.id)
     if (error) alert('Error saving: ' + error.message)
     else {
-      setPhotos(p => p.map(x => x.id === photo.id ? { ...x, ship_or_job: value, pending_context: !value } : x))
+      setPhotos(p => p.map(x => x.id === photo.id ? { ...x, ship_or_job: value, job_id: jobId, pending_context: !value } : x))
       setEdits(e => { const n = { ...e }; delete n[photo.id]; return n })
     }
     setSavingId(null)

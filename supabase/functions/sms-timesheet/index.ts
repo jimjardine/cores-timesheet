@@ -46,13 +46,22 @@ function extractExifData(_jpegBuffer: ArrayBuffer): { lat?: number; lng?: number
   return {}
 }
 
+// Resolves a ship_or_job string to a real job, when it happens to be a job number —
+// ship-name-only tags (no matching job_number) correctly resolve to null.
+async function lookupJobId(supabase: any, shipOrJob: string | null): Promise<string | null> {
+  if (!shipOrJob) return null
+  const { data } = await supabase.from('jobs').select('id').ilike('job_number', shipOrJob.trim()).limit(1).maybeSingle()
+  return data?.id || null
+}
+
 async function savePhotoToStorage(
   supabase: any,
   mediaUrl: string,
   employeeId: string | null,
   fromPhone: string,
   workDate: string,
-  shipOrJob: string | null = null
+  shipOrJob: string | null = null,
+  jobId: string | null = null
 ): Promise<{ path: string; size: number; id: string } | null> {
   const t0 = Date.now()
   try {
@@ -107,6 +116,7 @@ async function savePhotoToStorage(
       storage_path: path,
       file_size_bytes: photoSize,
       ship_or_job: shipOrJob,
+      job_id: jobId,
       pending_context: !shipOrJob,
       photo_latitude: exifData.lat || null,
       photo_longitude: exifData.lng || null,
@@ -389,13 +399,30 @@ Deno.serve(async (req: Request) => {
     .eq('pending_context', true)
     .order('created_at', { ascending: false })
 
-  if (pendingPhotos && pendingPhotos.length > 0 && msgBody.length < 100) {
+  // Only treat this as a context reply for an EARLIER pending photo when the current
+  // message carries no photos of its own and actually has text — otherwise a second
+  // photo arriving in the same batch (its own empty caption trivially satisfies
+  // "short reply") gets misread as context for the first, and its own image is never
+  // saved at all (Twilio delivers each image in a multi-photo send as a separate,
+  // independent webhook call, not one request with several attachments).
+  const isNonAnswer = /^(unknown|idk|i\s*don'?t\s*know|not\s*sure|no\s*idea|n\/?a|dunno)\.?$/i.test(msgBody.trim())
+  if (pendingPhotos && pendingPhotos.length > 0 && mediaUrls.length === 0 && isNonAnswer) {
+    // Don't accept a non-answer as if it were real context — it would otherwise get
+    // stamped onto every currently-pending photo for this phone/day and silently drop
+    // out of the "needs ship/job" queue despite still not actually being tagged.
+    const reply = `No worries — I'll leave it flagged for Nicki. A ship name works too if you don't have the job number.`
+    return isTwilio ? twiML(reply) : jsonReply({ reply })
+  }
+
+  if (pendingPhotos && pendingPhotos.length > 0 && mediaUrls.length === 0 && msgBody.trim().length > 0 && msgBody.length < 100) {
     // Short response likely to be ship/job context — update pending photos. Also backfill
     // employee_id: these were saved before identity could be resolved (no caption yet).
+    const jobId = await lookupJobId(supabase, msgBody.trim())
     const { error: updateError } = await supabase
       .from('gear_photos')
       .update({
         ship_or_job: msgBody.trim(),
+        job_id: jobId,
         pending_context: false,
         ...(employeeId ? { employee_id: employeeId } : {}),
       })
@@ -486,26 +513,25 @@ Deno.serve(async (req: Request) => {
       return isTwilio ? twiML(reply) : jsonReply({ reply })
     }
 
-    // Save photos with context, then continue to normal processing
-    // (we'll treat this as a special case that doesn't need the normal timesheet flow)
+    // Save photos with context and stop — a photo is never also treated as an hours
+    // submission, even when the caption is long/descriptive enough to look like one.
+    // (Previously fell through into the normal timesheet flow for captions 10+ chars,
+    // which meant a photo captioned with a real description ended up triggering the
+    // full lunch/PD/supplies follow-up question meant for actual logged hours.)
     let anyPhotoSaved = false
     if (photoContext) {
+      const jobId = await lookupJobId(supabase, photoContext)
       const saved = await Promise.all(
-        mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext))
+        mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId))
       )
       anyPhotoSaved = saved.some(r => r !== null)
     }
 
-    // If message was ONLY photos (no text), confirm and return
-    if (!msgBody || msgBody.length < 10) {
-      const firstName = (employeeName || '').split(' ')[0] || ''
-      const reply = anyPhotoSaved
-        ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
-        : `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact Nicki if it keeps failing.`
-      return isTwilio ? twiML(reply) : jsonReply({ reply })
-    }
-
-    // Otherwise continue to normal processing (might include timesheet entries + photos)
+    const firstName = (employeeName || '').split(' ')[0] || ''
+    const reply = anyPhotoSaved
+      ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
+      : `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact Nicki if it keeps failing.`
+    return isTwilio ? twiML(reply) : jsonReply({ reply })
   }
 
   // ── Jobs list request (before the Claude parse — deterministic keyword) ──

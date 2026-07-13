@@ -8,6 +8,7 @@ const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize
 const clickRow = { cursor: 'pointer' }
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
 function getPayWeekStart(date) {
   const d = new Date(date)
@@ -36,6 +37,9 @@ export default function Reports() {
   const [employees, setEmployees] = useState([])
   const [entries, setEntries] = useState([])
   const [supplies, setSupplies] = useState([])
+  const [gearPhotos, setGearPhotos] = useState([])
+  const [photoModalJob, setPhotoModalJob] = useState(null)
+  const [photoLightbox, setPhotoLightbox] = useState(null)
 
   // Navigation
   const [activeTab, setActiveTab] = useState('jobs')
@@ -97,7 +101,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes] = await Promise.all([
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*').order('name'),
@@ -106,6 +110,7 @@ export default function Reports() {
       supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
+      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -113,6 +118,7 @@ export default function Reports() {
     setEmployees(empRes.data || [])
     setEntries(entriesRes.data || [])
     setSupplies(suppliesRes.data || [])
+    setGearPhotos(gearPhotosRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
     setLoading(false)
@@ -148,6 +154,7 @@ export default function Reports() {
   // ── Derived maps ──
   const hoursPerJob = filteredEntries.reduce((acc, e) => { acc[e.job_id] = (acc[e.job_id] || 0) + Number(e.hours); return acc }, {})
   const crewPerJob  = filteredEntries.reduce((acc, e) => { if (!acc[e.job_id]) acc[e.job_id] = new Set(); acc[e.job_id].add(e.employees?.name); return acc }, {})
+  const photosPerJob = gearPhotos.reduce((acc, p) => { acc[p.job_id] = (acc[p.job_id] || 0) + 1; return acc }, {})
   const hoursPerEmp = filteredEntries.reduce((acc, e) => { const id = e.employee_id; acc[id] = (acc[id] || 0) + Number(e.hours); return acc }, {})
 
   // ── Navigation helpers ──
@@ -723,8 +730,8 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
-                  <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+                {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
+                  <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -741,6 +748,14 @@ export default function Reports() {
                     <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
                     <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {photosPerJob[j.id] ? (
+                        <span
+                          style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                          onClick={e => { e.stopPropagation(); setPhotoModalJob(j) }}
+                        >📷 {photosPerJob[j.id]}</span>
+                      ) : '—'}
+                    </td>
                     <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
                   </tr>
                 ))}
@@ -1119,6 +1134,47 @@ export default function Reports() {
           </div>
         )
       })()}
+
+      {photoModalJob && (() => {
+        const jobPhotos = gearPhotos.filter(p => p.job_id === photoModalJob.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+        return (
+          <div
+            onClick={() => setPhotoModalJob(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ ...card, width: '100%', maxWidth: 700, maxHeight: '80vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>{photoModalJob.job_number} — {jobPhotos.length} photo{jobPhotos.length === 1 ? '' : 's'}</h3>
+                <button onClick={() => setPhotoModalJob(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
+                {jobPhotos.map(p => (
+                  <div key={p.id} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #eee' }}>
+                    <div
+                      onClick={() => setPhotoLightbox(p)}
+                      style={{ aspectRatio: '4 / 3', background: '#f0f0f0', cursor: 'pointer', overflow: 'hidden' }}
+                    >
+                      <img src={gearPhotoUrl(p.storage_path)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    </div>
+                    <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>
+                      {employees.find(e => e.id === p.employee_id)?.name || 'Unknown'} · {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {photoLightbox && (
+        <div
+          onClick={() => setPhotoLightbox(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', cursor: 'zoom-out' }}
+        >
+          <img src={gearPhotoUrl(photoLightbox.storage_path)} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }} />
+        </div>
+      )}
 
     </div>
   )
