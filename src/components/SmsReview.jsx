@@ -21,6 +21,7 @@ export default function SmsReview() {
   const [loading, setLoading]         = useState(true)
   const [expanded, setExpanded]       = useState({})
   const [acting, setActing]           = useState(null)
+  const [noteDrafts, setNoteDrafts]   = useState({})
 
   // Test harness
   const [testOpen, setTestOpen]   = useState(false)
@@ -155,6 +156,20 @@ export default function SmsReview() {
     const { error } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
     if (error) alert(`Reject failed: ${error.message}`)
     await load()
+    setActing(null)
+  }
+
+  // ── Notes ─────────────────────────────────────────────────────────────────
+  async function saveNote(sub) {
+    const value = (noteDrafts[sub.id] ?? '').trim()
+    setActing(sub.id)
+    const { error } = await supabase.schema('Cores').from('sms_submissions')
+      .update({ admin_note: value || null }).eq('id', sub.id)
+    if (error) alert('Error saving note: ' + error.message)
+    else {
+      setSubmissions(p => p.map(x => x.id === sub.id ? { ...x, admin_note: value || null } : x))
+      setNoteDrafts(d => { const n = { ...d }; delete n[sub.id]; return n })
+    }
     setActing(null)
   }
 
@@ -412,6 +427,11 @@ export default function SmsReview() {
                     ⚠ {f}
                   </span>
                 ))}
+                {sub.admin_note && (
+                  <span title={sub.admin_note} style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: '#eef2ff', color: '#3949ab', border: '1px solid #c5cae9' }}>
+                    📝 note
+                  </span>
+                )}
               </div>
               <span style={{ color: '#999', fontSize: '0.8rem' }}>{isExpanded ? '▲' : '▼'}</span>
             </div>
@@ -536,6 +556,33 @@ export default function SmsReview() {
                     </div>
                   </details>
                 )}
+
+                {/* Notes */}
+                {(() => {
+                  const draft = noteDrafts[sub.id] ?? (sub.admin_note || '')
+                  const dirty = draft !== (sub.admin_note || '')
+                  return (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '0.25rem' }}>Notes</label>
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+                        <textarea
+                          value={draft}
+                          onChange={e => setNoteDrafts(d => ({ ...d, [sub.id]: e.target.value }))}
+                          placeholder="Add a note for the record..."
+                          rows={2}
+                          style={{ flex: 1, padding: '0.4rem 0.6rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem', resize: 'vertical', fontFamily: 'inherit' }}
+                        />
+                        {dirty && (
+                          <button
+                            onClick={() => saveNote(sub)}
+                            disabled={acting === sub.id}
+                            style={{ padding: '0.4rem 0.8rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+                          >Save</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Actions */}
                 {(sub.status === 'submitted' || sub.status === 'collecting') && (

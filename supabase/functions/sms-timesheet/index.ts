@@ -829,6 +829,10 @@ Deno.serve(async (req: Request) => {
   // Ask about supplies the same way lunch/per diem are asked about — every time,
   // if none were mentioned in the original text.
   const missingSupplies = allSupplies.length === 0
+  // "I used shop supplies, I took a picture of them" has no itemized name/qty to log, so it
+  // otherwise looks identical to not having answered at all — but the tech DID answer, just
+  // via the gear-photos flow instead of naming an item in text. Don't keep asking.
+  const suppliesNotedViaPhoto = missingSupplies && /\b(pic|pics|picture|pictures|photo|photos)\b/i.test(msgBody)
 
   // Fields Nicki will need to fill in (shown in review screen)
   const flags: string[] = []
@@ -867,7 +871,7 @@ Deno.serve(async (req: Request) => {
     const suppliesWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('supplies')
     const shouldAskPD       = missingPerDiem   && !pdWasAloneLastTime
     const shouldAskLunch    = missingLunch     && !lunchWasAloneLastTime
-    const shouldAskSupplies = missingSupplies  && !suppliesWasAloneLastTime
+    const shouldAskSupplies = missingSupplies  && !suppliesWasAloneLastTime && !suppliesNotedViaPhoto
 
     if (shouldAskLunch || shouldAskPD || shouldAskSupplies) {
       const qs: string[] = []
@@ -884,7 +888,7 @@ Deno.serve(async (req: Request) => {
       nextStatus = 'submitted'
       if (missingLunch)    flags.push('lunch unknown')
       if (missingPerDiem)  flags.push('per diem unknown')
-      if (missingSupplies) flags.push('supplies unknown')
+      if (missingSupplies) flags.push(suppliesNotedViaPhoto ? 'supplies used — see gear photo, not itemized by text' : 'supplies unknown')
     }
   }
 
