@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
+import { fmtHours } from '../utils/format'
 import { generateWeeklyCompilationPDF } from '../utils/weeklyCompilationPdf'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
@@ -272,9 +273,9 @@ export default function Reports() {
           e.jobs?.job_number,
           e.jobs?.customers?.name,
           e.jobs?.vessels?.name,
-          Number(e.hours).toFixed(1),
-          reg.toFixed(1),
-          ot.toFixed(1),
+          fmtHours(e.hours),
+          fmtHours(reg),
+          fmtHours(ot),
           Number(e.per_diem || 0),
           `"${(e.description || '').replace(/"/g, '""')}"`,
           csvDateFrom,
@@ -333,9 +334,9 @@ export default function Reports() {
           j.job_number, j.customers?.name, j.vessels?.name,
           `"${(j.description || '').replace(/"/g, '""')}"`,
           j.status,
-          (hoursPerJob[j.id] || 0).toFixed(1),
-          (regPerJob[j.id] || 0).toFixed(1),
-          (otPerJob[j.id]  || 0).toFixed(1),
+          fmtHours(hoursPerJob[j.id] || 0),
+          fmtHours(regPerJob[j.id] || 0),
+          fmtHours(otPerJob[j.id]  || 0),
           (pdPerJob[j.id]  || 0),
           `"${crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : ''}"`,
           `"${(suppliesPerJob[j.id] || []).join('; ')}"`,
@@ -355,9 +356,9 @@ export default function Reports() {
           rows.push([c.name, j.job_number, j.vessels?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
             j.status,
-            (hoursPerJob[j.id] || 0).toFixed(1),
-            (regPerJob[j.id] || 0).toFixed(1),
-            (otPerJob[j.id]  || 0).toFixed(1),
+            fmtHours(hoursPerJob[j.id] || 0),
+            fmtHours(regPerJob[j.id] || 0),
+            fmtHours(otPerJob[j.id]  || 0),
             csvDateFrom, csvDateTo,
           ].join(','))
         )
@@ -376,9 +377,9 @@ export default function Reports() {
           rows.push([v.name, j.job_number, j.customers?.name,
             `"${(j.description || '').replace(/"/g, '""')}"`,
             j.status,
-            (hoursPerJob[j.id] || 0).toFixed(1),
-            (regPerJob[j.id] || 0).toFixed(1),
-            (otPerJob[j.id]  || 0).toFixed(1),
+            fmtHours(hoursPerJob[j.id] || 0),
+            fmtHours(regPerJob[j.id] || 0),
+            fmtHours(otPerJob[j.id]  || 0),
             csvDateFrom, csvDateTo,
           ].join(','))
         )
@@ -395,7 +396,7 @@ export default function Reports() {
         const totalReg = ee.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
         const totalOT  = ee.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0)
         const totalPD  = ee.reduce((s, e) => s + Number(e.per_diem || 0), 0)
-        rows.push([emp.name, empJobs.size, totalHrs.toFixed(1), totalReg.toFixed(1), totalOT.toFixed(1), totalPD, `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
+        rows.push([emp.name, empJobs.size, fmtHours(totalHrs), fmtHours(totalReg), fmtHours(totalOT), totalPD, `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
     } else if (activeTab === 'payroll') {
@@ -413,7 +414,7 @@ export default function Reports() {
             e.employees?.name,
             new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
             e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
-            Number(e.hours).toFixed(1), reg.toFixed(1), ot.toFixed(1),
+            fmtHours(e.hours), fmtHours(reg), fmtHours(ot),
             Number(e.per_diem || 0),
             `"${(e.description || '').replace(/"/g, '""')}"`,
             toYMD(payWeekStart), toYMD(weekEnd),
@@ -480,7 +481,7 @@ export default function Reports() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
           {[
-            { label: 'Total Hours', value: totalJobHours.toFixed(1) },
+            { label: 'Total Hours', value: fmtHours(totalJobHours) },
             { label: 'Crew Members', value: Object.keys(crewMap).length },
             { label: 'Days Worked', value: new Set(jobEntries.map(e => e.work_date)).size },
           ].map(({ label, value }) => (
@@ -504,7 +505,7 @@ export default function Reports() {
             {Object.values(crewMap).sort((a, b) => b.hours - a.hours).map(({ emp, hours }) => (
               <tr key={emp.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToEmployee(emp)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                 <td style={{ padding: '0.6rem 0.75rem', ...linkStyle }}>{emp.name}</td>
-                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{hours.toFixed(1)}</td>
+                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hours)}</td>
                 <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', color: '#888' }}>{totalJobHours > 0 ? Math.round((hours / totalJobHours) * 100) : 0}%</td>
               </tr>
             ))}
@@ -590,7 +591,7 @@ export default function Reports() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
           {[
-            { label: 'Total Hours', value: empTotalHours.toFixed(1) },
+            { label: 'Total Hours', value: fmtHours(empTotalHours) },
             { label: 'Jobs Worked', value: Object.keys(byJob).length },
             { label: 'Customers', value: empCustomers.size },
           ].map(({ label, value }) => (
@@ -614,7 +615,7 @@ export default function Reports() {
                   <span style={{ color: '#888' }}>{job?.vessels?.name}</span>
                   <span style={badge(job?.status)}>{job?.status}</span>
                 </div>
-                <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{hours.toFixed(1)} hrs</span>
+                <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtHours(hours)} hrs</span>
               </div>
               <div style={{ fontSize: '0.9rem', color: '#777', marginBottom: '0.75rem' }}>{job?.description}</div>
               <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: '0.75rem' }}>
@@ -748,7 +749,7 @@ export default function Reports() {
                     <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
                     <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hoursPerJob[j.id] || 0)}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                       {photosPerJob[j.id] ? (
                         <span
@@ -795,7 +796,7 @@ export default function Reports() {
                   <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
                   <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
-                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hoursPerJob[j.id] || 0)}</td>
                   <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
                 </tr>
               ))}
@@ -834,7 +835,7 @@ export default function Reports() {
                   <td style={{ padding: '0.75rem' }}>{j.vessels?.name}</td>
                   <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
-                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{(hoursPerJob[j.id] || 0).toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hoursPerJob[j.id] || 0)}</td>
                   <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
                 </tr>
               ))}
@@ -874,7 +875,7 @@ export default function Reports() {
                 <tr key={emp.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToEmployee(emp)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                   <td style={{ padding: '0.75rem', ...linkStyle }}>{emp.name}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}>{empJobs.size}</td>
-                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{empHours.toFixed(1)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(empHours)}</td>
                   <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{[...empCustomers].join(', ') || '—'}</td>
                 </tr>
               )
@@ -983,9 +984,9 @@ export default function Reports() {
                 {/* Summary bar */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
                   {[
-                    { label: 'Total Hours',   value: totalHours.toFixed(1),   color: '#1a1a2e' },
-                    { label: `Regular (≤${dailyThreshold}h/day, ≤${weeklyThreshold}h/wk)`, value: totalRegular.toFixed(1), color: '#2d6a38' },
-                    { label: `OT @ ${otMultiplier}×`, value: totalOT.toFixed(1), color: '#c0392b' },
+                    { label: 'Total Hours',   value: fmtHours(totalHours),   color: '#1a1a2e' },
+                    { label: `Regular (≤${dailyThreshold}h/day, ≤${weeklyThreshold}h/wk)`, value: fmtHours(totalRegular), color: '#2d6a38' },
+                    { label: `OT @ ${otMultiplier}×`, value: fmtHours(totalOT), color: '#c0392b' },
                     { label: `Per Diem${perDiemRate > 0 ? ` ($${(totalPerDiem * perDiemRate).toFixed(2)})` : ''}`, value: totalPerDiem > 0 ? `×${totalPerDiem}` : '—', color: '#8B4513' },
                   ].map(({ label, value, color }) => (
                     <div key={label} style={card}>
@@ -1025,9 +1026,9 @@ export default function Reports() {
                           {isStat && <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', background: '#ffe082', color: '#7a5c00', borderRadius: '4px', padding: '0.1rem 0.35rem', fontWeight: 600 }}>STAT</span>}
                         </td>
                         <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.9rem' }}>{fmtDate(day)}</td>
-                        <td style={{ ...tdC, fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? dayHours.toFixed(1) : '—'}</td>
-                        <td style={{ ...tdC, color: regularHours > 0 ? '#2d6a38' : '#ddd' }}>{regularHours > 0 ? regularHours.toFixed(1) : '—'}</td>
-                        <td style={{ ...tdC, color: otHours > 0 ? '#c0392b' : '#ddd', fontWeight: otHours > 0 ? 600 : 400 }}>{otHours > 0 ? otHours.toFixed(1) : '—'}</td>
+                        <td style={{ ...tdC, fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? fmtHours(dayHours) : '—'}</td>
+                        <td style={{ ...tdC, color: regularHours > 0 ? '#2d6a38' : '#ddd' }}>{regularHours > 0 ? fmtHours(regularHours) : '—'}</td>
+                        <td style={{ ...tdC, color: otHours > 0 ? '#c0392b' : '#ddd', fontWeight: otHours > 0 ? 600 : 400 }}>{otHours > 0 ? fmtHours(otHours) : '—'}</td>
                         <td style={{ ...tdC, color: isStat && dayHours > 0 ? '#7a5c00' : '#ddd' }}>{isStat && dayHours > 0 ? `+${statMultiplier}×` : '—'}</td>
                         <td style={{ ...tdC, color: dayPerDiem > 0 ? '#8B4513' : '#ddd' }}>{dayPerDiem > 0 ? `×${dayPerDiem}` : '—'}</td>
                         <td style={{ padding: '0.65rem 0.75rem' }}>
@@ -1040,8 +1041,8 @@ export default function Reports() {
                                   {payEmployeeIds.length > 1 && <span style={{ fontWeight: 600, marginRight: '0.4rem' }}>{e.employees?.name}:</span>}
                                   <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
                                   <span style={{ color: '#aaa', margin: '0 0.4rem', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
-                                  <span style={{ color: '#2d6a38', fontSize: '0.85rem', marginRight: '0.3rem' }}>{reg.toFixed(1)}reg</span>
-                                  {ot > 0 && <span style={{ color: '#c0392b', fontWeight: 600, fontSize: '0.85rem', marginRight: '0.3rem' }}>{ot.toFixed(1)}OT</span>}
+                                  <span style={{ color: '#2d6a38', fontSize: '0.85rem', marginRight: '0.3rem' }}>{fmtHours(reg)}reg</span>
+                                  {ot > 0 && <span style={{ color: '#c0392b', fontWeight: 600, fontSize: '0.85rem', marginRight: '0.3rem' }}>{fmtHours(ot)}OT</span>}
                                   {e.description && <span style={{ color: '#555', fontSize: '0.9rem' }}>— {e.description}</span>}
                                 </div>
                               )
@@ -1052,9 +1053,9 @@ export default function Reports() {
                     ))}
                     <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd', fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: '0.65rem 0.75rem' }}>Total</td>
-                      <td style={{ ...tdC, fontWeight: 700 }}>{totalHours.toFixed(1)}</td>
-                      <td style={{ ...tdC, color: '#2d6a38' }}>{totalRegular.toFixed(1)}</td>
-                      <td style={{ ...tdC, color: totalOT > 0 ? '#c0392b' : '#aaa' }}>{totalOT.toFixed(1)}</td>
+                      <td style={{ ...tdC, fontWeight: 700 }}>{fmtHours(totalHours)}</td>
+                      <td style={{ ...tdC, color: '#2d6a38' }}>{fmtHours(totalRegular)}</td>
+                      <td style={{ ...tdC, color: totalOT > 0 ? '#c0392b' : '#aaa' }}>{fmtHours(totalOT)}</td>
                       <td style={{ ...tdC, color: statDays.length > 0 ? '#7a5c00' : '#aaa' }}>{statDays.length > 0 ? statDays.length + ' day' + (statDays.length > 1 ? 's' : '') : '—'}</td>
                       <td style={{ ...tdC, color: totalPerDiem > 0 ? '#8B4513' : '#aaa' }}>{totalPerDiem > 0 ? `×${totalPerDiem}` : '—'}</td>
                       <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.85rem' }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}</td>
@@ -1143,9 +1144,9 @@ export default function Reports() {
                   {weekData.map((row, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '0.75rem', fontWeight: 600 }}>{row.emp?.name || 'Unknown'}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>{row.totalHours.toFixed(1)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{row.regHours.toFixed(1)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{row.otHours.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>{fmtHours(row.totalHours)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(row.regHours)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{fmtHours(row.otHours)}</td>
                       <td style={{ padding: '0.75rem', color: row.perDiem > 0 ? '#8B4513' : '#555', fontSize: '0.9rem' }}>{row.perDiem > 0 ? `×${row.perDiem}` : '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>

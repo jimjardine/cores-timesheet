@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { fmtHours } from './format'
 
 // Recreates the Cores Worldwide paper "Daily Time Sheet" form, filled in with
 // whatever we have on file. Fields the app doesn't track (safety check answers,
@@ -58,7 +59,7 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
 
   fieldRow('Employee:', employeeName, 'Date:', fmtDate(workDate))
   fieldRow('Time In:', fmtTime(timeIn), 'Time Out:', fmtTime(timeOut))
-  fieldRow('Lunch:', lunchMinutes != null ? `${lunchMinutes} min` : '', 'Total Hrs:', totalHours != null ? totalHours.toFixed(1) : '')
+  fieldRow('Lunch:', lunchMinutes != null ? `${lunchMinutes} min` : '', 'Total Hrs:', totalHours != null ? fmtHours(totalHours) : '')
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
   doc.text('Comments:', margin, y)
@@ -128,7 +129,7 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   doc.line(margin, tableTop, pageW - margin, tableTop)
   rowData.forEach(r => {
     doc.text(String(r.jobNumber || ''), margin + 4, rowY + 11)
-    doc.text(r.hours != null && r.hours !== '' ? Number(r.hours).toFixed(1) : '', margin + col1W + 4, rowY + 11)
+    doc.text(r.hours != null && r.hours !== '' ? fmtHours(r.hours) : '', margin + col1W + 4, rowY + 11)
     r.wrapped.forEach((ln, i) => doc.text(ln, col3X + 4, rowY + 11 + i * lineH))
     rowY += r.h
     doc.line(margin, rowY, pageW - margin, rowY)

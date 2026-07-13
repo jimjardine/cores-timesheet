@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { fmtHours } from './format'
 
 // Recreates the Cores Worldwide paper "Weekly Compilation / Daily Work Hours" form
 // (Document# CW-OAD-F002 rev.0) — one employee's Thu–Wed pay week, reg/OT/per diem
@@ -22,7 +23,7 @@ function isWeekend(ymd) {
   const dow = new Date(ymd + 'T12:00:00').getDay()
   return dow === 0 || dow === 6
 }
-const fmtHrs = (n) => (n ? Number(n).toFixed(1) : '')
+const fmtHrs = (n) => (n ? fmtHours(n) : '')
 
 // days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems }, Thursday first
 export function generateWeeklyCompilationPDF({ employeeName, days }) {

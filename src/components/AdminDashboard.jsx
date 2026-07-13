@@ -6,6 +6,7 @@ import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay, isStatHoliday } from '../utils/statPay'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
+import { fmtHours } from '../utils/format'
 
 const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -108,8 +109,8 @@ export default function AdminDashboard() {
     setEditFields({
       work_date:   e.work_date,
       job_id:      e.job_id,
-      reg_hours:   (computedReg ?? Number(e.hours) - Number(e.ot_hours ?? 0)).toFixed(1),
-      ot_hours:    (computedOT  ?? Number(e.ot_hours ?? 0)).toFixed(1),
+      reg_hours:   fmtHours(computedReg ?? Number(e.hours) - Number(e.ot_hours ?? 0)),
+      ot_hours:    fmtHours(computedOT  ?? Number(e.ot_hours ?? 0)),
       description: e.description || '',
       per_diem:    e.per_diem ?? 0,
       sort_order:  e.sort_order ?? 1,
@@ -510,13 +511,13 @@ export default function AdminDashboard() {
             if (!jobTotals[e.job_id]) jobTotals[e.job_id] = { jobNum: e.jobs?.job_number || '', customer: e.jobs?.customers?.name || '', reg: 0, ot: 0, pd: 0 }
             jobTotals[e.job_id].reg += reg; jobTotals[e.job_id].ot += ot; jobTotals[e.job_id].pd += pd
             rows.push(csvRow(['Detail', e.employees?.name, e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
-              Number(e.hours).toFixed(1), reg.toFixed(1), ot.toFixed(1), pd, e.description || '', '', '', '']))
+              fmtHours(e.hours), fmtHours(reg), fmtHours(ot), pd, e.description || '', '', '', '']))
           })
-          if (exportSummaries) rows.push(csvRow(['Job Summary', name, weekLabel, jobNum, customer, '', '', '', '', '', jobReg.toFixed(1), jobOT.toFixed(1), jobPD]))
+          if (exportSummaries) rows.push(csvRow(['Job Summary', name, weekLabel, jobNum, customer, '', '', '', '', '', fmtHours(jobReg), fmtHours(jobOT), jobPD]))
           weekReg += jobReg; weekOT += jobOT; weekPD += jobPD
         })
 
-        if (exportSummaries) rows.push(csvRow(['Period Total', name, weekLabel, '', '', '', '', '', '', '', weekReg.toFixed(1), weekOT.toFixed(1), weekPD]))
+        if (exportSummaries) rows.push(csvRow(['Period Total', name, weekLabel, '', '', '', '', '', '', '', fmtHours(weekReg), fmtHours(weekOT), weekPD]))
         empReg += weekReg; empOT += weekOT; empPD += weekPD
       })
 
@@ -528,10 +529,10 @@ export default function AdminDashboard() {
       Object.values(jobTotals)
         .sort((a, b) => a.jobNum.localeCompare(b.jobNum))
         .forEach(({ jobNum, customer, reg, ot, pd }) => {
-          rows.push(csvRow(['Job Total', '', '', jobNum, customer, '', '', '', '', '', reg.toFixed(1), ot.toFixed(1), pd]))
+          rows.push(csvRow(['Job Total', '', '', jobNum, customer, '', '', '', '', '', fmtHours(reg), fmtHours(ot), pd]))
         })
       rows.push('')
-      rows.push(csvRow(['Grand Total', '', '', '', '', '', '', '', '', '', grandReg.toFixed(1), grandOT.toFixed(1), grandPD]))
+      rows.push(csvRow(['Grand Total', '', '', '', '', '', '', '', '', '', fmtHours(grandReg), fmtHours(grandOT), grandPD]))
     }
     const link = document.createElement('a')
     link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'))
@@ -661,7 +662,7 @@ export default function AdminDashboard() {
                 const mismatch = expectedHours && Math.abs(expectedHours - enteredHours) > 0.1
                 return mismatch ? (
                   <div style={{ gridColumn: '1 / -1', padding: '0.75rem', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px', fontSize: '0.85rem', color: '#856404' }}>
-                    ⚠️ <strong>Time mismatch:</strong> {editFields.time_in} to {editFields.stated_time_out} minus {editFields.lunch_minutes || 0}min = {expectedHours.toFixed(1)}hrs, but you entered {enteredHours.toFixed(1)}hrs
+                    ⚠️ <strong>Time mismatch:</strong> {editFields.time_in} to {editFields.stated_time_out} minus {editFields.lunch_minutes || 0}min = {fmtHours(expectedHours)}hrs, but you entered {fmtHours(enteredHours)}hrs
                   </div>
                 ) : null
               })()}
@@ -912,7 +913,7 @@ export default function AdminDashboard() {
                   </button>
                   <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedEmp.name}</span>
                   <span style={{ color: '#555', fontSize: '0.95rem' }}>{selectedDate ? fmtDate(selectedDate) : 'All dates'}</span>
-                  <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{empTotal.toFixed(1)} hrs</span>
+                  <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{fmtHours(empTotal)} hrs</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#555', cursor: 'pointer' }}>
                       <input type="checkbox" checked={exportSummaries} onChange={e => setExportSummaries(e.target.checked)} />
@@ -958,8 +959,8 @@ export default function AdminDashboard() {
                               <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#666' }}>{e.jobs?.customers?.name ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#888' }}>{e.jobs?.vessels?.name ?? '—'}</td>
-                              <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38', fontWeight: 600 }}>{reg.toFixed(1)}</td>
-                              <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ddd', fontWeight: ot > 0 ? 600 : 400 }}>{ot > 0 ? ot.toFixed(1) : '—'}</td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38', fontWeight: 600 }}>{fmtHours(reg)}</td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ddd', fontWeight: ot > 0 ? 600 : 400 }}>{ot > 0 ? fmtHours(ot) : '—'}</td>
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: perDiem > 0 ? '#8B4513' : '#ddd' }}>{perDiem > 0 ? `×${perDiem}` : '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#555' }}>
                                 {e.description ?? '—'}
@@ -1000,8 +1001,8 @@ export default function AdminDashboard() {
                 <div>
                   <span style={{ fontWeight: 600 }}>{timesheetRows.length} timesheets</span>
                   <span style={{ color: '#aaa', margin: '0 0.5rem' }}>·</span>
-                  <span style={{ color: '#2d6a38' }}>{totalReg.toFixed(1)} reg</span>
-                  {totalOT > 0 && <><span style={{ color: '#aaa', margin: '0 0.4rem' }}>·</span><span style={{ color: '#c0392b' }}>{totalOT.toFixed(1)} OT</span></>}
+                  <span style={{ color: '#2d6a38' }}>{fmtHours(totalReg)} reg</span>
+                  {totalOT > 0 && <><span style={{ color: '#aaa', margin: '0 0.4rem' }}>·</span><span style={{ color: '#c0392b' }}>{fmtHours(totalOT)} OT</span></>}
                   {totalPD > 0 && <><span style={{ color: '#aaa', margin: '0 0.4rem' }}>·</span><span style={{ color: '#7a5c00' }}>{totalPD} PD</span></>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -1050,8 +1051,8 @@ export default function AdminDashboard() {
                         <td style={{ padding: '0.75rem', ...linkStyle }}>{row.employee?.name}</td>
                         <td style={{ padding: '0.75rem', color: '#555' }}>{fmtDate(row.date)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', color: '#888' }}>{row.jobIds.size}</td>
-                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: '#2d6a38' }}>{row.reg.toFixed(1)}</td>
-                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: row.ot > 0 ? 600 : 400, color: row.ot > 0 ? '#c0392b' : '#ccc' }}>{row.ot.toFixed(1)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: '#2d6a38' }}>{fmtHours(row.reg)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: row.ot > 0 ? 600 : 400, color: row.ot > 0 ? '#c0392b' : '#ccc' }}>{fmtHours(row.ot)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', color: row.pd > 0 ? '#7a5c00' : '#ccc' }}>{row.pd > 0 ? row.pd : '—'}</td>
                         <td style={{ padding: '0.75rem', color: '#aaa', fontSize: '0.85rem', textAlign: 'right' }}>view →</td>
                       </tr>
@@ -1061,8 +1062,8 @@ export default function AdminDashboard() {
                     <tr style={{ borderTop: '2px solid #ddd', background: '#fafafa', fontWeight: 700 }}>
                       <td style={{ padding: '0.75rem', color: '#333' }}>Total</td>
                       <td colSpan={2} />
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{totalReg.toFixed(1)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: totalOT > 0 ? '#c0392b' : '#ccc' }}>{totalOT.toFixed(1)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'center', color: totalOT > 0 ? '#c0392b' : '#ccc' }}>{fmtHours(totalOT)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: totalPD > 0 ? '#7a5c00' : '#ccc' }}>{totalPD > 0 ? totalPD : '—'}</td>
                       <td />
                     </tr>
@@ -1179,9 +1180,9 @@ export default function AdminDashboard() {
                         : <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fde8e8', color: '#c0392b', fontWeight: 700, fontSize: '0.85rem' }}>✗ Missing</span>}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center', color: '#555' }}>{submitted ? days : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: submitted ? 600 : 400, color: submitted ? '#333' : '#ccc' }}>{submitted ? hours.toFixed(1) : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: submitted ? '#2d6a38' : '#ccc' }}>{submitted ? reg.toFixed(1) : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ccc' }}>{submitted ? ot.toFixed(1) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: submitted ? 600 : 400, color: submitted ? '#333' : '#ccc' }}>{submitted ? fmtHours(hours) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: submitted ? '#2d6a38' : '#ccc' }}>{submitted ? fmtHours(reg) : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ccc' }}>{submitted ? fmtHours(ot) : '—'}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center', color: pd > 0 ? '#7a5c00' : '#ccc' }}>{submitted ? (pd > 0 ? pd : '—') : '—'}</td>
                   </tr>
                 ))}

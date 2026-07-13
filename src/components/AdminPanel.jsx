@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { marked } from 'marked'
 import { supabase } from '../supabaseClient'
+import { fmtHours } from '../utils/format'
 
 const inputStyle = { padding: '0.45rem 0.7rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }
 const btnPrimary = { padding: '0.45rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem' }
@@ -455,9 +456,9 @@ export default function AdminPanel() {
                                           {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}
                                         </td>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}>{e.employees?.name || '—'}</td>
-                                        <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}>{Number(e.hours).toFixed(1)}</td>
+                                        <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}>{fmtHours(e.hours)}</td>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem', color: e.ot_hours != null ? '#c0392b' : '#bbb' }}>
-                                          {e.ot_hours != null ? Number(e.ot_hours).toFixed(1) : '—'}
+                                          {e.ot_hours != null ? fmtHours(e.ot_hours) : '—'}
                                         </td>
                                         <td style={{ ...tdStyle, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}>
                                           {e.per_diem > 0 ? `×${Number(e.per_diem)}` : '—'}
@@ -469,7 +470,7 @@ export default function AdminPanel() {
                                   <tfoot>
                                     <tr style={{ background: '#f0f4fc', fontWeight: 700 }}>
                                       <td colSpan={2} style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>Total ({jobEntries[job.id].length} entries)</td>
-                                      <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>{jobEntries[job.id].reduce((s, e) => s + Number(e.hours), 0).toFixed(1)}</td>
+                                      <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>{fmtHours(jobEntries[job.id].reduce((s, e) => s + Number(e.hours), 0))}</td>
                                       <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}></td>
                                       <td style={{ ...tdStyle, fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}>
                                         {jobEntries[job.id].some(e => e.per_diem > 0) ? `×${jobEntries[job.id].reduce((s, e) => s + Number(e.per_diem || 0), 0)}` : '—'}
