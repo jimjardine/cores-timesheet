@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { marked } from 'marked'
 import { supabase } from '../supabaseClient'
 import { fmtHours } from '../utils/format'
+import AuditLog from './AuditLog'
 
 const inputStyle = { padding: '0.45rem 0.7rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }
 const btnPrimary = { padding: '0.45rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem' }
@@ -335,10 +336,13 @@ export default function AdminPanel() {
       )}
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['jobs', 'Jobs'], ['employees', 'Employees']].map(([key, label]) => (
+        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['jobs', 'Jobs'], ['employees', 'Employees'], ['audit', 'Audit Log']].map(([key, label]) => (
           <button key={key} style={tabStyle(key)} onClick={() => setSection(key)}>{label}</button>
         ))}
       </div>
+
+      {/* ── Audit Log ── */}
+      {section === 'audit' && <AuditLog />}
 
       {/* ── Jobs ── */}
       {section === 'jobs' && (

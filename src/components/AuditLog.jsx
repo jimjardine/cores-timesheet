@@ -26,13 +26,15 @@ const fmtVal = (v) => {
   return String(v)
 }
 
-// Only the fields that actually changed, not all ~20 columns on every row
-function diffFields(oldData, newData) {
-  if (!oldData) return Object.entries(newData || {}).map(([k, v]) => ({ key: k, from: null, to: v, isNew: true }))
-  if (!newData) return Object.entries(oldData || {}).map(([k, v]) => ({ key: k, from: v, to: null, isNew: false }))
-  return Object.keys(newData)
-    .filter(k => JSON.stringify(oldData[k]) !== JSON.stringify(newData[k]))
-    .map(k => ({ key: k, from: oldData[k], to: newData[k] }))
+// Every field on the row, old value and new value side by side — not just the ones
+// that changed, so nothing is hidden behind a diff algorithm's judgment call.
+function allFields(oldData, newData) {
+  const keys = [...new Set([...Object.keys(oldData || {}), ...Object.keys(newData || {})])].sort()
+  return keys.map(k => {
+    const from = oldData ? oldData[k] : undefined
+    const to = newData ? newData[k] : undefined
+    return { key: k, from, to, changed: JSON.stringify(from) !== JSON.stringify(to) }
+  })
 }
 
 export default function AuditLog() {
@@ -125,7 +127,7 @@ export default function AuditLog() {
               <tbody>
                 {rows.map(r => {
                   const isExpanded = !!expanded[r.id]
-                  const fields = isExpanded ? diffFields(r.old_data, r.new_data) : []
+                  const fields = isExpanded ? allFields(r.old_data, r.new_data) : []
                   return (
                     <React.Fragment key={r.id}>
                       <tr
@@ -153,28 +155,28 @@ export default function AuditLog() {
                         <tr style={{ borderBottom: '1px solid #eee', background: '#fafafa' }}>
                           <td colSpan={4} style={{ padding: '0.75rem 1.5rem' }}>
                             {fields.length === 0 ? (
-                              <div style={{ color: '#888', fontSize: '0.85rem' }}>No field changes recorded</div>
+                              <div style={{ color: '#888', fontSize: '0.85rem' }}>No fields recorded</div>
                             ) : (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                                {fields.map(f => (
-                                  <div key={f.key} style={{ fontSize: '0.85rem', fontFamily: 'monospace' }}>
-                                    <span style={{ color: '#555', fontWeight: 600 }}>{f.key}:</span>{' '}
-                                    {f.from === null && f.to !== null ? (
-                                      <span style={{ color: '#2a7a2a' }}>{fmtVal(f.to)}</span>
-                                    ) : f.to === null && f.from !== null ? (
-                                      <span style={{ color: '#c00', textDecoration: 'line-through' }}>{fmtVal(f.from)}</span>
-                                    ) : (
-                                      <>
-                                        <span style={{ color: '#c00' }}>{fmtVal(f.from)}</span>
-                                        <span style={{ color: '#888' }}> → </span>
-                                        <span style={{ color: '#2a7a2a' }}>{fmtVal(f.to)}</span>
-                                      </>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', fontFamily: 'monospace' }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem 0.2rem 0', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>Field</th>
+                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>Old Value</th>
+                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>New Value</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {fields.map(f => (
+                                    <tr key={f.key} style={{ background: f.changed ? '#fff8e1' : 'transparent' }}>
+                                      <td style={{ padding: '0.25rem 0.6rem 0.25rem 0', color: f.changed ? '#333' : '#aaa', fontWeight: f.changed ? 600 : 400, whiteSpace: 'nowrap' }}>{f.key}</td>
+                                      <td style={{ padding: '0.25rem 0.6rem', color: f.changed ? '#c00' : '#aaa' }}>{fmtVal(f.from)}</td>
+                                      <td style={{ padding: '0.25rem 0.6rem', color: f.changed ? '#2a7a2a' : '#aaa', fontWeight: f.changed ? 600 : 400 }}>{fmtVal(f.to)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             )}
-                            <div style={{ fontSize: '0.75rem', color: '#aaa', marginTop: '0.5rem', fontFamily: 'monospace' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#aaa', marginTop: '0.75rem', fontFamily: 'monospace' }}>
                               record_id: {r.record_id}
                             </div>
                           </td>
