@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
+import { generateWeeklyCompilationPDF } from '../utils/weeklyCompilationPdf'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -1075,6 +1076,7 @@ export default function Reports() {
         const weekEntries = entries.filter(e => e.work_date >= weekStart && e.work_date <= weekEndStr)
         const empIds = [...new Set(weekEntries.map(e => e.employee_id))]
         const otMap = computeAllOT(weekEntries)
+        const weekDates = Array.from({ length: 7 }, (_, i) => { const d = new Date(payWeekStart); d.setDate(d.getDate() + i); return toYMD(d) })
 
         const weekData = empIds.map(eid => {
           const emp = employees.find(e => e.id === eid)
@@ -1087,7 +1089,16 @@ export default function Reports() {
           const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
           // job_supplies rows carry their own employee_id + work_date — match on those
           const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
-          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies }
+          const days = weekDates.map(dateYMD => {
+            const dayEntries = empEntries.filter(e => e.work_date === dateYMD)
+            return {
+              date: dateYMD,
+              regHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
+              otHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0),
+              perDiems: dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0),
+            }
+          })
+          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies, days }
         }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
 
         return (
@@ -1103,6 +1114,18 @@ export default function Reports() {
                 </select>
               </div>
               <button onClick={() => downloadWeeklySummary()} style={{ padding: '0.4rem 1rem', background: '#2d6a38', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Download CSV</button>
+              {weekData.length > 0 && (
+                <button
+                  onClick={async () => {
+                    for (const row of weekData) {
+                      if (!row.emp) continue
+                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })
+                      await new Promise(r => setTimeout(r, 300))
+                    }
+                  }}
+                  style={{ padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+                >Print All Weekly PDFs</button>
+              )}
             </div>
 
             {weekData.length === 0 ? (
@@ -1111,7 +1134,7 @@ export default function Reports() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies'].map(h => (
+                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies', ''].map(h => (
                       <th key={h} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.9rem', fontWeight: 600, color: '#555' }}>{h}</th>
                     ))}
                   </tr>
@@ -1126,6 +1149,14 @@ export default function Reports() {
                       <td style={{ padding: '0.75rem', color: row.perDiem > 0 ? '#8B4513' : '#555', fontSize: '0.9rem' }}>{row.perDiem > 0 ? `×${row.perDiem}` : '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
+                      <td style={{ padding: '0.75rem' }}>
+                        {row.emp && (
+                          <button
+                            onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
+                            style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                          >PDF</button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
