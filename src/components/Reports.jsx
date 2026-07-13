@@ -69,9 +69,13 @@ export default function Reports() {
   const [statHolidays, setStatHolidays] = useState(new Set())
 
   // Date range filter
-  const [datePreset, setDatePreset] = useState('all')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [datePreset, setDatePreset] = useState('this-week')
+  const [dateFrom, setDateFrom] = useState(() => toYMD(getPayWeekStart(new Date())))
+  const [dateTo, setDateTo] = useState(() => {
+    const s = getPayWeekStart(new Date())
+    const e = new Date(s); e.setDate(e.getDate() + 6)
+    return toYMD(e)
+  })
 
   function applyPreset(preset) {
     setDatePreset(preset)
