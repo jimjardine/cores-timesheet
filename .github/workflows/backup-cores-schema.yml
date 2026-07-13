@@ -24,7 +24,10 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          supabase db dump --db-url "$SUPABASE_DB_URL" --schema Cores -f cores_backup_$(date +%Y%m%d_%H%M%S).sql
+          # pg_dump's --schema pattern matching case-folds an unquoted name to lowercase
+          # (standard SQL identifier rules) — our schema is "Cores" (capital C), so the
+          # pattern must be quoted to match case-sensitively, same as the app's own SQL.
+          supabase db dump --db-url "$SUPABASE_DB_URL" --schema '"Cores"' -f cores_backup_$(date +%Y%m%d_%H%M%S).sql
       - uses: actions/upload-artifact@v4
         with:
           name: cores-schema-backup
