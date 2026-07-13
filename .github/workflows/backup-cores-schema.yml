@@ -9,9 +9,6 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
       - name: Check SUPABASE_DB_URL is set
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -20,20 +17,17 @@ jobs:
             echo "::error::SUPABASE_DB_URL secret is not set — add it under Settings > Secrets and variables > Actions. Without it, pg_dump silently falls back to a local socket and fails with a confusing 'connection to server on socket ... failed' error instead of this clear message."
             exit 1
           fi
-      - name: DEBUG list visible schemas
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          docker run --rm ghcr.io/supabase/postgres:17.6.1.143 \
-            psql "$SUPABASE_DB_URL" -c "select schema_name from information_schema.schemata order by 1;" || true
       - name: Dump Cores schema
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          # pg_dump's --schema pattern matching case-folds an unquoted name to lowercase
-          # (standard SQL identifier rules) — our schema is "Cores" (capital C), so the
-          # pattern must be quoted to match case-sensitively, same as the app's own SQL.
-          supabase db dump --db-url "$SUPABASE_DB_URL" --schema '"Cores"' -f cores_backup_$(date +%Y%m%d_%H%M%S).sql
+          # supabase db dump's own --schema matching couldn't find "Cores" (mixed-case
+          # schema name) even though psql over this same connection sees it fine — call
+          # pg_dump directly (bundled in the same official Postgres image) instead of
+          # routing through that wrapper's own schema-matching logic.
+          docker run --rm ghcr.io/supabase/postgres:17.6.1.143 \
+            pg_dump "$SUPABASE_DB_URL" --schema='"Cores"' --no-owner --no-privileges \
+            > cores_backup_$(date +%Y%m%d_%H%M%S).sql
       - uses: actions/upload-artifact@v4
         with:
           name: cores-schema-backup
