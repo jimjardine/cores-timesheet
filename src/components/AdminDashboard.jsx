@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import GearPhotos from './GearPhotos'
+import AuditLog from './AuditLog'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay, isStatHoliday } from '../utils/statPay'
 import MultiSelectDropdown from './MultiSelectDropdown'
@@ -853,6 +854,7 @@ export default function AdminDashboard() {
         <button style={tabStyle('sms')} onClick={() => setActiveTab('sms')}>SMS Review</button>
         <button style={tabStyle('photos')} onClick={() => setActiveTab('photos')}>Gear Photos</button>
         <button style={tabStyle('submission')} onClick={() => setActiveTab('submission')}>Submission Status</button>
+        <button style={tabStyle('audit')} onClick={() => setActiveTab('audit')}>Audit Log</button>
       </div>
 
       {/* ── Timesheets tab ── */}
@@ -1195,6 +1197,7 @@ export default function AdminDashboard() {
       {/* ── SMS Review tab ── */}
       {activeTab === 'sms' && <SmsReview />}
       {activeTab === 'photos' && <GearPhotos />}
+      {activeTab === 'audit' && <AuditLog />}
 
     </div>
   )
