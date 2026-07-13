@@ -26,10 +26,12 @@ Gear photos? Text photos with ship name or job #.
 Using someone else's phone?
 Start with: "This is Joey"
 
-Need the job list? Text JOBS.
-Job details? Text JOBS + boat name.
-(e.g. "JOBS nanaimo")
-Questions? Reply HELP anytime.
+Commands:
+JOBS — job list
+JOBS + boat name — that boat's jobs (e.g. "JOBS nanaimo")
+PHONE# — phone directory
+PHONE# + name — one person's number (e.g. "PHONE# joey")
+HELP or ? — this message
 
 💬 Use WhatsApp or SMS — works both ways.`
 
@@ -437,9 +439,14 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Phone directory request ──
-  const isPhoneRequest = msgLower === 'phone#' || msgLower.startsWith('phone# ')
+  // Accept "phone", "phone#", "phone #", optionally followed by a name filter — the
+  // exact "phone#" string was too strict and easy to miss (no "#" key on some phones,
+  // easy to forget), so a plain "phone" fell through to the normal timesheet parser
+  // instead of ever reaching this check.
+  const phoneReqMatch = msgLower.match(/^phone\s*#?(?:\s+(.*))?$/)
+  const isPhoneRequest = !!phoneReqMatch
   if (isPhoneRequest) {
-    const nameFilter = msgLower === 'phone#' ? null : msgLower.slice(7).trim()
+    const nameFilter = phoneReqMatch[1]?.trim() || null
 
     const { data: employees } = await supabase
       .from('employees')
