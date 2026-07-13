@@ -12,6 +12,14 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+      - name: Check SUPABASE_DB_URL is set
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set — add it under Settings > Secrets and variables > Actions. Without it, pg_dump silently falls back to a local socket and fails with a confusing 'connection to server on socket ... failed' error instead of this clear message."
+            exit 1
+          fi
       - name: Dump Cores schema
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
