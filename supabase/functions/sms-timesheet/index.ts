@@ -3,7 +3,25 @@ import { createClient } from "jsr:@supabase/supabase-js@2"
 
 // Handles both SMS (via Twilio) and WhatsApp (via Twilio Messaging API)
 // Webhook payload is identical for both; Twilio routes based on channel config
-const HELP_TEXT = `Cores Timesheets
+
+// Top-level HELP is a short menu; "HELP <topic>" (or "? <topic>") drills into one
+// of these for the full detail — keeps the default reply short while still having
+// the detail available on request.
+const HELP_TEXT = `Cores Timesheets — commands:
+• Just text your hours (e.g. "4760 6hrs bearings")
+• HOURS — full format guide
+• JOBS — job list
+• PHONE# — phone directory
+• PHOTO — gear photos
+• SUPPLIES — log parts used
+• OTHER — using someone else's phone
+
+Reply HELP + a word above for details (e.g. "HELP jobs").
+
+💬 Use WhatsApp or SMS — works both ways.`
+
+const HELP_TOPICS: Record<string, string> = {
+  hours: `HOURS — format guide
 
 Send jobs as you finish them:
 "4760, 6hrs — rebuilt port engine bearings, replaced seals on forward pump"
@@ -15,25 +33,44 @@ Wrap up with out time and lunch:
 "Out 4:30, lunch 30, staying at Delta Halifax"
 
 Or send it all at once:
-"In 7:30, 4760 6hrs bearings, 4862 2hrs fuel lines, lunch 30, no PD"
+"In 7:30, 4760 6hrs bearings, 4862 2hrs fuel lines, lunch 30, no PD"`,
 
-Used supplies? Add them so they get billed:
+  format: '', // alias, filled in below
+  jobs: `JOBS — job list
+
+Text JOBS for the full open job list.
+Text JOBS + boat name for just that boat's jobs (e.g. "JOBS nanaimo").`,
+
+  phone: `PHONE# — phone directory
+
+Text PHONE# for everyone's number.
+Text PHONE# + a name for just theirs (e.g. "PHONE# joey").`,
+
+  photo: `PHOTO — gear photos
+
+Text a photo with the ship name or job # (e.g. photo + "Wave Master" or photo + "4760").
+No caption? It'll ask which ship or job before saving it.`,
+
+  photos: '', // alias, filled in below
+
+  supplies: `SUPPLIES — log parts used
+
+Add them to your hours text or on their own:
 "supplies brake cleaner x1, wire brushes x2 Job 4358"
 
-Gear photos? Text photos with ship name or job #.
-(e.g. photo + "Wave Master" or photo + "4760")
+No job number given? It's attributed to the first job in that text.`,
 
-Using someone else's phone?
-Start with: "This is Joey"
+  other: `USING SOMEONE ELSE'S PHONE
 
-Commands:
-JOBS — job list
-JOBS + boat name — that boat's jobs (e.g. "JOBS nanaimo")
-PHONE# — phone directory
-PHONE# + name — one person's number (e.g. "PHONE# joey")
-HELP or ? — this message
+Start your text with: "This is Joey" so the hours land on their timesheet, not yours.`,
+}
+HELP_TOPICS.format = HELP_TOPICS.hours
+HELP_TOPICS.photos = HELP_TOPICS.photo
 
-💬 Use WhatsApp or SMS — works both ways.`
+function helpReply(topicRaw: string | undefined): string {
+  const topic = (topicRaw || '').trim().toLowerCase().replace(/[^a-z]/g, '')
+  return (topic && HELP_TOPICS[topic]) || HELP_TEXT
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -374,8 +411,10 @@ Deno.serve(async (req: Request) => {
   const today = atlanticToday()
   const msgLower = msgBody.toLowerCase().trim()
 
-  if (/^(help|\?)$/i.test(msgBody)) {
-    return isTwilio ? twiML(HELP_TEXT) : jsonReply({ reply: HELP_TEXT })
+  const helpMatch = msgBody.match(/^(?:help|\?)\s*(.*)$/i)
+  if (helpMatch) {
+    const r = helpReply(helpMatch[1])
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
   // ── Employee lookup by phone (name-override, if any, is applied further down once
