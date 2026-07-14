@@ -686,7 +686,7 @@ export default function Reports() {
           <button onClick={() => setViewingWeeklyCompilation(null)} style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
             ← Weekly Summary
           </button>
-          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days, posted: isPosted })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
             Download PDF
           </button>
           <button
@@ -1254,7 +1254,7 @@ export default function Reports() {
                   onClick={async () => {
                     for (const row of weekData) {
                       if (!row.emp) continue
-                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })
+                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, posted: !!postedWeeks[postedKey(row.emp.id, weekStart)] })
                       await new Promise(r => setTimeout(r, 300))
                     }
                   }}
@@ -1299,7 +1299,7 @@ export default function Reports() {
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >View</button>
                             <button
-                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
+                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, posted: isPosted })}
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >PDF</button>
                           </>

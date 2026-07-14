@@ -3,8 +3,9 @@ import { fmtHours } from './format'
 
 // Recreates the Cores Worldwide paper "Weekly Compilation / Daily Work Hours" form
 // (Document# CW-OAD-F002 rev.0) — one employee's Thu–Wed pay week, reg/OT/per diem
-// per day. The app tracks "posted" as a whole-week flag (see weekly_summary_posted),
-// not per day, so the PDF's day-by-day POSTED column stays blank for hand-fill.
+// per day. "Posted" is tracked as a whole-week flag (see weekly_summary_posted), so
+// when the week is posted every day's POSTED cell is checked off (an X, since the
+// standard PDF font has no reliable checkmark glyph), not just one row.
 export function fmtShortDate(ymd) {
   const d = new Date(ymd + 'T12:00:00')
   const mon = d.toLocaleDateString('en-US', { month: 'short' })
@@ -26,7 +27,7 @@ export function isWeekend(ymd) {
 const fmtHrs = (n) => (n ? fmtHours(n) : '')
 
 // days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems }, Thursday first
-export function generateWeeklyCompilationPDF({ employeeName, days }) {
+export function generateWeeklyCompilationPDF({ employeeName, days, posted }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 50
@@ -130,6 +131,11 @@ export function generateWeeklyCompilationPDF({ employeeName, days }) {
     }
     doc.text(fmtHrs(day.otHours), colX.ot + 6, rowTop + 14)
     doc.text(day.perDiems ? String(day.perDiems) : '', colX.pd + 6, rowTop + 14)
+    if (posted) {
+      doc.setFont('helvetica', 'bold')
+      doc.text('X', colX.posted + colW.posted / 2 - 3, rowTop + 14)
+      doc.setFont('helvetica', 'normal')
+    }
 
     y += rowH + blankRowH
 
@@ -143,6 +149,7 @@ export function generateWeeklyCompilationPDF({ employeeName, days }) {
   doc.text(fmtHrs(totalReg), colX.reg + 6, totalRowTop + rowH - 6)
   doc.text(fmtHrs(totalOT), colX.ot + 6, totalRowTop + rowH - 6)
   doc.text(totalPD ? String(totalPD) : '', colX.pd + 6, totalRowTop + rowH - 6)
+  if (posted) doc.text('X', colX.posted + colW.posted / 2 - 3, totalRowTop + rowH - 6)
   y += rowH
 
   // ── Outer borders + column lines for the whole table ──
