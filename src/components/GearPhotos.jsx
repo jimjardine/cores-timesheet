@@ -21,6 +21,7 @@ export default function GearPhotos() {
   const [lightbox, setLightbox] = useState(null)
   const [savingId, setSavingId] = useState(null)
   const [edits, setEdits]       = useState({})
+  const [noteDrafts, setNoteDrafts] = useState({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,6 +60,20 @@ export default function GearPhotos() {
     else {
       setPhotos(p => p.map(x => x.id === photo.id ? { ...x, ship_or_job: value, job_id: jobId, pending_context: !value } : x))
       setEdits(e => { const n = { ...e }; delete n[photo.id]; return n })
+    }
+    setSavingId(null)
+  }
+
+  async function saveNote(photo) {
+    const value = (noteDrafts[photo.id] ?? '').trim()
+    setSavingId(photo.id)
+    const { error } = await supabase.schema('Cores').from('gear_photos')
+      .update({ note: value || null })
+      .eq('id', photo.id)
+    if (error) alert('Error saving note: ' + error.message)
+    else {
+      setPhotos(p => p.map(x => x.id === photo.id ? { ...x, note: value || null } : x))
+      setNoteDrafts(d => { const n = { ...d }; delete n[photo.id]; return n })
     }
     setSavingId(null)
   }
@@ -183,6 +198,29 @@ export default function GearPhotos() {
                     ✓ {matchedJob.description}
                   </div>
                 )}
+                {(() => {
+                  const noteDraft = noteDrafts[photo.id] ?? (photo.note || '')
+                  const noteDirty = noteDraft !== (photo.note || '')
+                  return (
+                    <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
+                      <textarea
+                        value={noteDraft}
+                        onChange={e => setNoteDrafts(d => ({ ...d, [photo.id]: e.target.value }))}
+                        placeholder="Add a note about this photo..."
+                        rows={2}
+                        disabled={savingId === photo.id}
+                        style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc', resize: 'vertical', fontFamily: 'inherit' }}
+                      />
+                      {noteDirty && (
+                        <button
+                          onClick={() => saveNote(photo)}
+                          disabled={savingId === photo.id}
+                          style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+                        >Save</button>
+                      )}
+                    </div>
+                  )
+                })()}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#aaa' }}>
                   <span>{fmtSize(photo.file_size_bytes)}</span>
                   {photo.photo_latitude && photo.photo_longitude && (
