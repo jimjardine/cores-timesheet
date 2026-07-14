@@ -4,6 +4,7 @@ import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 
 const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
 const STATUS_COLORS = {
   collecting: '#888',
@@ -16,12 +17,15 @@ export default function SmsReview() {
   const [submissions, setSubmissions] = useState([])
   const [jobs, setJobs]               = useState([])
   const [employees, setEmployees]     = useState([])
+  const [gearPhotos, setGearPhotos]   = useState([])
   const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
   const [loading, setLoading]         = useState(true)
   const [expanded, setExpanded]       = useState({})
   const [acting, setActing]           = useState(null)
   const [noteDrafts, setNoteDrafts]   = useState({})
+  const [photoModalJob, setPhotoModalJob]     = useState(null)
+  const [photoLightbox, setPhotoLightbox]     = useState(null)
 
   // Test harness
   const [testOpen, setTestOpen]   = useState(false)
@@ -36,15 +40,17 @@ export default function SmsReview() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }] = await Promise.all([
+    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
+      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
     setEmployees(emps || [])
+    setGearPhotos(photos || [])
     const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
     setOtThreshold(ot ? Number(ot.value) : 8)
     setLoading(false)
@@ -63,6 +69,7 @@ export default function SmsReview() {
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || 'Unknown'
   const getEmployee = (id) => employees.find(e => e.id === id) || { name: 'Unknown', active: null }
+  const photosPerJob = gearPhotos.reduce((acc, p) => { acc[p.job_id] = (acc[p.job_id] || 0) + 1; return acc }, {})
 
   const toggle = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
@@ -463,6 +470,7 @@ export default function SmsReview() {
                         <th style={{ padding: '0.4rem 0.6rem', textAlign: 'right', width: 55 }}>OT</th>
                         <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left' }}>Description</th>
                         <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 110, color: '#888' }}>Matched</th>
+                        <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 70, color: '#888' }}>Photos</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -470,6 +478,7 @@ export default function SmsReview() {
                         const matchedJob = jobs.find(j => j.job_number.toUpperCase() === (e.job_number || '').toUpperCase())
                         const reg = e.reg_hours ?? e.hours
                         const ot  = e.ot_hours ?? 0
+                        const photoCount = matchedJob ? (photosPerJob[matchedJob.id] || 0) : 0
                         return (
                           <tr key={i} style={{ borderTop: '1px solid #eee' }}>
                             <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600 }}>{e.job_number}</td>
@@ -480,6 +489,14 @@ export default function SmsReview() {
                             <td style={{ padding: '0.4rem 0.6rem', color: '#333' }}>{e.description}</td>
                             <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem', color: matchedJob ? '#2a7a2a' : '#c00' }}>
                               {matchedJob ? `✓ ${matchedJob.description?.substring(0, 25) || '—'}` : '✗ not found'}
+                            </td>
+                            <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}>
+                              {photoCount > 0 ? (
+                                <span
+                                  onClick={() => setPhotoModalJob(matchedJob)}
+                                  style={{ color: '#0066cc', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                                >📷 {photoCount}</span>
+                              ) : '—'}
                             </td>
                           </tr>
                         )
@@ -495,7 +512,7 @@ export default function SmsReview() {
                           <td style={{ padding: '0.3rem 0.6rem', textAlign: 'right', color: '#cc6600' }}>
                             {sub.entries.reduce((s, e) => s + (e.ot_hours ?? 0), 0) || '—'}
                           </td>
-                          <td colSpan={2} />
+                          <td colSpan={3} />
                         </tr>
                       </tfoot>
                     )}
@@ -621,6 +638,48 @@ export default function SmsReview() {
           </div>
         )
       })}
+
+      {/* Photo modal */}
+      {photoModalJob && (() => {
+        const jobPhotos = gearPhotos.filter(p => p.job_id === photoModalJob.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+        return (
+          <div
+            onClick={() => setPhotoModalJob(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, padding: '1.25rem', width: '100%', maxWidth: 700, maxHeight: '80vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>{photoModalJob.job_number} — {jobPhotos.length} photo{jobPhotos.length === 1 ? '' : 's'}</h3>
+                <button onClick={() => setPhotoModalJob(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
+                {jobPhotos.map(p => (
+                  <div key={p.id} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #eee' }}>
+                    <div
+                      onClick={() => setPhotoLightbox(p)}
+                      style={{ aspectRatio: '4 / 3', background: '#f0f0f0', cursor: 'pointer', overflow: 'hidden' }}
+                    >
+                      <img src={gearPhotoUrl(p.storage_path)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    </div>
+                    <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>
+                      {employeeName(p.employee_id)} · {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {photoLightbox && (
+        <div
+          onClick={() => setPhotoLightbox(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', cursor: 'zoom-out' }}
+        >
+          <img src={gearPhotoUrl(photoLightbox.storage_path)} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }} />
+        </div>
+      )}
 
       {/* Edit modal */}
       {editModal && (
