@@ -261,10 +261,16 @@ export default function AdminDashboard() {
 
   async function deleteEntry(entry) {
     const { error } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id)
-    if (error) alert(`Delete failed: ${error.message}`)
+    if (error) { alert(`Delete failed: ${error.message}`); return }
+    // job_supplies has no FK back to timesheet_entries — clean up supplies logged
+    // against this same employee/job/day so a deleted entry doesn't leave orphaned
+    // supply rows attributed to someone with no hours left on the job.
+    const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').delete()
+      .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+    if (supplyError) alert(`Entry deleted, but couldn't clean up its supplies: ${supplyError.message}`)
     // If that was the employee's last real entry in the pay week, the auto
     // stat-pay entries for that week are no longer earned — remove them
-    else await cleanupStatPay(entry.employee_id, entry.work_date)
+    await cleanupStatPay(entry.employee_id, entry.work_date)
     setConfirmDeleteId(null)
     await loadTimesheets()
   }
