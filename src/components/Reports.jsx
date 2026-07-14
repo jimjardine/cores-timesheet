@@ -748,7 +748,7 @@ export default function Reports() {
                       {d.otHours ? fmtHours(d.otHours) : ''}
                     </td>
                     <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{d.perDiems || ''}</td>
-                    <td style={tdStyleWc}></td>
+                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700 }}>{isPosted ? '✓' : ''}</td>
                   </tr>
                 )
               })}
@@ -757,7 +757,7 @@ export default function Reports() {
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: totalOT ? '#c0392b' : '#333' }}>{fmtHours(totalOT)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{totalPD || ''}</td>
-                <td style={tdStyleWc}></td>
+                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{isPosted ? '✓' : ''}</td>
               </tr>
             </tbody>
           </table>
