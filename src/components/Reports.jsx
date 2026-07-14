@@ -40,7 +40,7 @@ export default function Reports() {
   const [entries, setEntries] = useState([])
   const [supplies, setSupplies] = useState([])
   const [gearPhotos, setGearPhotos] = useState([])
-  const [photoModalJob, setPhotoModalJob] = useState(null)
+  const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
   const [postedWeeks, setPostedWeeks] = useState({})
 
@@ -207,6 +207,12 @@ export default function Reports() {
   const crewPerJob  = filteredEntries.reduce((acc, e) => { if (!acc[e.job_id]) acc[e.job_id] = new Set(); acc[e.job_id].add(e.employees?.name); return acc }, {})
   const photosPerJob = gearPhotos.reduce((acc, p) => { acc[p.job_id] = (acc[p.job_id] || 0) + 1; return acc }, {})
   const hoursPerEmp = filteredEntries.reduce((acc, e) => { const id = e.employee_id; acc[id] = (acc[id] || 0) + Number(e.hours); return acc }, {})
+  const jobsById = jobs.reduce((acc, j) => { acc[j.id] = j; return acc }, {})
+  const photosPerEmployee = gearPhotos.reduce((acc, p) => { acc[p.employee_id] = (acc[p.employee_id] || 0) + 1; return acc }, {})
+
+  function openPhotoGroup(title, photos) {
+    setPhotoGroup({ title, photos: [...photos].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
+  }
 
   // ── Navigation helpers ──
   function goToJob(job) {
@@ -902,7 +908,7 @@ export default function Reports() {
                       {photosPerJob[j.id] ? (
                         <span
                           style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
-                          onClick={e => { e.stopPropagation(); setPhotoModalJob(j) }}
+                          onClick={e => { e.stopPropagation(); openPhotoGroup(j.job_number, gearPhotos.filter(p => p.job_id === j.id)) }}
                         >📷 {photosPerJob[j.id]}</span>
                       ) : '—'}
                     </td>
@@ -929,8 +935,8 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -945,6 +951,14 @@ export default function Reports() {
                   <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
                   <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hoursPerJob[j.id] || 0)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                    {photosPerJob[j.id] ? (
+                      <span
+                        style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={e => { e.stopPropagation(); openPhotoGroup(j.job_number, gearPhotos.filter(p => p.job_id === j.id)) }}
+                      >📷 {photosPerJob[j.id]}</span>
+                    ) : '—'}
+                  </td>
                   <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
                 </tr>
               ))}
@@ -968,8 +982,8 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Crew'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' ? 'center' : 'left' }}>{h}</th>
+              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -984,6 +998,14 @@ export default function Reports() {
                   <td style={{ padding: '0.75rem', color: '#555' }}>{j.description}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}><span style={badge(j.status)}>{j.status}</span></td>
                   <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(hoursPerJob[j.id] || 0)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                    {photosPerJob[j.id] ? (
+                      <span
+                        style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={e => { e.stopPropagation(); openPhotoGroup(j.job_number, gearPhotos.filter(p => p.job_id === j.id)) }}
+                      >📷 {photosPerJob[j.id]}</span>
+                    ) : '—'}
+                  </td>
                   <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{crewPerJob[j.id] ? [...crewPerJob[j.id]].join(', ') : '—'}</td>
                 </tr>
               ))}
@@ -1010,8 +1032,8 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Employee', 'Jobs Worked', 'Total Hours', 'Customers'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Jobs Worked' || h === 'Total Hours' ? 'center' : 'left' }}>{h}</th>
+              {['Employee', 'Jobs Worked', 'Total Hours', 'Photos', 'Customers'].map(h => (
+                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Jobs Worked' || h === 'Total Hours' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -1027,6 +1049,14 @@ export default function Reports() {
                   <td style={{ padding: '0.75rem', ...linkStyle }}>{emp.name}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}>{empJobs.size}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600 }}>{fmtHours(empHours)}</td>
+                  <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                    {photosPerEmployee[emp.id] ? (
+                      <span
+                        style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={e => { e.stopPropagation(); openPhotoGroup(emp.name, gearPhotos.filter(p => p.employee_id === emp.id)) }}
+                      >📷 {photosPerEmployee[emp.id]}</span>
+                    ) : '—'}
+                  </td>
                   <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{[...empCustomers].join(', ') || '—'}</td>
                 </tr>
               )
@@ -1332,20 +1362,20 @@ export default function Reports() {
         )
       })()}
 
-      {photoModalJob && (() => {
-        const jobPhotos = gearPhotos.filter(p => p.job_id === photoModalJob.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+      {photoGroup && (() => {
+        const groupPhotos = photoGroup.photos
         return (
           <div
-            onClick={() => setPhotoModalJob(null)}
+            onClick={() => setPhotoGroup(null)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
           >
             <div onClick={e => e.stopPropagation()} style={{ ...card, width: '100%', maxWidth: 700, maxHeight: '80vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3 style={{ margin: 0 }}>{photoModalJob.job_number} — {jobPhotos.length} photo{jobPhotos.length === 1 ? '' : 's'}</h3>
-                <button onClick={() => setPhotoModalJob(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
+                <h3 style={{ margin: 0 }}>{photoGroup.title} — {groupPhotos.length} photo{groupPhotos.length === 1 ? '' : 's'}</h3>
+                <button onClick={() => setPhotoGroup(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                {jobPhotos.map(p => (
+                {groupPhotos.map(p => (
                   <div key={p.id} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #eee' }}>
                     <div
                       onClick={() => setPhotoLightbox(p)}
@@ -1354,7 +1384,7 @@ export default function Reports() {
                       <img src={gearPhotoUrl(p.storage_path)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     </div>
                     <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>
-                      {employees.find(e => e.id === p.employee_id)?.name || 'Unknown'} · {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {jobsById[p.job_id]?.job_number ? `${jobsById[p.job_id].job_number} · ` : ''}{employees.find(e => e.id === p.employee_id)?.name || 'Unknown'} · {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </div>
                   </div>
                 ))}
