@@ -86,6 +86,7 @@ export default function Reports() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const todayStr = toYMD(today)
     if (preset === 'all') { setDateFrom(''); setDateTo(''); return }
+    if (preset === 'today') { setDateFrom(todayStr); setDateTo(todayStr); return }
     if (preset === 'this-week') {
       const s = getPayWeekStart(today)
       const e = new Date(s); e.setDate(e.getDate() + 6)
@@ -194,6 +195,7 @@ export default function Reports() {
     return true
   })
   const dateLabel = datePreset === 'all' ? 'All time'
+    : datePreset === 'today' ? 'Today'
     : datePreset === 'this-week' ? 'This pay week'
     : datePreset === 'last-week' ? 'Last pay week'
     : datePreset === 'this-month' ? 'This month'
@@ -803,6 +805,7 @@ export default function Reports() {
           {/* Date filter */}
           {[
             ['all',       'All time'],
+            ['today',     'Today'],
             ['this-week', 'This pay week'],
             ['last-week', 'Last pay week'],
             ['this-month','This month'],
