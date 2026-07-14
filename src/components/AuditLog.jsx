@@ -6,7 +6,7 @@ const PAGE_SIZE = 100
 const TABLES = [
   'employees', 'customers', 'vessels', 'jobs', 'job_tasks', 'timesheet_entries',
   'payroll_config', 'stat_holidays', 'job_status_logs', 'vessel_contacts',
-  'sms_submissions', 'job_supplies', 'gear_photos',
+  'sms_submissions', 'job_supplies', 'gear_photos', 'weekly_summary_posted',
 ]
 
 const ACTION_COLORS = {

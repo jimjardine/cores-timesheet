@@ -3,23 +3,23 @@ import { fmtHours } from './format'
 
 // Recreates the Cores Worldwide paper "Weekly Compilation / Daily Work Hours" form
 // (Document# CW-OAD-F002 rev.0) — one employee's Thu–Wed pay week, reg/OT/per diem
-// per day. "Posted" isn't tracked by the app (a payroll-side stamp) — left blank for
-// hand-fill, same convention as the untracked sections on the daily time sheet PDF.
-function fmtShortDate(ymd) {
+// per day. The app tracks "posted" as a whole-week flag (see weekly_summary_posted),
+// not per day, so the PDF's day-by-day POSTED column stays blank for hand-fill.
+export function fmtShortDate(ymd) {
   const d = new Date(ymd + 'T12:00:00')
   const mon = d.toLocaleDateString('en-US', { month: 'short' })
   return `${String(d.getDate()).padStart(2, '0')}-${mon}`
 }
-function fmtHeaderDate(ymd) {
+export function fmtHeaderDate(ymd) {
   const d = new Date(ymd + 'T12:00:00')
   const mon = d.toLocaleDateString('en-US', { month: 'short' })
   const yy = String(d.getFullYear()).slice(-2)
   return `${d.getDate()}-${mon}-${yy}`
 }
-function dayName(ymd) {
+export function dayName(ymd) {
   return new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()
 }
-function isWeekend(ymd) {
+export function isWeekend(ymd) {
   const dow = new Date(ymd + 'T12:00:00').getDay()
   return dow === 0 || dow === 6
 }

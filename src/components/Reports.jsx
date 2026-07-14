@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
-import { generateWeeklyCompilationPDF } from '../utils/weeklyCompilationPdf'
+import { generateWeeklyCompilationPDF, fmtShortDate, fmtHeaderDate, dayName, isWeekend } from '../utils/weeklyCompilationPdf'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -42,11 +42,13 @@ export default function Reports() {
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoModalJob, setPhotoModalJob] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
+  const [postedWeeks, setPostedWeeks] = useState({})
 
   // Navigation
   const [activeTab, setActiveTab] = useState('jobs')
   const [selectedJob, setSelectedJob] = useState(null)
   const [selectedEmployee, setSelectedEmployee] = useState(null)
+  const [viewingWeeklyCompilation, setViewingWeeklyCompilation] = useState(null)
   const [navHistory, setNavHistory] = useState([])
 
   // Global job status filter
@@ -119,7 +121,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes, postedRes] = await Promise.all([
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*').order('name'),
@@ -129,6 +131,7 @@ export default function Reports() {
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
+      supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at'),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -139,7 +142,24 @@ export default function Reports() {
     setGearPhotos(gearPhotosRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
+    setPostedWeeks(Object.fromEntries((postedRes.data || []).map(r => [`${r.employee_id}|${r.week_start}`, r.posted_at])))
     setLoading(false)
+  }
+
+  function postedKey(empId, weekStart) { return `${empId}|${weekStart}` }
+
+  async function togglePosted(empId, weekStart) {
+    const key = postedKey(empId, weekStart)
+    if (postedWeeks[key]) {
+      const { error } = await supabase.schema('Cores').from('weekly_summary_posted').delete().eq('employee_id', empId).eq('week_start', weekStart)
+      if (error) { alert('Error updating posted status: ' + error.message); return }
+      setPostedWeeks(p => { const n = { ...p }; delete n[key]; return n })
+    } else {
+      const { data, error } = await supabase.schema('Cores').from('weekly_summary_posted')
+        .insert({ employee_id: empId, week_start: weekStart }).select().single()
+      if (error) { alert('Error updating posted status: ' + error.message); return }
+      setPostedWeeks(p => ({ ...p, [key]: data.posted_at }))
+    }
   }
 
   // ── Filtering ──
@@ -650,6 +670,104 @@ export default function Reports() {
     )
   }
 
+  // ── Weekly Compilation (on-screen match of the printed PDF) ──
+  if (viewingWeeklyCompilation) {
+    const { emp, days, weekStart } = viewingWeeklyCompilation
+    const isPosted = !!postedWeeks[postedKey(emp.id, weekStart)]
+    const totalReg = days.reduce((s, d) => s + Number(d.regHours || 0), 0)
+    const totalOT = days.reduce((s, d) => s + Number(d.otHours || 0), 0)
+    const totalPD = days.reduce((s, d) => s + Number(d.perDiems || 0), 0)
+    const thStyleWc = { padding: '0.6rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', fontWeight: 700, borderBottom: '2px solid #333' }
+    const tdStyleWc = { padding: '0.5rem', borderBottom: '1px solid #eee' }
+
+    return (
+      <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          <button onClick={() => setViewingWeeklyCompilation(null)} style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
+            ← Weekly Summary
+          </button>
+          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+            Download PDF
+          </button>
+          <button
+            onClick={() => togglePosted(emp.id, weekStart)}
+            style={{
+              marginLeft: 'auto', padding: '0.4rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
+              border: isPosted ? '1px solid #2d6a38' : '1px solid #ccc',
+              background: isPosted ? '#e6f4ea' : '#fff',
+              color: isPosted ? '#2d6a38' : '#555',
+            }}
+          >
+            {isPosted ? `✓ Posted — ${new Date(postedWeeks[postedKey(emp.id, weekStart)]).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Mark as Posted'}
+          </button>
+        </div>
+
+        <div style={{ ...card, padding: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.03em' }}>CORES</div>
+              <div style={{ fontSize: '0.6rem', letterSpacing: '0.1em', color: '#888' }}>WORLDWIDE</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, fontSize: '1.25rem' }}>WEEKLY COMPILATION</div>
+              <div style={{ fontWeight: 700, fontSize: '1.25rem' }}>DAILY WORK HOURS</div>
+            </div>
+            <div style={{ width: 70 }} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid #ddd', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div><strong>NAME:</strong> {emp.name}</div>
+            <div style={{ display: 'flex', gap: '1.5rem' }}>
+              <div><strong>From</strong> {fmtHeaderDate(days[0].date)}</div>
+              <div><strong>To</strong> {fmtHeaderDate(days[6].date)}</div>
+            </div>
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={thStyleWc}>Day</th>
+                <th style={thStyleWc}>Date</th>
+                <th style={{ ...thStyleWc, textAlign: 'right' }}>Reg Hours</th>
+                <th style={{ ...thStyleWc, textAlign: 'right' }}>O/T Hours</th>
+                <th style={{ ...thStyleWc, textAlign: 'right' }}>Per Diems</th>
+                <th style={{ ...thStyleWc, textAlign: 'center' }}>Posted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map(d => {
+                const weekend = isWeekend(d.date)
+                return (
+                  <tr key={d.date} style={weekend ? { background: '#fafafa' } : {}}>
+                    <td style={tdStyleWc}>{dayName(d.date)}</td>
+                    <td style={{ ...tdStyleWc, color: '#888' }}>{fmtShortDate(d.date)}</td>
+                    <td style={{ ...tdStyleWc, textAlign: 'right', color: weekend ? '#ccc' : '#2d6a38' }}>
+                      {weekend ? '—' : (d.regHours ? fmtHours(d.regHours) : '')}
+                    </td>
+                    <td style={{ ...tdStyleWc, textAlign: 'right', background: weekend ? '#e5e5e5' : 'transparent', color: d.otHours ? '#c0392b' : '#ccc', fontWeight: d.otHours ? 600 : 400 }}>
+                      {d.otHours ? fmtHours(d.otHours) : ''}
+                    </td>
+                    <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{d.perDiems || ''}</td>
+                    <td style={tdStyleWc}></td>
+                  </tr>
+                )
+              })}
+              <tr style={{ fontWeight: 700, borderTop: '2px solid #333' }}>
+                <td colSpan={2} style={tdStyleWc}>TOTAL</td>
+                <td style={{ ...tdStyleWc, textAlign: 'right', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
+                <td style={{ ...tdStyleWc, textAlign: 'right', color: totalOT ? '#c0392b' : '#333' }}>{fmtHours(totalOT)}</td>
+                <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{totalPD || ''}</td>
+                <td style={tdStyleWc}></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style={{ fontSize: '0.7rem', color: '#aaa', marginTop: '1.5rem' }}>Document# CW-OAD-F002 rev.0</div>
+        </div>
+      </div>
+    )
+  }
+
   // ── Normal tab views ──
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
@@ -1151,15 +1269,17 @@ export default function Reports() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies', ''].map(h => (
+                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies', 'Posted', ''].map(h => (
                       <th key={h} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.9rem', fontWeight: 600, color: '#555' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {weekData.map((row, i) => (
+                  {weekData.map((row, i) => {
+                    const isPosted = row.emp && !!postedWeeks[postedKey(row.emp.id, weekStart)]
+                    return (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: 600 }}>{row.emp?.name || 'Unknown'}</td>
+                      <td style={{ padding: '0.75rem', fontWeight: 600, ...(row.emp ? linkStyle : {}) }} onClick={() => row.emp && setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}>{row.emp?.name || 'Unknown'}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center' }}>{fmtHours(row.totalHours)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(row.regHours)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{fmtHours(row.otHours)}</td>
@@ -1167,15 +1287,26 @@ export default function Reports() {
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
                       <td style={{ padding: '0.75rem' }}>
+                        {isPosted && (
+                          <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#e6f4ea', color: '#2d6a38', border: '1px solid #2d6a3844' }}>✓ Posted</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.75rem', display: 'flex', gap: '0.4rem' }}>
                         {row.emp && (
-                          <button
-                            onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
-                            style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
-                          >PDF</button>
+                          <>
+                            <button
+                              onClick={() => setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}
+                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                            >View</button>
+                            <button
+                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
+                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                            >PDF</button>
+                          </>
                         )}
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             )}
