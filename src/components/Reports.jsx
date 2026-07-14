@@ -1106,8 +1106,9 @@ export default function Reports() {
         // Flag stat days with hours actually WORKED (the auto 8-hr stat-pay entry doesn't count)
         const statDays     = dayBreakdowns.filter(d => d.isStat && d.dayEntries.some(e => !e.is_stat_pay))
 
-        const thStyle = { padding: '0.65rem 0.75rem', textAlign: 'center', fontWeight: 600, color: '#555', whiteSpace: 'nowrap' }
-        const tdC     = { padding: '0.65rem 0.75rem', textAlign: 'center' }
+        const thStyle = { padding: '0.65rem 0.75rem', textAlign: 'center', fontWeight: 600, color: '#555', whiteSpace: 'nowrap', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }
+        const tdC     = { padding: '0.65rem 0.75rem', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }
+        const chip = (color, bg) => ({ display: 'inline-block', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, color, background: bg })
 
         return (
           <div>
@@ -1187,9 +1188,20 @@ export default function Reports() {
                 )}
 
                 {/* Day-by-day table */}
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '15%' }} />
+                    <col style={{ width: '9%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col />
+                  </colgroup>
                   <thead>
-                    <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5' }}>
                       <th style={{ ...thStyle, textAlign: 'left' }}>Day</th>
                       <th style={{ ...thStyle, textAlign: 'left' }}>Date</th>
                       <th style={thStyle}>Total</th>
@@ -1202,12 +1214,12 @@ export default function Reports() {
                   </thead>
                   <tbody>
                     {dayBreakdowns.map(({ ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }) => (
-                      <tr key={ymd} style={{ borderBottom: '1px solid #eee', background: isStat && dayHours > 0 ? '#fff8e1' : isToday ? '#f0fff4' : isWeekend ? '#fafafa' : '#fff' }}>
+                      <tr key={ymd} style={{ borderBottom: '1px solid #f0f0f0', background: isStat && dayHours > 0 ? '#fffbf0' : isToday ? '#f4fbf6' : isWeekend ? '#fafafa' : '#fff' }}>
                         <td style={{ padding: '0.65rem 0.75rem', color: isWeekend ? '#bbb' : '#333', fontWeight: isToday ? 700 : 400 }}>
                           {day.toLocaleDateString('en-GB', { weekday: 'long' })}
-                          {isStat && <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', background: '#ffe082', color: '#7a5c00', borderRadius: '4px', padding: '0.1rem 0.35rem', fontWeight: 600 }}>STAT</span>}
+                          {isStat && <span style={{ ...chip('#7a5c00', '#ffe082'), marginLeft: '0.4rem', fontSize: '0.7rem' }}>STAT</span>}
                         </td>
-                        <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.9rem' }}>{fmtDate(day)}</td>
+                        <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(day)}</td>
                         <td style={{ ...tdC, fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? fmtHours(dayHours) : '—'}</td>
                         <td style={{ ...tdC, color: regularHours > 0 ? '#2d6a38' : '#ddd' }}>{regularHours > 0 ? fmtHours(regularHours) : '—'}</td>
                         <td style={{ ...tdC, color: otHours > 0 ? '#c0392b' : '#ddd', fontWeight: otHours > 0 ? 600 : 400 }}>{otHours > 0 ? fmtHours(otHours) : '—'}</td>
@@ -1215,17 +1227,17 @@ export default function Reports() {
                         <td style={{ ...tdC, color: dayPerDiem > 0 ? '#8B4513' : '#ddd' }}>{dayPerDiem > 0 ? `×${dayPerDiem}` : '—'}</td>
                         <td style={{ padding: '0.65rem 0.75rem' }}>
                           {dayEntries.length === 0
-                            ? <span style={{ color: '#ddd', fontSize: '0.9rem' }}>No entries</span>
+                            ? <span style={{ color: '#ccc', fontSize: '0.85rem' }}>No entries</span>
                             : dayEntries.map(e => {
                               const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
                               return (
-                                <div key={e.id} style={{ marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
-                                  {payEmployeeIds.length > 1 && <span style={{ fontWeight: 600, marginRight: '0.4rem' }}>{e.employees?.name}:</span>}
+                                <div key={e.id} style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.4rem', marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
+                                  {payEmployeeIds.length > 1 && <span style={{ fontWeight: 600 }}>{e.employees?.name}:</span>}
                                   <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
-                                  <span style={{ color: '#aaa', margin: '0 0.4rem', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
-                                  <span style={{ color: '#2d6a38', fontSize: '0.85rem', marginRight: '0.3rem' }}>{fmtHours(reg)}reg</span>
-                                  {ot > 0 && <span style={{ color: '#c0392b', fontWeight: 600, fontSize: '0.85rem', marginRight: '0.3rem' }}>{fmtHours(ot)}OT</span>}
-                                  {e.description && <span style={{ color: '#555', fontSize: '0.9rem' }}>— {e.description}</span>}
+                                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
+                                  <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(reg)} reg</span>
+                                  {ot > 0 && <span style={chip('#c0392b', '#fbeaea')}>{fmtHours(ot)} OT</span>}
+                                  {e.description && <span style={{ color: '#777', fontSize: '0.85rem' }}>{e.description}</span>}
                                 </div>
                               )
                             })
@@ -1233,17 +1245,18 @@ export default function Reports() {
                         </td>
                       </tr>
                     ))}
-                    <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd', fontWeight: 700 }}>
+                    <tr style={{ background: '#fafafa', borderTop: '1px solid #e5e5e5', fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: '0.65rem 0.75rem' }}>Total</td>
                       <td style={{ ...tdC, fontWeight: 700 }}>{fmtHours(totalHours)}</td>
                       <td style={{ ...tdC, color: '#2d6a38' }}>{fmtHours(totalRegular)}</td>
                       <td style={{ ...tdC, color: totalOT > 0 ? '#c0392b' : '#aaa' }}>{fmtHours(totalOT)}</td>
                       <td style={{ ...tdC, color: statDays.length > 0 ? '#7a5c00' : '#aaa' }}>{statDays.length > 0 ? statDays.length + ' day' + (statDays.length > 1 ? 's' : '') : '—'}</td>
                       <td style={{ ...tdC, color: totalPerDiem > 0 ? '#8B4513' : '#aaa' }}>{totalPerDiem > 0 ? `×${totalPerDiem}` : '—'}</td>
-                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.85rem' }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}</td>
+                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.8rem', fontWeight: 400 }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}</td>
                     </tr>
                   </tbody>
                 </table>
+                </div>
               </>
             )}
           </div>
