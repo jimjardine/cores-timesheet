@@ -6,6 +6,8 @@ const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(pa
 const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 const fmtSize = (bytes) => bytes ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : '—'
+// Local calendar date — toISOString() is UTC and rolls to tomorrow after 9pm Atlantic
+const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 export default function GearPhotos() {
   const [photos, setPhotos]     = useState([])
@@ -14,6 +16,8 @@ export default function GearPhotos() {
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all')
   const [jobFilter, setJobFilter] = useState('')
+  const [dateFilter, setDateFilter] = useState('all')
+  const [customDate, setCustomDate] = useState('')
   const [lightbox, setLightbox] = useState(null)
   const [savingId, setSavingId] = useState(null)
   const [edits, setEdits]       = useState({})
@@ -39,8 +43,11 @@ export default function GearPhotos() {
     if (filter === 'needs_context' && !p.pending_context) return false
     if (filter === 'has_context' && p.pending_context)    return false
     if (jobFilter.trim() && !(p.ship_or_job || '').toLowerCase().includes(jobFilter.trim().toLowerCase())) return false
+    if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
+    if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
     return true
   })
+  const hasActiveFilter = filter !== 'all' || jobFilter.trim() || dateFilter !== 'all'
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
@@ -92,6 +99,24 @@ export default function GearPhotos() {
           placeholder="Filter by job number..."
           style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 180, marginLeft: '1rem' }}
         />
+        <button
+          onClick={() => { setDateFilter(d => d === 'today' ? 'all' : 'today'); setCustomDate('') }}
+          style={{
+            padding: '0.4rem 0.9rem', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+            background: dateFilter === 'today' ? '#0066cc' : '#fff',
+            color: dateFilter === 'today' ? '#fff' : '#333',
+            borderColor: dateFilter === 'today' ? '#0066cc' : '#ccc',
+          }}
+        >Today</button>
+        <input
+          type="date"
+          value={customDate}
+          onChange={e => { setCustomDate(e.target.value); setDateFilter(e.target.value ? 'custom' : 'all') }}
+          style={{ padding: '0.35rem 0.5rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
+        />
+        {dateFilter !== 'all' && (
+          <span onClick={() => { setDateFilter('all'); setCustomDate('') }} style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.8rem' }}>clear date</span>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {filterBtn('all', 'All')}
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
@@ -101,7 +126,7 @@ export default function GearPhotos() {
 
       {visible.length === 0 && (
         <div style={{ color: '#888', padding: '2rem 0', textAlign: 'center' }}>
-          No photos {filter !== 'all' || jobFilter.trim() ? 'match this filter' : 'have been texted in yet'}.
+          No photos {hasActiveFilter ? 'match this filter' : 'have been texted in yet'}.
         </div>
       )}
 
