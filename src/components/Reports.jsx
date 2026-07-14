@@ -60,6 +60,7 @@ export default function Reports() {
   const [vesselFilterIds, setVesselFilterIds] = useState([])
   const [hideEmptyOptions, setHideEmptyOptions] = useState(true)
   const [employeeFilterIds, setEmployeeFilterIds] = useState([])
+  const employeeFilterIdsDefaulted = useRef(false)
 
   // Payroll tab
   const payWeeks = recentPayWeeks(8)
@@ -117,6 +118,16 @@ export default function Reports() {
     payEmployeeIdsDefaulted.current = true
     const withEntries = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
     setPayEmployeeIds(withEntries.map(e => e.id))
+  }, [employees, entries, hideEmptyOptions])
+
+  // Same defaulting for the By Employee tab's filter — pre-populate with everyone so
+  // "Clear" unambiguously means "show no one" instead of overloading an empty
+  // selection to mean "no filter, show everyone".
+  useEffect(() => {
+    if (employeeFilterIdsDefaulted.current || employees.length === 0) return
+    employeeFilterIdsDefaulted.current = true
+    const withEntries = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
+    setEmployeeFilterIds(withEntries.map(e => e.id))
   }, [employees, entries, hideEmptyOptions])
 
   async function loadAll() {
@@ -423,7 +434,7 @@ export default function Reports() {
       downloadCSV(rows, `by-vessel-${dateFileSuffix}.csv`)
     } else if (activeTab === 'employee') {
       const rows = ['Employee,Jobs Worked,Total Hours,Reg Hours,OT Hours,Per Diem,Customers,Date From,Date To']
-      employees.filter(emp => employeeFilterIds.length === 0 || employeeFilterIds.includes(emp.id)).forEach(emp => {
+      employees.filter(emp => employeeFilterIds.includes(emp.id)).forEach(emp => {
         const ee = filteredEntries.filter(e => e.employee_id === emp.id)
         if (!ee.length) return
         const empJobs = new Set(ee.map(e => e.job_id))
@@ -987,9 +998,12 @@ export default function Reports() {
               <MultiSelectDropdown
                 options={employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))}
                 selectedIds={employeeFilterIds} onChange={setEmployeeFilterIds}
-                placeholder="All employees" allLabel="All employees" />
+                placeholder="None selected" allLabel="All employees" />
             </div>
           </div>
+          {employeeFilterIds.length === 0 ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>Select one or more employees above</div>
+          ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -999,7 +1013,7 @@ export default function Reports() {
             </tr>
           </thead>
           <tbody>
-            {employees.filter(emp => employeeFilterIds.length === 0 || employeeFilterIds.includes(emp.id)).map(emp => {
+            {employees.filter(emp => employeeFilterIds.includes(emp.id)).map(emp => {
               const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
               if (empEntries.length === 0) return null
               const empJobs = new Set(empEntries.map(e => e.job_id))
@@ -1016,6 +1030,7 @@ export default function Reports() {
             })}
           </tbody>
         </table>
+          )}
         </div>
       )}
 
