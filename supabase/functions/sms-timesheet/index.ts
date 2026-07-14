@@ -78,6 +78,42 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10)
 }
 
+// Twilio's request-signing algorithm: sort POST params by key, append each
+// key+value (no delimiter) directly onto the URL string, then HMAC-SHA1 with
+// the Auth Token and base64-encode. See
+// https://www.twilio.com/docs/usage/security#validating-requests
+async function computeTwilioSignature(authToken: string, url: string, params: Record<string, string>): Promise<string> {
+  const sortedKeys = Object.keys(params).sort()
+  let data = url
+  for (const key of sortedKeys) data += key + params[key]
+  const enc = new TextEncoder()
+  const cryptoKey = await crypto.subtle.importKey('raw', enc.encode(authToken), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data))
+  return btoa(String.fromCharCode(...new Uint8Array(sig)))
+}
+
+// Phase 1 (current): LOG ONLY — computes the expected signature against both a
+// fixed canonical URL (the one registered in Twilio Console) and whatever req.url
+// looks like from inside the edge function, and logs whether either matches the
+// incoming X-Twilio-Signature header. Supabase's proxy can alter the URL Twilio
+// actually signed against, so this never rejects a request yet — once real traffic
+// confirms which URL variant matches consistently, promote that check to actually
+// reject on mismatch (see todo #2).
+async function logTwilioSignatureCheck(req: Request, params: Record<string, string>): Promise<void> {
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')
+  const header = req.headers.get('X-Twilio-Signature')
+  if (!authToken || !header) {
+    console.log(`[twilio-sig] skipped — authToken present: ${!!authToken}, header present: ${!!header}`)
+    return
+  }
+  const canonicalUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/sms-timesheet`
+  const [sigCanonical, sigReqUrl] = await Promise.all([
+    computeTwilioSignature(authToken, canonicalUrl, params),
+    computeTwilioSignature(authToken, req.url, params),
+  ])
+  console.log(`[twilio-sig] header=${header} canonical=${sigCanonical} (match=${sigCanonical === header}) url=${canonicalUrl} | reqUrl=${sigReqUrl} (match=${sigReqUrl === header}) url=${req.url}`)
+}
+
 function extractExifData(_jpegBuffer: ArrayBuffer): { lat?: number; lng?: number; timestamp?: string } {
   // Disabled: piexifjs (npm:piexifjs@0.1.12) isn't a real published version and pulling
   // in a real one broke boot in the edge runtime. Re-enable once a working, edge-compatible
@@ -348,6 +384,11 @@ Deno.serve(async (req: Request) => {
   try {
     if (isTwilio) {
       const form = await req.formData()
+      const formParams: Record<string, string> = {}
+      for (const [k, v] of form.entries()) formParams[k] = String(v)
+      // Log-only for now — see logTwilioSignatureCheck's comment for the enforcement plan.
+      await logTwilioSignatureCheck(req, formParams)
+
       fromPhone = normalizePhone(form.get('From') as string || '')
       msgBody = (form.get('Body') as string || '').trim()
       // Collect media URLs from MMS (MediaUrl0, MediaUrl1, etc)
