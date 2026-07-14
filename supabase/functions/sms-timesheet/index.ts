@@ -478,11 +478,11 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Phone directory request ──
-  // Accept "phone", "phone#", "phone #", optionally followed by a name filter — the
-  // exact "phone#" string was too strict and easy to miss (no "#" key on some phones,
+  // Accept "phone"/"phones", "phone#", "phone #", optionally followed by a name filter —
+  // the exact "phone#" string was too strict and easy to miss (no "#" key on some phones,
   // easy to forget), so a plain "phone" fell through to the normal timesheet parser
-  // instead of ever reaching this check.
-  const phoneReqMatch = msgLower.match(/^phone\s*#?(?:\s+(.*))?$/)
+  // instead of ever reaching this check. Same for the natural plural "phones".
+  const phoneReqMatch = msgLower.match(/^phones?\s*#?(?:\s+(.*))?$/)
   const isPhoneRequest = !!phoneReqMatch
   if (isPhoneRequest) {
     const nameFilter = phoneReqMatch[1]?.trim() || null
