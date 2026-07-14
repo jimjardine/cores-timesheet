@@ -1191,68 +1191,71 @@ export default function Reports() {
                 <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                   <colgroup>
-                    <col style={{ width: '15%' }} />
-                    <col style={{ width: '9%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '22%' }} />
+                    <col style={{ width: '13%' }} />
                     <col />
                   </colgroup>
                   <thead>
                     <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5' }}>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Day</th>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Date</th>
-                      <th style={thStyle}>Total</th>
-                      <th style={thStyle}>Reg</th>
-                      <th style={{ ...thStyle, color: '#c0392b' }}>OT</th>
-                      <th style={{ ...thStyle, color: '#7a5c00' }}>Stat</th>
-                      <th style={{ ...thStyle, color: '#8B4513' }}>PD</th>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Job(s) &amp; Work Done</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Name</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Job</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Hours</th>
+                      <th style={{ ...thStyle, textAlign: 'left' }}>Details</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dayBreakdowns.map(({ ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }) => (
-                      <tr key={ymd} style={{ borderBottom: '1px solid #f0f0f0', background: isStat && dayHours > 0 ? '#fffbf0' : isToday ? '#f4fbf6' : isWeekend ? '#fafafa' : '#fff' }}>
-                        <td style={{ padding: '0.65rem 0.75rem', color: isWeekend ? '#bbb' : '#333', fontWeight: isToday ? 700 : 400 }}>
-                          {day.toLocaleDateString('en-GB', { weekday: 'long' })}
-                          {isStat && <span style={{ ...chip('#7a5c00', '#ffe082'), marginLeft: '0.4rem', fontSize: '0.7rem' }}>STAT</span>}
-                        </td>
-                        <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(day)}</td>
-                        <td style={{ ...tdC, fontWeight: 600, color: dayHours > 0 ? '#1a1a2e' : '#ddd' }}>{dayHours > 0 ? fmtHours(dayHours) : '—'}</td>
-                        <td style={{ ...tdC, color: regularHours > 0 ? '#2d6a38' : '#ddd' }}>{regularHours > 0 ? fmtHours(regularHours) : '—'}</td>
-                        <td style={{ ...tdC, color: otHours > 0 ? '#c0392b' : '#ddd', fontWeight: otHours > 0 ? 600 : 400 }}>{otHours > 0 ? fmtHours(otHours) : '—'}</td>
-                        <td style={{ ...tdC, color: isStat && dayHours > 0 ? '#7a5c00' : '#ddd' }}>{isStat && dayHours > 0 ? `+${statMultiplier}×` : '—'}</td>
-                        <td style={{ ...tdC, color: dayPerDiem > 0 ? '#8B4513' : '#ddd' }}>{dayPerDiem > 0 ? `×${dayPerDiem}` : '—'}</td>
-                        <td style={{ padding: '0.65rem 0.75rem' }}>
-                          {dayEntries.length === 0
-                            ? <span style={{ color: '#ccc', fontSize: '0.85rem' }}>No entries</span>
-                            : dayEntries.map(e => {
-                              const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
-                              return (
-                                <div key={e.id} style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.4rem', marginBottom: dayEntries.length > 1 ? '0.3rem' : 0 }}>
-                                  {payEmployeeIds.length > 1 && <span style={{ fontWeight: 600 }}>{e.employees?.name}:</span>}
-                                  <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
-                                  <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{e.jobs?.customers?.name}</span>
-                                  <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(reg)} reg</span>
-                                  {ot > 0 && <span style={chip('#c0392b', '#fbeaea')}>{fmtHours(ot)} OT</span>}
-                                  {e.description && <span style={{ color: '#777', fontSize: '0.85rem' }}>{e.description}</span>}
-                                </div>
-                              )
-                            })
-                          }
-                        </td>
-                      </tr>
+                      <React.Fragment key={ymd}>
+                        <tr style={{ background: isStat && dayHours > 0 ? '#fdf6e3' : isToday ? '#eaf7ee' : '#eef0f3' }}>
+                          <td colSpan={4} style={{ padding: '0.5rem 0.75rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.6rem' }}>
+                              <span style={{ fontWeight: 700, color: isWeekend ? '#999' : '#1a1a2e' }}>
+                                {day.toLocaleDateString('en-GB', { weekday: 'long' })}
+                              </span>
+                              <span style={{ color: '#888', fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(day)}</span>
+                              {isStat && <span style={chip('#7a5c00', '#ffe082')}>STAT +{statMultiplier}×</span>}
+                              <span style={{ flex: 1 }} />
+                              {dayHours > 0 && <span style={{ fontWeight: 700, color: '#1a1a2e', fontSize: '0.9rem' }}>{fmtHours(dayHours)} total</span>}
+                              {regularHours > 0 && <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(regularHours)} reg</span>}
+                              {otHours > 0 && <span style={chip('#c0392b', '#fbeaea')}>{fmtHours(otHours)} OT</span>}
+                              {dayPerDiem > 0 && <span style={chip('#8B4513', '#f3e7da')}>×{dayPerDiem} PD</span>}
+                            </div>
+                          </td>
+                        </tr>
+                        {dayEntries.length === 0 ? (
+                          <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td colSpan={4} style={{ padding: '0.6rem 0.75rem', color: '#ccc', fontSize: '0.85rem' }}>No entries</td>
+                          </tr>
+                        ) : dayEntries.map(e => {
+                          const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
+                          return (
+                            <tr key={e.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                              <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{e.employees?.name}</td>
+                              <td style={{ padding: '0.6rem 0.75rem' }}>
+                                <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
+                                <span style={{ color: '#aaa', fontSize: '0.85rem', marginLeft: '0.4rem' }}>{e.jobs?.customers?.name}</span>
+                              </td>
+                              <td style={{ padding: '0.6rem 0.75rem' }}>
+                                <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(reg)} reg</span>
+                                {ot > 0 && <span style={{ ...chip('#c0392b', '#fbeaea'), marginLeft: '0.3rem' }}>{fmtHours(ot)} OT</span>}
+                              </td>
+                              <td style={{ padding: '0.6rem 0.75rem', color: '#777', fontSize: '0.85rem' }}>{e.description || '—'}</td>
+                            </tr>
+                          )
+                        })}
+                      </React.Fragment>
                     ))}
                     <tr style={{ background: '#fafafa', borderTop: '1px solid #e5e5e5', fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: '0.65rem 0.75rem' }}>Total</td>
-                      <td style={{ ...tdC, fontWeight: 700 }}>{fmtHours(totalHours)}</td>
-                      <td style={{ ...tdC, color: '#2d6a38' }}>{fmtHours(totalRegular)}</td>
-                      <td style={{ ...tdC, color: totalOT > 0 ? '#c0392b' : '#aaa' }}>{fmtHours(totalOT)}</td>
-                      <td style={{ ...tdC, color: statDays.length > 0 ? '#7a5c00' : '#aaa' }}>{statDays.length > 0 ? statDays.length + ' day' + (statDays.length > 1 ? 's' : '') : '—'}</td>
-                      <td style={{ ...tdC, color: totalPerDiem > 0 ? '#8B4513' : '#aaa' }}>{totalPerDiem > 0 ? `×${totalPerDiem}` : '—'}</td>
-                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.8rem', fontWeight: 400 }}>{weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}</td>
+                      <td style={{ padding: '0.65rem 0.75rem' }}>{fmtHours(totalHours)}</td>
+                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.8rem', fontWeight: 400 }}>
+                        {fmtHours(totalRegular)} reg
+                        {totalOT > 0 && `, ${fmtHours(totalOT)} OT`}
+                        {statDays.length > 0 && `, ${statDays.length} stat day${statDays.length > 1 ? 's' : ''}`}
+                        {totalPerDiem > 0 && `, ×${totalPerDiem} PD`}
+                        {' '}· {weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
