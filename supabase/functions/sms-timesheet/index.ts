@@ -297,7 +297,7 @@ function calcOTBreakdown(entries: any[], dailyThreshold: number, alreadyWorked =
 
 // ── Claude parser ─────────────────────────────────────────────────────────────
 
-async function parseWithClaude(msgBody: string, today: string): Promise<any> {
+async function parseWithClaude(msgBody: string, today: string, askedQuestions: string[] = []): Promise<any> {
   const system = `You are a timesheet parser for a marine engineering company in Nova Scotia, Canada.
 Extract timesheet data from the worker's text and return ONLY valid JSON with no explanation or markdown.
 
@@ -325,10 +325,12 @@ Rules:
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string or SHOP", hours:number|null, description:"verbatim from message"}] — only real job work. Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
-- supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase.
+- supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase. The reverse also holds: a job's work description is not a supply. "4760 2hrs seals" or "6hrs bearings" describes the work done — extract supplies ONLY when the text presents them as materials used/consumed ("used 2 cans of brake cleaner", "supplies: wire brush x2", "grabbed a roll of tape"), never from a bare work description.
 - is_help_request: true only if the entire message is a help request
 
-Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).`
+Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.length ? `
+
+CONTEXT: Earlier in this conversation we asked the worker: ${askedQuestions.map(q => `"${q}"`).join(' and ')}. If this message reads as a direct answer to one of those questions, parse it that way. In particular, an answer to the supplies question often names items and quantities with no job number and without the word "supplies" (e.g. "Yes 3 cans of #44 red" → supplies: [{"job_number":"","supply_name":"#44 red","quantity":3}]). Never invent supplies or timesheet data the message does not contain.` : ''}`
 
   const payload = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -704,6 +706,31 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // ── Find any in-progress conversation BEFORE parsing ──
+  // A 'collecting' conversation is a question still awaiting this exact reply — there's only
+  // ever one truly in-progress per phone, so match on phone alone, not work_date. A follow-up
+  // reply ("no supplies", "no pd") often doesn't repeat whatever date the original report was
+  // for, so requiring work_date to match today would miss a backdated report's open question
+  // entirely and start a brand new (wrongly-attributed) submission instead.
+  //
+  // Fetched before the Claude parse so the parser can be told what we asked: a reply like
+  // "Yes 3 cans of #44 red" only parses as supplies if Claude knows a supplies question is
+  // what it's answering.
+  let submission: any = null
+  {
+    const { data: byPhone } = await supabase
+      .from('sms_submissions').select('*')
+      .eq('from_phone', fromPhone).eq('status', 'collecting')
+      .order('created_at', { ascending: false }).limit(1)
+    if (byPhone?.length) submission = byPhone[0]
+  }
+  // asked_questions (never cleared) rather than pending_questions (cleared on submit and by
+  // SMS Review edits) — so the context survives Nicki editing the record mid-conversation.
+  const parseContext: string[] = Array.from(new Set([
+    ...(submission?.pending_questions || []),
+    ...(submission?.asked_questions || []),
+  ]))
+
   // ── Parse with Claude ──
   let parsed: any = {
     entries: [], supplies: [], name_override: null, work_date: null,
@@ -713,7 +740,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    parsed = await parseWithClaude(msgBody, today)
+    parsed = await parseWithClaude(msgBody, today, parseContext)
   } catch (_e) {
     const r = "Couldn't read that one. Reply HELP for the format, or text Nicki directly."
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
@@ -741,33 +768,27 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Work date ──
-  const workDate = parsed.work_date || today
+  // A follow-up answer ("none", "no pd") to an open question never states a date, so it
+  // must inherit the conversation's work_date — falling back to today would silently move
+  // a backdated report ("forgot to send yesterday...") to the wrong day when the tech
+  // answers the supplies/lunch/PD question. Fresh reports (no open question) still
+  // default to today. The record save writes work_date back, so getting this wrong
+  // doesn't just mislabel the reply — it re-dates the whole submission.
+  const openQuestionDate = (submission?.pending_questions || []).length > 0 && submission?.work_date
+    ? String(submission.work_date).substring(0, 10)
+    : null
+  const workDate = parsed.work_date || openQuestionDate || today
 
-  // ── Find existing submission ──
-  // A 'collecting' conversation is a question still awaiting this exact reply — there's only
-  // ever one truly in-progress per phone, so match on phone alone, not work_date, for the
-  // phone-based lookup specifically. A follow-up reply ("no supplies", "no pd") often doesn't
-  // repeat whatever date the original report was for, so requiring work_date to match today
-  // would miss a backdated report's open question entirely and start a brand new (wrongly-
-  // attributed) submission instead.
-  //
+  // ── Find existing submission (continued from the pre-parse phone lookup above) ──
   // The employee-id fallback (different phone, same person — e.g. borrowed someone else's
   // phone) stays scoped to work_date: without that, two genuinely unrelated conversations that
   // happen to share the same "This is X" name on different days/phones would incorrectly merge.
-  let submission: any = null
-  {
-    const { data: byPhone } = await supabase
+  if (!submission && employeeId) {
+    const { data: byEmp } = await supabase
       .from('sms_submissions').select('*')
-      .eq('from_phone', fromPhone).eq('status', 'collecting')
+      .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'collecting')
       .order('created_at', { ascending: false }).limit(1)
-    if (byPhone?.length) submission = byPhone[0]
-    else if (employeeId) {
-      const { data: byEmp } = await supabase
-        .from('sms_submissions').select('*')
-        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'collecting')
-        .order('created_at', { ascending: false }).limit(1)
-      if (byEmp?.length) submission = byEmp[0]
-    }
+    if (byEmp?.length) submission = byEmp[0]
   }
 
   // A 'submitted' conversation (correction/reopen flow) does need to match the specific day —
@@ -792,9 +813,15 @@ Deno.serve(async (req: Request) => {
   // Whether we re-opened a previously submitted record (correction flow)
   const isCorrection = !!(submission && submission.status === 'submitted' && !isFollowUp)
 
-  // For follow-ups, Claude sees a one-word reply with no context about what was asked.
-  // If the pending question was about per diem / lunch and the reply is a simple negative,
-  // override Claude's null so we don't keep re-asking.
+  // How the supplies question was answered when nothing was itemized: 'photo' = the tech
+  // said the supplies are in a gear photo, 'none' = explicitly no supplies. Persisted on the
+  // submission — supplies:[] alone can't distinguish "answered: none" from "never answered",
+  // which is what used to make a reopened conversation re-ask a question already answered.
+  let suppliesNote: string | null = submission?.supplies_note || null
+
+  // For follow-ups, Claude may see a one-word reply with little context about what was asked.
+  // If the pending question was about per diem / lunch / supplies and the reply is a simple
+  // negative, override Claude's null so we don't keep re-asking.
   if (isFollowUp) {
     const pendQ = (submission?.pending_questions || []).join(' ').toLowerCase()
     const isNegative = /^(no|nope|nah|none|n\/a|not tonight|going home|in the shop|at the shop|local|worked in the shop)$/i.test(msgBody.trim())
@@ -803,6 +830,9 @@ Deno.serve(async (req: Request) => {
     }
     if (pendQ.includes('lunch') && parsed.lunch_minutes == null && isNegative) {
       parsed.lunch_minutes = 0
+    }
+    if (pendQ.includes('supplies') && (parsed.supplies || []).length === 0 && isNegative) {
+      suppliesNote = 'none'
     }
   }
 
@@ -914,13 +944,15 @@ Deno.serve(async (req: Request) => {
   const missingLunch    = mergedLunch == null
   const missingPerDiem  = mergedPerDiem == null
 
-  // Ask about supplies the same way lunch/per diem are asked about — every time,
-  // if none were mentioned in the original text.
-  const missingSupplies = allSupplies.length === 0
   // "I used shop supplies, I took a picture of them" has no itemized name/qty to log, so it
   // otherwise looks identical to not having answered at all — but the tech DID answer, just
   // via the gear-photos flow instead of naming an item in text. Don't keep asking.
-  const suppliesNotedViaPhoto = missingSupplies && /\b(pic|pics|picture|pictures|photo|photos)\b/i.test(msgBody)
+  if (allSupplies.length === 0 && /\b(pic|pics|picture|pictures|photo|photos)\b/i.test(msgBody)) {
+    suppliesNote = 'photo'
+  }
+  // Supplies count as answered when itemized OR noted ('photo'/'none') — the note persists,
+  // so a later correction text never resurrects the question.
+  const missingSupplies = allSupplies.length === 0 && !suppliesNote
 
   // Fields Nicki will need to fill in (shown in review screen)
   const flags: string[] = []
@@ -950,39 +982,52 @@ Deno.serve(async (req: Request) => {
     flags.push('no job entries — needs manual entry')
 
   } else if (missingLunch || missingPerDiem || missingSupplies) {
-    // Ask for missing fields. On the first ask we bundle both; on subsequent asks we only
-    // re-ask fields that were the sole pending question last time (i.e. we already gave them
-    // one full round dedicated to that field — now just submit).
+    // Ask for missing fields — but each field gets asked a bounded number of times, EVER,
+    // per conversation. First contact bundles every missing field into one question; while
+    // that exact question is still the live pending one, an unanswered field may be re-asked
+    // once more (unless it was already the sole question — that was its dedicated round).
+    // Once the conversation has moved on — a correction text reopened a submitted record, or
+    // Nicki edited it in SMS Review (which clears pending_questions) — a previously-asked
+    // question is NEVER asked again, just flagged for Nicki. asked_questions is the durable
+    // record of what's been asked; pending_questions only tracks the live round.
     const prevPendingQuestions: string[] = submission?.pending_questions || []
-    const pdWasAloneLastTime  = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('per diem')
-    const lunchWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('lunch')
-    const suppliesWasAloneLastTime = prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes('supplies')
-    const shouldAskPD       = missingPerDiem   && !pdWasAloneLastTime
-    const shouldAskLunch    = missingLunch     && !lunchWasAloneLastTime
-    const shouldAskSupplies = missingSupplies  && !suppliesWasAloneLastTime && !suppliesNotedViaPhoto
+    const prevAsked: string[] = submission?.asked_questions || []
+    const everAsked  = (kw: string) => prevAsked.some((q) => q.toLowerCase().includes(kw))
+    const pendingHas = (kw: string) => prevPendingQuestions.some((q) => q.toLowerCase().includes(kw))
+    const wasAlone   = (kw: string) => prevPendingQuestions.length === 1 && prevPendingQuestions[0].toLowerCase().includes(kw)
+    const mayAsk     = (kw: string) => !everAsked(kw) || (isFollowUp && pendingHas(kw) && !wasAlone(kw))
+    const shouldAskPD       = missingPerDiem  && mayAsk('per diem')
+    const shouldAskLunch    = missingLunch    && mayAsk('lunch')
+    const shouldAskSupplies = missingSupplies && mayAsk('supplies')
 
     if (shouldAskLunch || shouldAskPD || shouldAskSupplies) {
       const qs: string[] = []
       if (shouldAskLunch)    qs.push('lunch? ("lunch 30" or "no lunch")')
       if (shouldAskPD)       qs.push('per diem tonight? (location or "no PD")')
       if (shouldAskSupplies) qs.push('any shop supplies used? (e.g. "brake cleaner x1") or "none"')
-      const entrySummary = allEntriesWithOT.map((e: any) => `${e.job_number} ${e.hours}hrs`).join(', ')
+      // Entries with no hours yet render as just the job number — "4784 nullhrs" reads broken.
+      const entrySummary = allEntriesWithOT.map((e: any) =>
+        Number(e.hours) > 0 ? `${e.job_number} ${e.hours}hrs` : e.job_number).join(', ')
       reply = isFollowUp
         ? `Question: ${qs.join(' | ')}`
         : `Got it ${firstName} — ${entrySummary}\n\nQuestion: ${qs.join(' | ')}`
       pendingQuestions = qs
     } else {
-      // Already asked those questions individually — accept what we have
+      // Every remaining question has already had its chance — accept what we have
       nextStatus = 'submitted'
       if (missingLunch)    flags.push('lunch unknown')
       if (missingPerDiem)  flags.push('per diem unknown')
-      if (missingSupplies) flags.push(suppliesNotedViaPhoto ? 'supplies used — see gear photo, not itemized by text' : 'supplies unknown')
+      if (missingSupplies) flags.push('supplies unknown')
     }
   }
+
 
   if (!reply) nextStatus = 'submitted'
 
   if (nextStatus === 'submitted' && !reply) {
+    if (allEntries.some((e: any) => !(Number(e.hours) > 0))) {
+      flags.push('job hours missing — need total hours or an out time')
+    }
     const date     = friendlyDate(workDate)
     const inFmt    = mergedTimeIn ? friendlyTime(mergedTimeIn) : '?'
     const outFmt   = mergedStatedOut ? friendlyTime(mergedStatedOut) : (calcOut ? friendlyTime(calcOut) : '?')
@@ -992,16 +1037,20 @@ Deno.serve(async (req: Request) => {
                    : ''
     const flagLine = flags.length ? `\n(Nicki will check: ${flags.join(', ')})` : ''
 
-    // Per-job OT breakdown lines
+    // Per-job OT breakdown lines — a job with no hours yet still gets a line
+    // (silently dropping it made the summary look like the work wasn't recorded)
     const entryLines = allEntriesWithOT
-      .filter((e: any) => Number(e.hours) > 0)
       .map((e: any) => {
+        if (!(Number(e.hours) > 0)) return `${e.job_number}: hrs TBD`
         if (e.ot_hours > 0) return `${e.job_number}: ${e.reg_hours}hrs reg + ${e.ot_hours}hrs OT`
         return `${e.job_number}: ${e.hours}hrs reg`
       }).join('\n')
 
     const totalOTToday  = Math.max(0, totalTodayHours - dailyOTThreshold)
-    const totalLine = alreadyWorkedHours > 0
+    // "Total: 0hrs reg" on a real day's report reads like the hours got lost — omit the
+    // total until there are computable hours (Nicki fills them in from the flags).
+    const totalLine = totalHours <= 0 ? ''
+      : alreadyWorkedHours > 0
       ? `Today total: ${totalTodayHours}hrs (${Math.min(totalTodayHours, dailyOTThreshold)}reg + ${totalOTToday > 0 ? totalOTToday + 'OT' : '0OT'}) — ${alreadyWorkedHours}hrs already logged`
       : totalOTHours > 0
         ? `Total: ${totalHours}hrs (${(totalHours - totalOTHours).toFixed(2).replace(/\.?0+$/, '')}reg + ${totalOTHours}OT)`
@@ -1010,6 +1059,8 @@ Deno.serve(async (req: Request) => {
     const supplyLine = allSupplies.length
       ? 'Supplies: ' + allSupplies.map((s: any) =>
           `${s.supply_name} x${s.quantity}${s.job_number ? ` (${s.job_number})` : ''}`).join(', ')
+      : suppliesNote === 'photo' ? 'Supplies: in your gear photo (Nicki will itemize)'
+      : suppliesNote === 'none'  ? 'No supplies'
       : ''
 
     reply = [
@@ -1042,7 +1093,11 @@ Deno.serve(async (req: Request) => {
     delta_minutes:      deltaMinutes,
     entries:            allEntriesWithOT,
     supplies:           allSupplies,
+    supplies_note:      allSupplies.length ? null : suppliesNote,
     pending_questions:  pendingQuestions,
+    // Durable ask history — the union of everything ever asked; never cleared, unlike
+    // pending_questions, so re-ask suppression survives submits and SMS Review edits.
+    asked_questions:    Array.from(new Set([...(submission?.asked_questions || []), ...pendingQuestions])),
     raw_messages:       allMsgs,
     status:             nextStatus,
     updated_at:         new Date().toISOString(),

@@ -398,6 +398,7 @@ export default function SmsReview() {
         if (!sub.entries || sub.entries.length === 0)  flags.push('no job entries')
         if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
         if (sub.per_diem_location == null)             flags.push('per diem unknown')
+        if ((!sub.supplies || sub.supplies.length === 0) && sub.supplies_note === 'photo') flags.push('📷 supplies in gear photo — itemize from Gear Photos tab')
         if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) flags.push(`time delta ${sub.delta_minutes > 0 ? '+' : ''}${sub.delta_minutes}min`)
         if (sub.status === 'collecting' && (sub.pending_questions || []).length > 0) {
           flags.push(`⏳ awaiting reply — ${sub.pending_questions.join(' | ')}`)
@@ -519,6 +520,13 @@ export default function SmsReview() {
                   </table>
                 ) : (
                   <div style={{ color: '#c00', marginBottom: '0.75rem', fontSize: '0.875rem' }}>No job entries</div>
+                )}
+
+                {/* Supplies answered without an itemized list ('photo'/'none') */}
+                {(!sub.supplies || sub.supplies.length === 0) && sub.supplies_note && (
+                  <div style={{ color: '#555', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+                    {sub.supplies_note === 'photo' ? '📷 Supplies in gear photo — not itemized by text' : 'No supplies used'}
+                  </div>
                 )}
 
                 {/* Supplies table */}
