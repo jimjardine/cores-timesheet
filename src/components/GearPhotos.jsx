@@ -100,23 +100,23 @@ export default function GearPhotos() {
           style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 180, marginLeft: '1rem' }}
         />
         <button
-          onClick={() => { setDateFilter(d => d === 'today' ? 'all' : 'today'); setCustomDate('') }}
+          onClick={() => {
+            if (dateFilter === 'all') { setDateFilter('today'); setCustomDate('') }
+            else { setDateFilter('all'); setCustomDate('') }
+          }}
           style={{
             padding: '0.4rem 0.9rem', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
-            background: dateFilter === 'today' ? '#0066cc' : '#fff',
-            color: dateFilter === 'today' ? '#fff' : '#333',
-            borderColor: dateFilter === 'today' ? '#0066cc' : '#ccc',
+            background: dateFilter !== 'all' ? '#0066cc' : '#fff',
+            color: dateFilter !== 'all' ? '#fff' : '#333',
+            borderColor: dateFilter !== 'all' ? '#0066cc' : '#ccc',
           }}
-        >Today</button>
+        >{dateFilter === 'all' ? 'Today' : 'Clear'}</button>
         <input
           type="date"
           value={customDate}
           onChange={e => { setCustomDate(e.target.value); setDateFilter(e.target.value ? 'custom' : 'all') }}
           style={{ padding: '0.35rem 0.5rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
         />
-        {dateFilter !== 'all' && (
-          <span onClick={() => { setDateFilter('all'); setCustomDate('') }} style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.8rem' }}>clear date</span>
-        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {filterBtn('all', 'All')}
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
