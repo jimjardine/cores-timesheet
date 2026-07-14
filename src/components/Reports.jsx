@@ -3,7 +3,6 @@ import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
-import { generateWeeklyCompilationPDF, fmtShortDate, fmtHeaderDate, dayName, isWeekend } from '../utils/weeklyCompilationPdf'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -19,15 +18,6 @@ function getPayWeekStart(date) {
   d.setHours(0, 0, 0, 0)
   return d
 }
-function getPayWeekDays(s) {
-  return Array.from({ length: 7 }, (_, i) => { const d = new Date(s); d.setDate(d.getDate() + i); return d })
-}
-function recentPayWeeks(n = 8) {
-  const weeks = []; let s = getPayWeekStart(new Date())
-  for (let i = 0; i < n; i++) { weeks.push(new Date(s)); s.setDate(s.getDate() - 7) }
-  return weeks
-}
-function fmtDate(d) { return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) }
 // Local calendar date — toISOString() is UTC and rolls to tomorrow after 9pm Atlantic
 function toYMD(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
@@ -42,13 +32,11 @@ export default function Reports() {
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
-  const [postedWeeks, setPostedWeeks] = useState({})
 
   // Navigation
   const [activeTab, setActiveTab] = useState('jobs')
   const [selectedJob, setSelectedJob] = useState(null)
   const [selectedEmployee, setSelectedEmployee] = useState(null)
-  const [viewingWeeklyCompilation, setViewingWeeklyCompilation] = useState(null)
   const [navHistory, setNavHistory] = useState([])
 
   // Global job status filter
@@ -62,13 +50,6 @@ export default function Reports() {
   const [employeeFilterIds, setEmployeeFilterIds] = useState([])
   const employeeFilterIdsDefaulted = useRef(false)
 
-  // Payroll tab
-  const payWeeks = recentPayWeeks(8)
-  const [payWeekStart, setPayWeekStart] = useState(payWeeks[0])
-
-  const [payEmployeeIds, setPayEmployeeIds] = useState([])
-  const payEmployeeIdsDefaulted = useRef(false)
-  const [payEmpDropdownOpen, setPayEmpDropdownOpen] = useState(false)
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
 
@@ -110,18 +91,7 @@ export default function Reports() {
 
   useEffect(() => { loadAll() }, [])
 
-  // Default the Payroll tab's employee filter to everyone (matching whatever the
-  // "only show items with time logged" toggle currently allows) the first time
-  // employee data loads — but only once, so it never overrides a user's own
-  // selection afterward.
-  useEffect(() => {
-    if (payEmployeeIdsDefaulted.current || employees.length === 0) return
-    payEmployeeIdsDefaulted.current = true
-    const withEntries = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
-    setPayEmployeeIds(withEntries.map(e => e.id))
-  }, [employees, entries, hideEmptyOptions])
-
-  // Same defaulting for the By Employee tab's filter — pre-populate with everyone so
+  // Default the By Employee tab's filter — pre-populate with everyone so
   // "Clear" unambiguously means "show no one" instead of overloading an empty
   // selection to mean "no filter, show everyone".
   useEffect(() => {
@@ -133,7 +103,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes, postedRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes] = await Promise.all([
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*').order('name'),
@@ -143,7 +113,6 @@ export default function Reports() {
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
-      supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at'),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -154,24 +123,7 @@ export default function Reports() {
     setGearPhotos(gearPhotosRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
-    setPostedWeeks(Object.fromEntries((postedRes.data || []).map(r => [`${r.employee_id}|${r.week_start}`, r.posted_at])))
     setLoading(false)
-  }
-
-  function postedKey(empId, weekStart) { return `${empId}|${weekStart}` }
-
-  async function togglePosted(empId, weekStart) {
-    const key = postedKey(empId, weekStart)
-    if (postedWeeks[key]) {
-      const { error } = await supabase.schema('Cores').from('weekly_summary_posted').delete().eq('employee_id', empId).eq('week_start', weekStart)
-      if (error) { alert('Error updating posted status: ' + error.message); return }
-      setPostedWeeks(p => { const n = { ...p }; delete n[key]; return n })
-    } else {
-      const { data, error } = await supabase.schema('Cores').from('weekly_summary_posted')
-        .insert({ employee_id: empId, week_start: weekStart }).select().single()
-      if (error) { alert('Error updating posted status: ' + error.message); return }
-      setPostedWeeks(p => ({ ...p, [key]: data.posted_at }))
-    }
   }
 
   // ── Filtering ──
@@ -257,55 +209,6 @@ export default function Reports() {
     link.click()
   }
 
-  function downloadWeeklySummary() {
-    const weekEnd = new Date(payWeekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
-    const weekStart = toYMD(payWeekStart)
-    const weekEndStr = toYMD(weekEnd)
-
-    // Get entries for this week
-    const weekEntries = entries.filter(e => e.work_date >= weekStart && e.work_date <= weekEndStr)
-    const empIds = [...new Set(weekEntries.map(e => e.employee_id))]
-    const otMap = computeAllOT(weekEntries)
-
-    // Group by employee
-    const byEmp = {}
-    weekEntries.forEach(e => {
-      if (!byEmp[e.employee_id]) byEmp[e.employee_id] = []
-      byEmp[e.employee_id].push(e)
-    })
-
-    const rows = ['Employee,Total Hours,Reg Hours,OT Hours,Per Diem,Job Numbers,Hours by Job,Supplies Used']
-    empIds.forEach(eid => {
-      const emp = employees.find(e => e.id === eid)
-      const empEntries = byEmp[eid] || []
-      // job_supplies rows carry their own employee_id + work_date — match on those
-      const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
-
-      const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
-      const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
-      const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
-      // per_diem is a per-entry multiplier — sum it across the week (matches Payroll tab)
-      const perDiem = empEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
-      const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
-      const jobHours = empEntries.map(e => `${e.jobs?.job_number}:${e.hours}hrs`).join(' | ')
-      const suppliesStr = empSupplies.length > 0 ? empSupplies.map(s => `${s.supply_name}x${s.quantity}`).join('; ') : 'none'
-
-      rows.push([
-        emp?.name || 'Unknown',
-        totalHours.toFixed(2),
-        regHours.toFixed(2),
-        otHours.toFixed(2),
-        perDiem > 0 ? perDiem : 'none',
-        jobNums,
-        jobHours,
-        suppliesStr
-      ].map(v => `"${v}"`).join(','))
-    })
-
-    downloadCSV(rows, `weekly-summary-${weekStart}-to-${weekEndStr}.csv`)
-  }
-
   const dateFileSuffix = dateFrom && dateTo ? `${dateFrom}-to-${dateTo}`
     : dateFrom ? `from-${dateFrom}` : dateTo ? `to-${dateTo}` : 'all-time'
 
@@ -356,16 +259,7 @@ export default function Reports() {
     })
   }
 
-  // Single-week version used by payroll tab display
-  function computeEntryOT(weekEntries) {
-    return computeAllOT(weekEntries)
-  }
-
   function exportCurrentTab() {
-    // Weekly Summary has its own week-scoped export — delegate so the shared
-    // tab-bar button isn't a silent no-op there
-    if (activeTab === 'weekly-summary') { downloadWeeklySummary(); return }
-
     const otMap = computeAllOT(filteredEntries)
 
     if (activeTab === 'jobs') {
@@ -454,31 +348,6 @@ export default function Reports() {
         rows.push([emp.name, empJobs.size, fmtHours(totalHrs), fmtHours(totalReg), fmtHours(totalOT), totalPD, `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
-    } else if (activeTab === 'payroll') {
-      const weekEnd = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
-      const days = getPayWeekDays(payWeekStart)
-      const weekDates = new Set(days.map(toYMD))
-      const weekEntries = entries.filter(e => payEmployeeIds.includes(e.employee_id) && weekDates.has(e.work_date))
-      const otMap = computeEntryOT(weekEntries)
-      const rows = ['Employee,Day,Date,Job #,Customer,Total Hours,Reg Hours,OT Hours,Per Diem,Description,Week From,Week To']
-      weekEntries
-        .sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1))
-        .forEach(e => {
-          const { reg = 0, ot = 0 } = otMap[e.id] || {}
-          rows.push([
-            e.employees?.name,
-            new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' }),
-            e.work_date, e.jobs?.job_number, e.jobs?.customers?.name,
-            fmtHours(e.hours), fmtHours(reg), fmtHours(ot),
-            Number(e.per_diem || 0),
-            `"${(e.description || '').replace(/"/g, '""')}"`,
-            toYMD(payWeekStart), toYMD(weekEnd),
-          ].join(','))
-        })
-      const fileTag = payEmployeeIds.length === 1
-        ? (employees.find(e => e.id === payEmployeeIds[0])?.name?.replace(/\s+/g, '-') || 'unknown')
-        : payEmployeeIds.length === employees.length ? 'everyone' : `${payEmployeeIds.length}-employees`
-      downloadCSV(rows, `payroll-${fileTag}-${toYMD(payWeekStart)}.csv`)
     }
   }
 
@@ -689,104 +558,6 @@ export default function Reports() {
     )
   }
 
-  // ── Weekly Compilation (on-screen match of the printed PDF) ──
-  if (viewingWeeklyCompilation) {
-    const { emp, days, weekStart } = viewingWeeklyCompilation
-    const isPosted = !!postedWeeks[postedKey(emp.id, weekStart)]
-    const totalReg = days.reduce((s, d) => s + Number(d.regHours || 0), 0)
-    const totalOT = days.reduce((s, d) => s + Number(d.otHours || 0), 0)
-    const totalPD = days.reduce((s, d) => s + Number(d.perDiems || 0), 0)
-    const thStyleWc = { padding: '0.6rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', fontWeight: 700, borderBottom: '2px solid #333' }
-    const tdStyleWc = { padding: '0.5rem', borderBottom: '1px solid #eee' }
-
-    return (
-      <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-          <button onClick={() => setViewingWeeklyCompilation(null)} style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
-            ← Weekly Summary
-          </button>
-          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days, posted: isPosted })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
-            Download PDF
-          </button>
-          <button
-            onClick={() => togglePosted(emp.id, weekStart)}
-            style={{
-              marginLeft: 'auto', padding: '0.4rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
-              border: isPosted ? '1px solid #2d6a38' : '1px solid #ccc',
-              background: isPosted ? '#e6f4ea' : '#fff',
-              color: isPosted ? '#2d6a38' : '#555',
-            }}
-          >
-            {isPosted ? `✓ Posted — ${new Date(postedWeeks[postedKey(emp.id, weekStart)]).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Mark as Posted'}
-          </button>
-        </div>
-
-        <div style={{ ...card, padding: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.03em' }}>CORES</div>
-              <div style={{ fontSize: '0.6rem', letterSpacing: '0.1em', color: '#888' }}>WORLDWIDE</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontWeight: 700, fontSize: '1.25rem' }}>WEEKLY COMPILATION</div>
-              <div style={{ fontWeight: 700, fontSize: '1.25rem' }}>DAILY WORK HOURS</div>
-            </div>
-            <div style={{ width: 70 }} />
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid #ddd', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <div><strong>NAME:</strong> {emp.name}</div>
-            <div style={{ display: 'flex', gap: '1.5rem' }}>
-              <div><strong>From</strong> {fmtHeaderDate(days[0].date)}</div>
-              <div><strong>To</strong> {fmtHeaderDate(days[6].date)}</div>
-            </div>
-          </div>
-
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={thStyleWc}>Day</th>
-                <th style={thStyleWc}>Date</th>
-                <th style={{ ...thStyleWc, textAlign: 'right' }}>Reg Hours</th>
-                <th style={{ ...thStyleWc, textAlign: 'right' }}>O/T Hours</th>
-                <th style={{ ...thStyleWc, textAlign: 'right' }}>Per Diems</th>
-                <th style={{ ...thStyleWc, textAlign: 'center' }}>Posted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {days.map(d => {
-                const weekend = isWeekend(d.date)
-                return (
-                  <tr key={d.date} style={weekend ? { background: '#fafafa' } : {}}>
-                    <td style={tdStyleWc}>{dayName(d.date)}</td>
-                    <td style={{ ...tdStyleWc, color: '#888' }}>{fmtShortDate(d.date)}</td>
-                    <td style={{ ...tdStyleWc, textAlign: 'right', color: weekend ? '#ccc' : '#2d6a38' }}>
-                      {weekend ? '—' : (d.regHours ? fmtHours(d.regHours) : '')}
-                    </td>
-                    <td style={{ ...tdStyleWc, textAlign: 'right', background: weekend ? '#e5e5e5' : 'transparent', color: d.otHours ? '#c0392b' : '#ccc', fontWeight: d.otHours ? 600 : 400 }}>
-                      {d.otHours ? fmtHours(d.otHours) : ''}
-                    </td>
-                    <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{d.perDiems || ''}</td>
-                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700 }}>{isPosted ? '✓' : ''}</td>
-                  </tr>
-                )
-              })}
-              <tr style={{ fontWeight: 700, borderTop: '2px solid #333' }}>
-                <td colSpan={2} style={tdStyleWc}>TOTAL</td>
-                <td style={{ ...tdStyleWc, textAlign: 'right', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
-                <td style={{ ...tdStyleWc, textAlign: 'right', color: totalOT ? '#c0392b' : '#333' }}>{fmtHours(totalOT)}</td>
-                <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{totalPD || ''}</td>
-                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{isPosted ? '✓' : ''}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div style={{ fontSize: '0.7rem', color: '#aaa', marginTop: '1.5rem' }}>Document# CW-OAD-F002 rev.0</div>
-        </div>
-      </div>
-    )
-  }
-
   // ── Normal tab views ──
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
@@ -854,7 +625,7 @@ export default function Reports() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {['jobs', 'customer', 'vessel', 'employee', 'payroll', 'weekly-summary'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee', payroll: 'Payroll', 'weekly-summary': 'Weekly Summary' }[t]))}
+        {['jobs', 'customer', 'vessel', 'employee'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee' }[t]))}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
           {tabExportBtn}
         </div>
@@ -1066,317 +837,6 @@ export default function Reports() {
           )}
         </div>
       )}
-
-      {/* ── Payroll ── */}
-      {activeTab === 'payroll' && (() => {
-        const dailyThreshold  = payrollConfig.daily_ot_threshold  ?? 8
-        const weeklyThreshold = payrollConfig.weekly_ot_threshold ?? 40
-        const otMultiplier    = payrollConfig.ot_multiplier        ?? 1.5
-        const statMultiplier  = payrollConfig.stat_multiplier ?? 1.5
-        const perDiemRate     = payrollConfig.per_diem_rate        ?? 0
-
-        const weekEnd    = new Date(payWeekStart); weekEnd.setDate(weekEnd.getDate() + 6)
-        const days       = getPayWeekDays(payWeekStart)
-        const weekDates  = new Set(days.map(toYMD))
-        const payEmpOptions = employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))
-        const weekEntries = entries.filter(e => payEmployeeIds.includes(e.employee_id) && weekDates.has(e.work_date))
-        const byDate     = weekEntries.reduce((acc, e) => { if (!acc[e.work_date]) acc[e.work_date] = []; acc[e.work_date].push(e); return acc }, {})
-
-        const entryOtMap = computeEntryOT(weekEntries)
-
-        // Day-level summary — derived from entry-level totals
-        const dayBreakdowns = days.map(day => {
-          const ymd        = toYMD(day)
-          const dayEntries = (byDate[ymd] || []).slice().sort((a, b) => (a.sort_order ?? 1) - (b.sort_order ?? 1))
-          const dayHours   = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
-          const dayPerDiem = dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
-          const isStat     = statHolidays.has(ymd)
-          const isToday    = ymd === toYMD(new Date())
-          const isWeekend  = day.getDay() === 0 || day.getDay() === 6
-          const regularHours = dayEntries.reduce((s, e) => s + (entryOtMap[e.id]?.reg ?? 0), 0)
-          const otHours      = dayEntries.reduce((s, e) => s + (entryOtMap[e.id]?.ot ?? 0), 0)
-
-          return { ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }
-        })
-
-        const totalHours   = dayBreakdowns.reduce((s, d) => s + d.dayHours, 0)
-        const totalRegular = dayBreakdowns.reduce((s, d) => s + d.regularHours, 0)
-        const totalOT      = dayBreakdowns.reduce((s, d) => s + d.otHours, 0)
-        const totalPerDiem = dayBreakdowns.reduce((s, d) => s + d.dayPerDiem, 0)
-        // Flag stat days with hours actually WORKED (the auto 8-hr stat-pay entry doesn't count)
-        const statDays     = dayBreakdowns.filter(d => d.isStat && d.dayEntries.some(e => !e.is_stat_pay))
-
-        const thStyle = { padding: '0.65rem 0.75rem', textAlign: 'center', fontWeight: 600, color: '#555', whiteSpace: 'nowrap', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }
-        const tdC     = { padding: '0.65rem 0.75rem', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }
-        const chip = (color, bg) => ({ display: 'inline-block', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, color, background: bg })
-
-        return (
-          <div>
-            {/* Selectors */}
-            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <div style={{ position: 'relative' }}>
-                <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Employee</label>
-                <button
-                  onClick={() => setPayEmpDropdownOpen(o => !o)}
-                  style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '220px', textAlign: 'left', background: '#fff', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: payEmployeeIds.length ? '#333' : '#999' }}>
-                    {payEmployeeIds.length === 0
-                      ? '— select —'
-                      : payEmployeeIds.length === payEmpOptions.length
-                        ? 'Everyone'
-                        : payEmployeeIds.length <= 2
-                          ? payEmployeeIds.map(id => employees.find(e => e.id === id)?.name).filter(Boolean).join(', ')
-                          : `${payEmployeeIds.length} selected`}
-                  </span>
-                  <span style={{ color: '#aaa' }}>▾</span>
-                </button>
-                {payEmpDropdownOpen && (
-                  <>
-                    <div onClick={() => setPayEmpDropdownOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
-                    <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '0.25rem', background: '#fff', border: '1px solid #ccc', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', width: '260px', maxHeight: '320px', overflowY: 'auto', zIndex: 20 }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid #eee' }}>
-                        <button onClick={() => setPayEmployeeIds(payEmpOptions.map(e => e.id))} style={{ background: 'none', border: 'none', color: '#0066cc', cursor: 'pointer', fontSize: '0.82rem', padding: 0 }}>Select all</button>
-                        <button onClick={() => setPayEmployeeIds([])} style={{ background: 'none', border: 'none', color: '#0066cc', cursor: 'pointer', fontSize: '0.82rem', padding: 0 }}>Clear</button>
-                      </div>
-                      {payEmpOptions.map(e => (
-                        <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 0.75rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={payEmployeeIds.includes(e.id)}
-                            onChange={ev => setPayEmployeeIds(prev => ev.target.checked ? [...prev, e.id] : prev.filter(id => id !== e.id))}
-                          />
-                          {e.name}
-                        </label>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-              <div>
-                <label style={{ display: 'block', color: '#555', fontWeight: 600, marginBottom: '0.4rem' }}>Pay Week</label>
-                <select value={toYMD(payWeekStart)} onChange={e => setPayWeekStart(new Date(e.target.value + 'T12:00:00'))} style={{ padding: '0.5rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '230px' }}>
-                  {payWeeks.map(w => { const end = new Date(w); end.setDate(end.getDate() + 6); return <option key={toYMD(w)} value={toYMD(w)}>Thu {fmtDate(w)} – Wed {fmtDate(end)}</option> })}
-                </select>
-              </div>
-            </div>
-
-            {payEmployeeIds.length === 0 ? (
-              <div style={{ ...card, textAlign: 'center', padding: '3rem', color: '#aaa' }}>Select one or more employees to view the pay week</div>
-            ) : (
-              <>
-                {/* Summary bar */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-                  {[
-                    { label: 'Total Hours',   value: fmtHours(totalHours),   color: '#1a1a2e' },
-                    { label: `Regular (≤${dailyThreshold}h/day, ≤${weeklyThreshold}h/wk)`, value: fmtHours(totalRegular), color: '#2d6a38' },
-                    { label: `OT @ ${otMultiplier}×`, value: fmtHours(totalOT), color: '#c0392b' },
-                    { label: `Per Diem${perDiemRate > 0 ? ` ($${(totalPerDiem * perDiemRate).toFixed(2)})` : ''}`, value: totalPerDiem > 0 ? `×${totalPerDiem}` : '—', color: '#8B4513' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} style={card}>
-                      <div style={{ fontSize: '1.6rem', fontWeight: 700, color }}>{value}</div>
-                      <div style={{ color: '#888', fontSize: '0.8rem', marginTop: '0.2rem' }}>{label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Stat holiday notice */}
-                {statDays.length > 0 && (
-                  <div style={{ marginBottom: '1rem', padding: '0.6rem 1rem', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '6px', fontSize: '0.9rem', color: '#7a5c00' }}>
-                    Worked on stat holiday{statDays.length > 1 ? 's' : ''} this week (8h stat pay granted separately; worked hours are OT):
-                    {' '}{statDays.map(d => `${d.day.toLocaleDateString('en-GB', { weekday: 'short' })} ${fmtDate(d.day)} — ${d.day.toLocaleDateString('en-GB', { month: 'long', day: 'numeric' })}`).join(', ')}
-                  </div>
-                )}
-
-                {/* Day-by-day table */}
-                <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-                  <colgroup>
-                    <col style={{ width: '18%' }} />
-                    <col style={{ width: '22%' }} />
-                    <col style={{ width: '13%' }} />
-                    <col />
-                  </colgroup>
-                  <thead>
-                    <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5' }}>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Name</th>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Job</th>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Hours</th>
-                      <th style={{ ...thStyle, textAlign: 'left' }}>Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dayBreakdowns.map(({ ymd, day, dayEntries, dayHours, regularHours, otHours, isStat, dayPerDiem, isToday, isWeekend }) => (
-                      <React.Fragment key={ymd}>
-                        <tr style={{ background: isStat && dayHours > 0 ? '#fdf6e3' : isToday ? '#eaf7ee' : '#eef0f3' }}>
-                          <td colSpan={4} style={{ padding: '0.5rem 0.75rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.6rem' }}>
-                              <span style={{ fontWeight: 700, color: isWeekend ? '#999' : '#1a1a2e' }}>
-                                {day.toLocaleDateString('en-GB', { weekday: 'long' })}
-                              </span>
-                              <span style={{ color: '#888', fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(day)}</span>
-                              {isStat && <span style={chip('#7a5c00', '#ffe082')}>STAT +{statMultiplier}×</span>}
-                              <span style={{ flex: 1 }} />
-                              {dayHours > 0 && <span style={{ fontWeight: 700, color: '#1a1a2e', fontSize: '0.9rem' }}>{fmtHours(dayHours)} total</span>}
-                              {regularHours > 0 && <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(regularHours)} reg</span>}
-                              {otHours > 0 && <span style={chip('#c0392b', '#fbeaea')}>{fmtHours(otHours)} OT</span>}
-                              {dayPerDiem > 0 && <span style={chip('#8B4513', '#f3e7da')}>×{dayPerDiem} PD</span>}
-                            </div>
-                          </td>
-                        </tr>
-                        {dayEntries.length === 0 ? (
-                          <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td colSpan={4} style={{ padding: '0.6rem 0.75rem', color: '#ccc', fontSize: '0.85rem' }}>No entries</td>
-                          </tr>
-                        ) : dayEntries.map(e => {
-                          const { reg = 0, ot = 0 } = entryOtMap[e.id] || {}
-                          return (
-                            <tr key={e.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                              <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{e.employees?.name}</td>
-                              <td style={{ padding: '0.6rem 0.75rem' }}>
-                                <span style={linkStyle} onClick={() => goToJob(jobs.find(j => j.id === e.job_id) || e.jobs)}>{e.jobs?.job_number}</span>
-                                <span style={{ color: '#aaa', fontSize: '0.85rem', marginLeft: '0.4rem' }}>{e.jobs?.customers?.name}</span>
-                              </td>
-                              <td style={{ padding: '0.6rem 0.75rem' }}>
-                                <span style={chip('#2d6a38', '#e9f5eb')}>{fmtHours(reg)} reg</span>
-                                {ot > 0 && <span style={{ ...chip('#c0392b', '#fbeaea'), marginLeft: '0.3rem' }}>{fmtHours(ot)} OT</span>}
-                              </td>
-                              <td style={{ padding: '0.6rem 0.75rem', color: '#777', fontSize: '0.85rem' }}>{e.description || '—'}</td>
-                            </tr>
-                          )
-                        })}
-                      </React.Fragment>
-                    ))}
-                    <tr style={{ background: '#fafafa', borderTop: '1px solid #e5e5e5', fontWeight: 700 }}>
-                      <td colSpan={2} style={{ padding: '0.65rem 0.75rem' }}>Total</td>
-                      <td style={{ padding: '0.65rem 0.75rem' }}>{fmtHours(totalHours)}</td>
-                      <td style={{ padding: '0.65rem 0.75rem', color: '#888', fontSize: '0.8rem', fontWeight: 400 }}>
-                        {fmtHours(totalRegular)} reg
-                        {totalOT > 0 && `, ${fmtHours(totalOT)} OT`}
-                        {statDays.length > 0 && `, ${statDays.length} stat day${statDays.length > 1 ? 's' : ''}`}
-                        {totalPerDiem > 0 && `, ×${totalPerDiem} PD`}
-                        {' '}· {weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                </div>
-              </>
-            )}
-          </div>
-        )
-      })()}
-
-      {/* ── Weekly Summary ── */}
-      {activeTab === 'weekly-summary' && (() => {
-        const weekEnd = new Date(payWeekStart)
-        weekEnd.setDate(weekEnd.getDate() + 6)
-        const weekStart = toYMD(payWeekStart)
-        const weekEndStr = toYMD(weekEnd)
-        const weekEntries = entries.filter(e => e.work_date >= weekStart && e.work_date <= weekEndStr)
-        const empIds = [...new Set(weekEntries.map(e => e.employee_id))]
-        const otMap = computeAllOT(weekEntries)
-        const weekDates = Array.from({ length: 7 }, (_, i) => { const d = new Date(payWeekStart); d.setDate(d.getDate() + i); return toYMD(d) })
-
-        const weekData = empIds.map(eid => {
-          const emp = employees.find(e => e.id === eid)
-          const empEntries = weekEntries.filter(e => e.employee_id === eid)
-          const totalHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
-          const regHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
-          const otHours = empEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0)
-          // per_diem is a per-entry multiplier — sum it across the week (matches Payroll tab)
-          const perDiem = empEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
-          const jobNums = [...new Set(empEntries.map(e => e.jobs?.job_number).filter(Boolean))].join(', ')
-          // job_supplies rows carry their own employee_id + work_date — match on those
-          const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
-          const days = weekDates.map(dateYMD => {
-            const dayEntries = empEntries.filter(e => e.work_date === dateYMD)
-            return {
-              date: dateYMD,
-              regHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
-              otHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0),
-              perDiems: dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0),
-            }
-          })
-          return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies, days }
-        }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
-
-        return (
-          <div>
-            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <label style={{ color: '#555', fontWeight: 600 }}>Pay Week:</label>
-                <select value={weekStart} onChange={e => setPayWeekStart(new Date(e.target.value + 'T12:00:00'))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                  {payWeeks.map(w => {
-                    const end = new Date(w); end.setDate(end.getDate() + 6)
-                    return <option key={toYMD(w)} value={toYMD(w)}>{fmtDate(w)} – {fmtDate(end)}</option>
-                  })}
-                </select>
-              </div>
-              <button onClick={() => downloadWeeklySummary()} style={{ padding: '0.4rem 1rem', background: '#2d6a38', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Download CSV</button>
-              {weekData.length > 0 && (
-                <button
-                  onClick={async () => {
-                    for (const row of weekData) {
-                      if (!row.emp) continue
-                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, posted: !!postedWeeks[postedKey(row.emp.id, weekStart)] })
-                      await new Promise(r => setTimeout(r, 300))
-                    }
-                  }}
-                  style={{ padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-                >Print All Weekly PDFs</button>
-              )}
-            </div>
-
-            {weekData.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No entries for this week</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies', 'Posted', ''].map(h => (
-                      <th key={h} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.9rem', fontWeight: 600, color: '#555' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {weekData.map((row, i) => {
-                    const isPosted = row.emp && !!postedWeeks[postedKey(row.emp.id, weekStart)]
-                    return (
-                    <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: 600, ...(row.emp ? linkStyle : {}) }} onClick={() => row.emp && setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}>{row.emp?.name || 'Unknown'}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>{fmtHours(row.totalHours)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(row.regHours)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'center', color: row.otHours > 0 ? '#c0392b' : '#ccc', fontWeight: row.otHours > 0 ? 600 : 400 }}>{fmtHours(row.otHours)}</td>
-                      <td style={{ padding: '0.75rem', color: row.perDiem > 0 ? '#8B4513' : '#555', fontSize: '0.9rem' }}>{row.perDiem > 0 ? `×${row.perDiem}` : '—'}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#0066cc' }}>{row.jobNums || '—'}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
-                      <td style={{ padding: '0.75rem' }}>
-                        {isPosted && (
-                          <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#e6f4ea', color: '#2d6a38', border: '1px solid #2d6a3844' }}>✓ Posted</span>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.75rem', display: 'flex', gap: '0.4rem' }}>
-                        {row.emp && (
-                          <>
-                            <button
-                              onClick={() => setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}
-                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
-                            >View</button>
-                            <button
-                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, posted: isPosted })}
-                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
-                            >PDF</button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )
-      })()}
 
       {photoGroup && (() => {
         const groupPhotos = photoGroup.photos
