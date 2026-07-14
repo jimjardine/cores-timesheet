@@ -399,6 +399,7 @@ export default function AdminDashboard() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const todayStr = toYMD(today)
     if (preset === 'all')        { setDateFrom(''); setDateTo(''); return }
+    if (preset === 'today')      { setDateFrom(todayStr); setDateTo(todayStr); return }
     if (preset === 'this-week')  { const s = getPayWeekStart(today); const e = new Date(s); e.setDate(e.getDate() + 6); setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return }
     if (preset === 'last-week')  { const s = getPayWeekStart(today); s.setDate(s.getDate() - 7); const e = new Date(s); e.setDate(e.getDate() + 6); setDateFrom(toYMD(s)); setDateTo(toYMD(e)); return }
     if (preset === 'this-month') { setDateFrom(toYMD(new Date(today.getFullYear(), today.getMonth(), 1))); setDateTo(toYMD(new Date(today.getFullYear(), today.getMonth() + 1, 0))); return }
@@ -887,7 +888,7 @@ export default function AdminDashboard() {
                 onChange={ids => { setFilterEmployeeIds(ids); setSelectedEmp(null); setSelectedDate(null) }}
                 placeholder="All employees" allLabel="All employees" />
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                {[['all','All time'],['this-week','This pay week'],['last-week','Last pay week'],['this-month','This month'],['last-30','Last 30 days'],['custom','Custom']].map(([key, label]) => (
+                {[['all','All time'],['today','Today'],['this-week','This pay week'],['last-week','Last pay week'],['this-month','This month'],['last-30','Last 30 days'],['custom','Custom']].map(([key, label]) => (
                   <button key={key} onClick={() => applyPreset(key)} style={{
                     padding: '0.4rem 1rem', fontSize: '0.875rem', border: '1.5px solid',
                     borderColor: datePreset === key ? '#0066cc' : '#d1d5db', borderRadius: '999px', cursor: 'pointer',
