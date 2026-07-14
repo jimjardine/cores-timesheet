@@ -779,7 +779,18 @@ export default function AdminDashboard() {
             Download PDF
           </button>
           <button
-            onClick={() => togglePosted(emp.id, weekStart)}
+            onClick={() => {
+              if (!isPosted) {
+                const weekEndDate = new Date(weekStart + 'T12:00:00')
+                weekEndDate.setDate(weekEndDate.getDate() + 6)
+                const today = new Date(); today.setHours(0, 0, 0, 0)
+                if (weekEndDate > today) {
+                  const label = weekEndDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+                  if (!confirm(`This pay week isn't finished yet (ends ${label}) — mark as posted anyway?`)) return
+                }
+              }
+              togglePosted(emp.id, weekStart)
+            }}
             style={{
               marginLeft: 'auto', padding: '0.4rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
               border: isPosted ? '1px solid #2d6a38' : '1px solid #ccc',
