@@ -113,6 +113,21 @@ Text **JOBS** plus a boat name to get just that boat's jobs, with details on eac
 
 > "JOBS wave master"
 
+## Need someone's number?
+
+Text **PHONE#** for the full phone directory, or **PHONE#** plus a name for just theirs:
+
+> "PHONE# joey"
+
+## Got a photo worth sending in?
+
+Text it straight to the same number, with the ship name or job number as the caption:
+
+> [photo] "Wave Master"
+> [photo] "4760"
+
+No caption? You'll get asked which ship or job it belongs to before it's saved.
+
 ## Using someone else's phone?
 
 Start your message with your name so the hours land on your timesheet, not theirs:
@@ -129,7 +144,8 @@ If you give your in and out times, it can work out the hours for you:
 
 ## Stuck?
 
-- Text or WhatsApp **HELP** (or just **?**) any time for the cheat sheet.
+- Text or WhatsApp **HELP** (or just **?**) any time for the command list.
+- Add a word to HELP for the full detail on any one of them: **HELP hours**, **HELP jobs**, **HELP phone**, **HELP photo**, **HELP supplies**, **HELP other**.
 - If a message comes back with "Couldn't read that one," reword it or contact Nicki directly.
 - Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 415 523-8886) — they're two different numbers for two different channels.
 
