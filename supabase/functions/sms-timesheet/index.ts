@@ -358,6 +358,47 @@ CONTEXT: Earlier in this conversation we asked the worker: ${askedQuestions.map(
   return JSON.parse(jsonMatch[0])
 }
 
+// Judges whether a short reply is actually answering "what ship or job is this
+// photo of?" versus being unrelated content (most often a normal job-hours text,
+// which is frequently short enough to have previously been misfired into the photo
+// branch by a length-only heuristic). Cheap/fast — small prompt, no timesheet parsing.
+async function classifyPhotoContextReply(msgBody: string): Promise<{ is_answer: boolean; context: string | null }> {
+  const system = `A worker was asked "what ship or job is this photo of?" after texting in an uncaptioned photo.
+Decide whether their next message is a direct answer to that (just a vessel/ship name or job number, nothing else) or unrelated content (e.g. reporting hours worked, job descriptions, supplies, or anything else that isn't purely naming the ship/job).
+Return ONLY valid JSON, no explanation: {"is_answer": true|false, "context": "the ship name or job number" or null}
+If is_answer is false, context must be null. Job numbers are 4-digit numbers.`
+
+  const payload = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 300,
+    system,
+    messages: [{ role: 'user', content: msgBody }]
+  })
+  const headers = {
+    'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!,
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json',
+  }
+
+  let res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  for (const waitMs of [4000, 10000]) {
+    if (res.status !== 429 && res.status !== 529) break
+    await new Promise(r => setTimeout(r, waitMs))
+    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  }
+
+  const data = await res.json()
+  const text = (data.content?.[0]?.text || '').trim()
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return { is_answer: false, context: null }
+  try {
+    const parsed = JSON.parse(jsonMatch[0])
+    return { is_answer: !!parsed.is_answer, context: parsed.is_answer ? (parsed.context || null) : null }
+  } catch {
+    return { is_answer: false, context: null }
+  }
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -475,6 +516,14 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Check for pending photos awaiting context (ship/job) ──
+  // One-shot: the tech's very next text is the only chance to auto-capture context.
+  // Whatever it turns out to be — a real answer, "idk", or something unrelated like a
+  // normal job-hours report — pending_context closes after this either way, so a
+  // forgotten photo never keeps hijacking every later message that day. Anything left
+  // uncaptioned goes to Nicki to fix by hand in the Gear Photos tab. (Only applies when
+  // the current message carries no photos of its own and actually has text — otherwise
+  // a second photo arriving in the same batch would misread its own empty caption as
+  // context for the first, and its own image would never get saved.)
   const { data: pendingPhotos } = await supabase
     .from('gear_photos')
     .select('id, ship_or_job')
@@ -483,41 +532,39 @@ Deno.serve(async (req: Request) => {
     .eq('pending_context', true)
     .order('created_at', { ascending: false })
 
-  // Only treat this as a context reply for an EARLIER pending photo when the current
-  // message carries no photos of its own and actually has text — otherwise a second
-  // photo arriving in the same batch (its own empty caption trivially satisfies
-  // "short reply") gets misread as context for the first, and its own image is never
-  // saved at all (Twilio delivers each image in a multi-photo send as a separate,
-  // independent webhook call, not one request with several attachments).
-  const isNonAnswer = /^(unknown|idk|i\s*don'?t\s*know|not\s*sure|no\s*idea|n\/?a|dunno)\.?$/i.test(msgBody.trim())
-  if (pendingPhotos && pendingPhotos.length > 0 && mediaUrls.length === 0 && isNonAnswer) {
-    // Don't accept a non-answer as if it were real context — it would otherwise get
-    // stamped onto every currently-pending photo for this phone/day and silently drop
-    // out of the "needs ship/job" queue despite still not actually being tagged.
-    const reply = `No worries — I'll leave it flagged for Nicki. A ship name works too if you don't have the job number.`
-    return isTwilio ? twiML(reply) : jsonReply({ reply })
-  }
+  if (pendingPhotos && pendingPhotos.length > 0 && mediaUrls.length === 0 && msgBody.trim().length > 0) {
+    const isNonAnswer = /^(unknown|idk|i\s*don'?t\s*know|not\s*sure|no\s*idea|n\/?a|dunno)\.?$/i.test(msgBody.trim())
+    // Ask Claude whether this genuinely answers "what ship/job is this photo of?" rather
+    // than assuming any short-enough text must be — a real job-hours text is often short
+    // too ("4760 6hrs bearings"), and blindly accepting it here used to swallow the
+    // message as a photo caption instead of ever reaching the real parser.
+    const classification = isNonAnswer
+      ? { is_answer: false, context: null }
+      : msgBody.length < 150 ? await classifyPhotoContextReply(msgBody.trim()) : { is_answer: false, context: null }
 
-  if (pendingPhotos && pendingPhotos.length > 0 && mediaUrls.length === 0 && msgBody.trim().length > 0 && msgBody.length < 100) {
-    // Short response likely to be ship/job context — update pending photos. Also backfill
-    // employee_id: these were saved before identity could be resolved (no caption yet).
-    const jobId = await lookupJobId(supabase, msgBody.trim())
-    const { error: updateError } = await supabase
-      .from('gear_photos')
-      .update({
-        ship_or_job: msgBody.trim(),
-        job_id: jobId,
-        pending_context: false,
-        ...(employeeId ? { employee_id: employeeId } : {}),
-      })
-      .eq('from_phone', fromPhone)
-      .eq('work_date', today)
-      .eq('pending_context', true)
+    if (classification.is_answer) {
+      const context = classification.context || msgBody.trim()
+      const jobId = await lookupJobId(supabase, context)
+      await supabase.from('gear_photos')
+        .update({ ship_or_job: context, job_id: jobId, pending_context: false, ...(employeeId ? { employee_id: employeeId } : {}) })
+        .eq('from_phone', fromPhone).eq('work_date', today).eq('pending_context', true)
 
-    if (!updateError) {
       const reply = `Got it — photo context saved.`
       return isTwilio ? twiML(reply) : jsonReply({ reply })
     }
+
+    // Not a real answer — close the prompt anyway (this was the one shot) rather than
+    // keep listening for a future message to match against.
+    await supabase.from('gear_photos')
+      .update({ pending_context: false, ...(employeeId ? { employee_id: employeeId } : {}) })
+      .eq('from_phone', fromPhone).eq('work_date', today).eq('pending_context', true)
+
+    if (isNonAnswer) {
+      const reply = `No worries — I'll leave it flagged for Nicki. A ship name works too if you don't have the job number.`
+      return isTwilio ? twiML(reply) : jsonReply({ reply })
+    }
+    // Else: doesn't look like an answer at all (e.g. a normal timesheet report) —
+    // fall through and let it be handled as a regular message below.
   }
 
   // ── Phone directory request ──
