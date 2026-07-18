@@ -4,7 +4,7 @@ import { fmtHours } from './format'
 // Recreates the Cores Worldwide paper "Daily Time Sheet" form, filled in with
 // whatever we have on file. Fields the app doesn't track (safety check answers,
 // signatures, extras/non-compliance) are left blank for hand sign-off.
-export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, jobLines, supplyLines = [] }) {
+export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [] }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 40
@@ -60,6 +60,14 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   fieldRow('Employee:', employeeName, 'Date:', fmtDate(workDate))
   fieldRow('Time In:', fmtTime(timeIn), 'Time Out:', fmtTime(timeOut))
   fieldRow('Lunch:', lunchMinutes != null ? `${lunchMinutes} min` : '', 'Total Hrs:', totalHours != null ? fmtHours(totalHours) : '')
+
+  // Per diem is a count (×N), not dollars — same convention as the app
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+  doc.text('Per Diem:', margin, y)
+  doc.setFont('helvetica', 'normal')
+  doc.text(perDiem > 0 ? `×${Number(perDiem)}` : 'None', margin + 75, y)
+  doc.line(margin + 70, y + 3, margin + contentW / 2 - 10, y + 3)
+  y += 22
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
   doc.text('Comments:', margin, y)
