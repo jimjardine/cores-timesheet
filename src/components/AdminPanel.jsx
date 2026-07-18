@@ -119,9 +119,9 @@ export default function AdminPanel() {
   function openModal(type, record = null) {
     setModal({ type, record })
     if (type === 'customer') {
-      setFields({ name: record?.name || '', contact_name: record?.contact_name || '', contact_email: record?.contact_email || '', phone: record?.phone || '', status: record?.status || 'active' })
+      setFields({ name: record?.name || '', contact_name: record?.contact_name || '', contact_email: record?.contact_email || '', phone: record?.phone || '', status: record?.status || 'active', notes: record?.notes || '' })
     } else if (type === 'vessel') {
-      setFields({ name: record?.name || '', vessel_type: record?.vessel_type || '', customer_id: record?.customer_id || '', status: record?.status || 'active' })
+      setFields({ name: record?.name || '', vessel_type: record?.vessel_type || '', customer_id: record?.customer_id || '', status: record?.status || 'active', notes: record?.notes || '' })
       const existing = record ? vesselContacts.filter(c => c.vessel_id === record.id) : []
       setModalContacts(existing.length > 0 ? existing.map(c => ({ ...c })) : [
         { role: 'Superintendent', name: '', phone: '' },
@@ -310,10 +310,10 @@ export default function AdminPanel() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <h1 style={{ marginTop: 0 }}>Admin</h1>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.3rem' }}>
-          <button onClick={() => openDoc('Tech Manual', '/SMS_USER_MANUAL.md')} style={{ fontSize: '0.9rem', color: '#0066cc', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+          <button onClick={() => openDoc('Tech Manual', `${import.meta.env.BASE_URL}SMS_USER_MANUAL.md`)} style={{ fontSize: '0.9rem', color: '#0066cc', fontWeight: 600, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
             📖 Tech Manual
           </button>
-          <button onClick={() => openDoc('Cheat Sheet', '/SMS_CHEAT_SHEET.md')} style={{ fontSize: '0.85rem', color: '#0066cc', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+          <button onClick={() => openDoc('Cheat Sheet', `${import.meta.env.BASE_URL}SMS_CHEAT_SHEET.md`)} style={{ fontSize: '0.85rem', color: '#0066cc', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
             📋 Cheat Sheet
           </button>
         </div>
@@ -578,6 +578,11 @@ export default function AdminPanel() {
                       return (
                         <tr>
                           <td colSpan={6} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
+                            {c.notes && (
+                              <div style={{ padding: '0.75rem 2rem', fontSize: '0.85rem', color: '#555', whiteSpace: 'pre-wrap', borderBottom: '1px solid #e8eef8' }}>
+                                <strong style={{ color: '#888', fontWeight: 700 }}>Notes: </strong>{c.notes}
+                              </div>
+                            )}
                             {custVessels.length === 0 && shopJobs.length === 0 && (
                               <div style={{ padding: '0.75rem 2rem', color: '#aaa', fontSize: '0.875rem' }}>No vessels or jobs</div>
                             )}
@@ -714,6 +719,11 @@ export default function AdminPanel() {
                     {isExpanded && (
                       <tr>
                         <td colSpan={6} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
+                          {v.notes && (
+                            <div style={{ padding: '0.75rem 2rem', fontSize: '0.85rem', color: '#555', whiteSpace: 'pre-wrap', borderBottom: '1px solid #e8eef8' }}>
+                              <strong style={{ color: '#888', fontWeight: 700 }}>Notes: </strong>{v.notes}
+                            </div>
+                          )}
                           {vesselJobs.length === 0 ? (
                             <div style={{ padding: '0.75rem 2rem', color: '#aaa', fontSize: '0.875rem' }}>No open jobs</div>
                           ) : (
@@ -773,6 +783,7 @@ export default function AdminPanel() {
               <tr>
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Cell</th>
+                <th style={thStyle}>WhatsApp</th>
                 <th style={thStyle}>Role</th>
                 <th style={thStyle}>Status</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}></th>
@@ -783,10 +794,12 @@ export default function AdminPanel() {
                 .filter(e => (empStatusFilter === 'all' || e.active) && (empRoleFilter === 'all' || e.role === empRoleFilter))
                 .map(e => {
                   const phone = e.phone ? e.phone.replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') : null
+                  const whatsapp = e.whatsapp_phone ? e.whatsapp_phone.replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') : null
                   return (
                     <tr key={e.id}>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{e.name}</td>
                       <td style={{ ...tdStyle, color: phone ? '#333' : '#bbb', fontFamily: 'monospace' }}>{phone || 'No number'}</td>
+                      <td style={{ ...tdStyle, color: whatsapp ? '#333' : '#bbb', fontFamily: 'monospace' }}>{whatsapp || '—'}</td>
                       <td style={tdStyle}>
                         <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: e.role === 'technician' ? '#e8eef8' : '#f5f0ff', color: e.role === 'technician' ? '#0055aa' : '#6b21a8' }}>
                           {e.role || 'technician'}
@@ -821,6 +834,7 @@ export default function AdminPanel() {
               <option value="inactive">Inactive</option>
             </select>
           </Field>
+          <Field label="Notes"><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...f('notes')} /></Field>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
             <button style={btnSecondary} onClick={() => setModal(null)}>Cancel</button>
             <button style={btnPrimary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
@@ -844,6 +858,7 @@ export default function AdminPanel() {
               <option value="inactive">Inactive</option>
             </select>
           </Field>
+          <Field label="Notes"><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...f('notes')} /></Field>
 
           {/* Contacts */}
           <div style={{ marginTop: '1.25rem' }}>

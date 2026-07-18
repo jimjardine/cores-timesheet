@@ -14,9 +14,29 @@ Text this to **+1 (506) 404-6969** (or WhatsApp **+1 (415) 523-8886** — first 
 
 Used supplies? Add them too: "supplies brake cleaner x1, wire brushes x2"
 
+## Copy-paste template
+
+Don't want to type it from scratch every day? Copy this, fill in the blanks, delete any lines you don't need, and send it:
+
+```
+In: [time]
+Job [job #]: [hours]hrs - [what you did]
+Job [job #]: [hours]hrs - [what you did]
+Out: [time]
+Lunch: [minutes, or "no lunch"]
+PD: [where you're staying, or "no PD"]
+Supplies: [item] x[qty] (delete this line if you didn't use any)
+```
+
+Add more `Job` lines if you worked more than two. First time using this? Send a filled-in test message and make sure you get a "Got it" reply back before relying on it for a real day.
+
 ## Missing a job number?
 
 Text **JOBS** for the full list, or **JOBS + boat name** for just that boat.
+
+## Want to check what you've logged?
+
+Text **TIMESHEET** (or **TS**) — add a day like "TS yesterday" for another date.
 
 ## Full details
 
