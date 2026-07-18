@@ -468,7 +468,8 @@ function mergeEntries(prevEntries: any[], newEntries: any[], lastJob: string | n
 // knows what they've already sent; "TS" is there if they want the full picture.
 function daySummaryReply(
   firstName: string, touchedEntries: any[], totalHours: number, totalOTHours: number,
-  timeIn: string | null, flags: string[], unknownJobs: string[] = [], dayJobCount: number = touchedEntries.length
+  timeIn: string | null, flags: string[], unknownJobs: string[] = [], dayJobCount: number = touchedEntries.length,
+  deltaMinutes: number | null = null
 ): string {
   const jobLines = touchedEntries.map((e: any) => {
     const desc = String(e.description || '').replace(/\s+/g, ' ').trim()
@@ -487,14 +488,20 @@ function daySummaryReply(
   const unknownJobLine = unknownJobs.length
     ? `Didn't recognize Job# ${unknownJobs.join(', ')} — text JOBS for the list, or the office will check.`
     : ''
+  // Your in/out span (minus lunch) vs. the sum of job hours — a mismatch usually
+  // means a job's hours or a time got missed. Same >15min threshold the office
+  // review screen already flags on, just surfaced here instead of staying silent.
+  const deltaLine = deltaMinutes != null && Math.abs(deltaMinutes) > 15
+    ? `Heads up — your times and job hours are off by ${Math.abs(deltaMinutes)}min. Text a fix, or the office will check.`
+    : ''
   // Only worth the extra line when this reply doesn't already show the whole day.
   const tsHintLine = dayJobCount > jobLines.length ? `Text TS to see the day's progress.` : ''
 
   if (jobLines.length === 0) {
     const head = timeIn ? `${greeting} — in ${friendlyTime(timeIn)}` : `${greeting}.`
-    return [head, totalLine, unknownJobLine, flagLine, tsHintLine].filter(Boolean).join('\n')
+    return [head, totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')
   }
-  return [greeting, jobLines.join('\n\n'), totalLine, unknownJobLine, flagLine, tsHintLine].filter(Boolean).join('\n')
+  return [greeting, jobLines.join('\n\n'), totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')
 }
 
 // "timesheet"/"ts" day argument → YYYY-MM-DD. Empty/today → today; "yesterday" →
@@ -824,6 +831,10 @@ Deno.serve(async (req: Request) => {
     if (tsTotalHours > 0 && (tsEntries.length > 1 || tsTotalOT > 0)) {
       lines.push('')
       lines.push(`Total ${tsTotalOT > 0 ? `${tsTotalReg}hrs reg, ${tsTotalOT}hrs OT` : `${tsTotalHours}hrs`}`)
+    }
+
+    if (tsSub?.delta_minutes != null && Math.abs(tsSub.delta_minutes) > 15) {
+      lines.push(`Heads up — your times and job hours are off by ${Math.abs(tsSub.delta_minutes)}min.`)
     }
 
     if (tsSub) {
@@ -1230,7 +1241,7 @@ Deno.serve(async (req: Request) => {
     if (allEntries.some((e: any) => !(Number(e.hours) > 0))) {
       flags.push('job hours missing — need total hours or an out time')
     }
-    reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length)
+    reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length, deltaMinutes)
   }
 
   // ── Save/update submission ──
