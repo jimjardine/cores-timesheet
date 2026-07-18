@@ -23,12 +23,9 @@ That's: start time, each job with hours and what you did, finish time, lunch, an
 
 You'll get a confirmation back like:
 
-> Done Joey ✓ Fri Jul 3 | 7:30am–4pm | lunch 30min
-> 4760: 6hrs reg
-> 4862: 2hrs reg
-> Total: 8hrs reg
-> No per diem
-> Nicki has it.
+> Got it Joey — 4760: 6hrs — rebuilt port engine bearings
+> 4862: 2hrs — fuel lines
+> Total 8hrs
 
 If the confirmation looks wrong, just text the correction (see below).
 
@@ -61,25 +58,25 @@ Text as you go if that's easier:
 - Later: **"4862 2hrs fuel lines"**
 - End of day: **"Out 4:30, lunch 30, staying at Delta Halifax"**
 
-It stitches your texts together into one timesheet for the day.
+It stitches your texts together into one timesheet for the day. Once it knows what job you're on, a follow-up text doesn't need the job number again — "another 2 hrs, fixed the head" lands on whatever job you were last working on.
 
-If you leave something out (like lunch or per diem), you'll get **one** quick question back, something like:
+**It won't nag you.** Leave off lunch or per diem and it just logs "no lunch" / "no PD" quietly — the office will catch it and fix it if that's wrong, so don't worry about a perfect text every time. The **only** thing it'll ever ask you is which job a description belongs to, and only if it doesn't know any job for you yet that day:
 
-> Question: lunch? ("lunch 30" or "no lunch") | per diem tonight? (location or "no PD")
+> Got it Joey. Which job # is that for?
 
-Answer it and you're done. It won't nag you past that — anything still missing gets flagged for Nicki to sort out.
+Reply with the job number (or the boat name) and you're done.
 
-## Getting a confirmation text from Nicki?
+## Getting a confirmation text from the office?
 
-Sometimes Nicki adds a shift manually in the office (if you couldn't text it in, or if she's fixing something). When she does, she'll ask you to confirm it:
+Sometimes the office adds a shift manually (if you couldn't text it in, or if something needed fixing). When that happens, you'll get a text asking you to confirm it:
 
-> Hi Joey, Nicki added: Fri 4760 6hrs rebuilt bearings, 4862 2hrs fuel lines, out 4, lunch 30. Reply YES to confirm or text the fix.
+> Hi Joey, the office added: Fri 4760 6hrs rebuilt bearings, 4862 2hrs fuel lines, out 4, lunch 30. Reply YES to confirm or text the fix.
 
 Just text back **YES** (or "yep", "yup", "confirm" — anything affirmative) and it's locked in. If it's wrong, text the correction instead of "yes" and the fix replaces it.
 
 ## Made a mistake? Just text again
 
-Already got your "Done ✓" but forgot a job or got the time wrong? Text the fix — same day, same number:
+Already got your "Got it" but forgot a job or got the time wrong? Text the fix — same day, same number:
 
 > "Also 4881 1.5hrs hydraulic hose"
 > "Out was actually 5, not 4:30"
@@ -95,7 +92,7 @@ Anything you grab off the shelf gets charged back to the job — brake cleaner, 
 
 If you don't say which job, it goes on the first job you texted that day. Quantities like "x2", "2 cans", or "two rolls" all work. No prices needed — the office handles that.
 
-If you don't mention supplies in your text, you'll get asked about them — same as lunch and per diem.
+Nothing to log? Just leave supplies out — it won't ask.
 
 ## Forgot to text yesterday?
 
@@ -113,6 +110,15 @@ Text **JOBS** plus a boat name to get just that boat's jobs, with details on eac
 
 > "JOBS wave master"
 
+## Want to see what you've logged?
+
+Text **TIMESHEET** (or just **TS**) to see everything recorded for today — jobs, hours, times, per diem, supplies, photo count.
+
+Add a day to check another one:
+
+> "TS yesterday"
+> "TS monday"
+
 ## Need someone's number?
 
 Text **PHONE#** for the full phone directory, or **PHONE#** plus a name for just theirs:
@@ -126,7 +132,7 @@ Text it straight to the same number, with the ship name or job number as the cap
 > [photo] "Wave Master"
 > [photo] "4760"
 
-No caption? You'll get asked which ship or job it belongs to before it's saved.
+No caption? It's filed under whatever job you've been texting about that day — it won't ask. Anything else you write in the caption is saved as a note alongside the photo, so "old card clips, need a spare" is worth adding even without a job number.
 
 ## Using someone else's phone?
 
@@ -145,14 +151,14 @@ If you give your in and out times, it can work out the hours for you:
 ## Stuck?
 
 - Text or WhatsApp **HELP** (or just **?**) any time for the command list.
-- Add a word to HELP for the full detail on any one of them: **HELP hours**, **HELP jobs**, **HELP phone**, **HELP photo**, **HELP supplies**, **HELP other**.
-- If a message comes back with "Couldn't read that one," reword it or contact Nicki directly.
+- Add a word to HELP for the full detail on any one of them: **HELP hours**, **HELP jobs**, **HELP phone**, **HELP photo**, **HELP timesheet**, **HELP supplies**, **HELP other**.
+- If a message comes back with "Couldn't read that one," reword it or contact the office directly.
 - Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 415 523-8886) — they're two different numbers for two different channels.
 
 ---
 
 ## What happens to your text
 
-Nothing hits payroll automatically. Nicki sees every submission in the review screen, checks it (including anything flagged as missing), and approves it before it counts. Overtime past 8 hours in a day is split out automatically — you'll see it in your confirmation as "reg + OT".
+Nothing hits payroll automatically. The office sees every submission in the review screen, checks it (including anything flagged as missing), and approves it before it counts. Overtime past 8 hours in a day is split out automatically — your confirmation's total shows it as "Total 10hrs (2 OT)".
 
-**Bottom line: one text a day, before you forget. If you got the "Done ✓" reply, Nicki has it.**
+**Bottom line: one text a day, before you forget. If you got a "Got it" reply, the office has it.**

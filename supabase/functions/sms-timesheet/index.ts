@@ -10,6 +10,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2"
 const HELP_TEXT = `Cores Timesheets — commands:
 • Just text your hours (e.g. "4760 6hrs bearings")
 • HOURS — full format guide
+• TEMPLATE — fill-in-the-blank text
 • JOBS — job list
 • PHONE# — phone directory
 • PHOTO — gear photos
@@ -20,6 +21,20 @@ const HELP_TEXT = `Cores Timesheets — commands:
 Reply HELP + a word above for details (e.g. "HELP jobs").
 
 💬 Use WhatsApp or SMS — works both ways.`
+
+// Sent back verbatim when a tech texts TEMPLATE — kept in sync with the
+// "Copy-paste template" section of public/SMS_CHEAT_SHEET.md.
+const TEMPLATE_TEXT = `Copy this, fill in the blanks, delete lines you don't need, then send it back:
+
+In: [time]
+Job [job #]: [hours]hrs - [what you did]
+Job [job #]: [hours]hrs - [what you did]
+Out: [time]
+Lunch: [minutes, or "no lunch"]
+PD: [where you're staying, or "no PD"]
+Supplies: [item] x[qty] (delete this line if you didn't use any)
+
+Add more Job lines if you worked more than two.`
 
 const HELP_TOPICS: Record<string, string> = {
   hours: `HOURS — format guide
@@ -62,6 +77,8 @@ Add a day for another date: "TS yesterday", "TS monday".`,
 
   ts: '', // alias, filled in below
 
+  template: '', // alias, filled in below
+
   supplies: `SUPPLIES — log parts used
 
 Add them to your hours text or on their own:
@@ -76,6 +93,7 @@ Start your text with: "This is Joey" so the hours land on their timesheet, not y
 HELP_TOPICS.format = HELP_TOPICS.hours
 HELP_TOPICS.photos = HELP_TOPICS.photo
 HELP_TOPICS.ts = HELP_TOPICS.timesheet
+HELP_TOPICS.template = TEMPLATE_TEXT
 
 function helpReply(topicRaw: string | undefined): string {
   const topic = (topicRaw || '').trim().toLowerCase().replace(/[^a-z]/g, '')
@@ -205,7 +223,7 @@ async function savePhotoToStorage(
       job_id: jobId,
       note: note,
       // No longer a "we'll ask" marker — just flags the photo as untagged so it
-      // shows under "Needs ship/job" in the Gear Photos tab for Nicki.
+      // shows under "Needs ship/job" in the Gear Photos tab for the office.
       pending_context: !shipOrJob,
       photo_latitude: exifData.lat || null,
       photo_longitude: exifData.lng || null,
@@ -351,8 +369,7 @@ async function getLastJobForDay(supabase: any, fromPhone: string, workDate: stri
 // Every entry touched this message gets a last_mentioned_at stamp — the source
 // of truth for getLastJobForDay. The parser-only replace_hours key never makes
 // it into the result (entries are rebuilt field-by-field).
-function mergeEntries(prevEntries: any[], newEntries: any[], lastJob: string | null): any[] {
-  const now = new Date().toISOString()
+function mergeEntries(prevEntries: any[], newEntries: any[], lastJob: string | null, now: string): any[] {
   const merged: any[] = prevEntries.map((e: any) => ({ ...e }))
 
   const foldInto = (target: any, hours: number | null, desc: string, replaceHours: boolean) => {
@@ -369,6 +386,35 @@ function mergeEntries(prevEntries: any[], newEntries: any[], lastJob: string | n
   }
 
   for (const raw of newEntries) {
+    // A job-number correction renames the existing entry rather than adding a
+    // second one under the new number — "actually that was 4760, not 9999".
+    const correctsFrom = String(raw.corrects_job_number || '').trim()
+    if (correctsFrom) {
+      const oldEntry = merged.find((e: any) => String(e.job_number || '').toLowerCase() === correctsFrom.toLowerCase())
+      if (oldEntry) {
+        const newJobNum = String(raw.job_number || '').trim()
+        const hours = Number(raw.hours) > 0 ? Number(raw.hours) : null
+        const desc = String(raw.description || '').replace(/\s+/g, ' ').trim()
+        // A real entry may already exist under the corrected number (e.g. the tech
+        // separately texted 4760 earlier) — fold the mistyped one into it rather
+        // than leaving two rows for what's really one job.
+        const target = newJobNum
+          ? merged.find((e: any) => e !== oldEntry && String(e.job_number || '').toLowerCase() === newJobNum.toLowerCase())
+          : null
+        if (target) {
+          foldInto(target, Number(oldEntry.hours) > 0 ? Number(oldEntry.hours) : null, String(oldEntry.description || '').trim(), false)
+          merged.splice(merged.indexOf(oldEntry), 1)
+          foldInto(target, hours, desc, !!raw.replace_hours)
+        } else {
+          if (newJobNum) oldEntry.job_number = newJobNum
+          foldInto(oldEntry, hours, desc, !!raw.replace_hours)
+        }
+        continue
+      }
+      // The "old" number wasn't found (e.g. from a prior day) — fall through so
+      // the new job number still gets recorded instead of silently dropped.
+    }
+
     const jobNum = (raw.job_number || '').trim() || lastJob
     const hours = Number(raw.hours) > 0 ? Number(raw.hours) : null
     const desc = String(raw.description || '').replace(/\s+/g, ' ').trim()
@@ -382,43 +428,73 @@ function mergeEntries(prevEntries: any[], newEntries: any[], lastJob: string | n
     }
   }
 
+  // ── Safety net: collapse any duplicate job numbers into one entry ──
+  // A job number can land on an entry several ways (direct match, a correction,
+  // an occasional LLM parsing quirk) — however it happens, two rows for the same
+  // job is never correct. Always combine down to one before doing anything else.
+  const byJob = new Map<string, any>()
+  const deduped: any[] = []
+  for (const e of merged) {
+    const key = e.job_number ? String(e.job_number).toLowerCase() : null
+    const prior = key ? byJob.get(key) : null
+    if (prior) {
+      foldInto(prior, Number(e.hours) > 0 ? Number(e.hours) : null, String(e.description || '').trim(), false)
+      if (String(e.last_mentioned_at || '') > String(prior.last_mentioned_at || '')) prior.last_mentioned_at = e.last_mentioned_at
+    } else {
+      deduped.push(e)
+      if (key) byJob.set(key, e)
+    }
+  }
+
   // Fold still-unattributed work into the most recently mentioned job, if any —
   // this is what turns yesterday's stored "fixed the head" plus today's "4900"
   // answer into a single 4900 entry.
-  const withJob = merged.filter((e: any) => e.job_number)
+  const withJob = deduped.filter((e: any) => e.job_number)
   if (withJob.length > 0) {
     const anchor = [...withJob].sort((a: any, b: any) =>
       String(a.last_mentioned_at || '').localeCompare(String(b.last_mentioned_at || '')))[withJob.length - 1]
-    for (const orphan of merged.filter((e: any) => !e.job_number)) {
+    for (const orphan of deduped.filter((e: any) => !e.job_number)) {
       foldInto(anchor, Number(orphan.hours) > 0 ? Number(orphan.hours) : null, String(orphan.description || '').trim(), false)
     }
     return withJob
   }
 
-  return merged
+  return deduped
 }
 
 // Short ack + running day total — the reply for every accepted text now that the
 // bot never asks questions: "Got it Jim — 4900: 4hrs — pump; fixed the head".
+// Only confirms what THIS message touched, not the whole day — the tech already
+// knows what they've already sent; "TS" is there if they want the full picture.
 function daySummaryReply(
-  firstName: string, entriesWithOT: any[], totalHours: number, totalOTHours: number,
-  timeIn: string | null, flags: string[]
+  firstName: string, touchedEntries: any[], totalHours: number, totalOTHours: number,
+  timeIn: string | null, flags: string[], unknownJobs: string[] = [], dayJobCount: number = touchedEntries.length
 ): string {
-  const jobLines = entriesWithOT.map((e: any) => {
+  const jobLines = touchedEntries.map((e: any) => {
     const desc = String(e.description || '').replace(/\s+/g, ' ').trim()
     const descFmt = desc ? ` — ${desc.length > 60 ? desc.slice(0, 57) + '…' : desc}` : ''
-    const hrs = Number(e.hours) > 0 ? `${e.hours}hrs` : 'hrs TBD'
-    return `${e.job_number || '?'}: ${hrs}${descFmt}`
+    const ot = Number(e.ot_hours) || 0
+    const hrs = !(Number(e.hours) > 0) ? 'hrs TBD'
+      : ot > 0 ? `${e.reg_hours}hrs reg, ${ot}hrs OT` : `${e.hours}hrs`
+    return `Job# ${e.job_number || '?'}: ${hrs}${descFmt}`
   })
   const greeting = `Got it${firstName ? ' ' + firstName : ''}`
-  const head = jobLines.length > 0
-    ? `${greeting} — ${jobLines[0]}`
-    : timeIn ? `${greeting} — in ${friendlyTime(timeIn)}` : `${greeting}.`
-  const totalLine = totalHours > 0 && (entriesWithOT.length > 1 || totalOTHours > 0)
-    ? `Total ${totalHours}hrs${totalOTHours > 0 ? ` (${totalOTHours} OT)` : ''}`
+  const totalRegHours = Math.round((totalHours - totalOTHours) * 100) / 100
+  const totalLine = totalHours > 0 && (dayJobCount > 1 || totalOTHours > 0)
+    ? `Total ${totalOTHours > 0 ? `${totalRegHours}hrs reg, ${totalOTHours}hrs OT` : `${totalHours}hrs`}`
     : ''
-  const flagLine = flags.length ? `(Nicki will check: ${flags.join(', ')})` : ''
-  return [head, ...jobLines.slice(1), totalLine, flagLine].filter(Boolean).join('\n')
+  const flagLine = flags.length ? `(the office will check: ${flags.join(', ')})` : ''
+  const unknownJobLine = unknownJobs.length
+    ? `Didn't recognize Job# ${unknownJobs.join(', ')} — text JOBS for the list, or the office will check.`
+    : ''
+  // Only worth the extra line when this reply doesn't already show the whole day.
+  const tsHintLine = dayJobCount > jobLines.length ? `Text TS to see the day's progress.` : ''
+
+  if (jobLines.length === 0) {
+    const head = timeIn ? `${greeting} — in ${friendlyTime(timeIn)}` : `${greeting}.`
+    return [head, totalLine, unknownJobLine, flagLine, tsHintLine].filter(Boolean).join('\n')
+  }
+  return [greeting, jobLines.join('\n\n'), totalLine, unknownJobLine, flagLine, tsHintLine].filter(Boolean).join('\n')
 }
 
 // "timesheet"/"ts" day argument → YYYY-MM-DD. Empty/today → today; "yesterday" →
@@ -472,13 +548,15 @@ Rules:
 - stated_time_out: "HH:MM" 24-hour if they said when they finished/left anywhere in the message — else null. A time range on a job ("4709 9 to 5") counts here too — extract the second time as stated_time_out, the same way "worked 4760 all day, in 7 out 5" would.
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
-- entries: [{job_number:"4-digit string or SHOP"|null, hours:number|null, description:"verbatim from message", replace_hours:boolean}] — only real job work. If the message clearly describes work done but names NO job ("fixed the head this afternoon", "another 2 hours on the pump"), still return the entry with job_number null — the app attaches it to the day's current job. But a message with no work description at all (just times/lunch/PD like "In 7:30" or "no lunch, no PD") must return entries: []. replace_hours: true ONLY when the message corrects/restates hours already reported ("actually that was 3hrs", "make that 6", "not 2, 3 hours") — otherwise false, including for additional work ("another 2 hrs"). Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
+- entries: [{job_number:"4-digit string or SHOP"|null, hours:number|null, description:"verbatim from message", replace_hours:boolean, corrects_job_number:"4-digit string"|null}] — only real job work. corrects_job_number: set this ONLY when the message says a job number already reported today was WRONG and gives the correct one ("actually that was 4760, not 9999", "wrong job, it's 4762 not 4761", "change 9999 to 4760", "meant 4760 not 9999") — corrects_job_number is the OLD/wrong number being replaced, job_number is the NEW/correct number. Leave hours and description null unless the message also restates new work/hours alongside the correction. Otherwise always null. If the message clearly describes work done but names NO job ("fixed the head this afternoon", "another 2 hours on the pump"), still return the entry with job_number null — the app attaches it to the day's current job. But a message with no work description at all (just times/lunch/PD like "In 7:30" or "no lunch, no PD") must return entries: []. replace_hours: true when the message restates the TOTAL/FINAL hours for a job already reported today, rather than describing more work done — this includes "actually that was 3hrs", "make that 6", "not 2, 3 hours", "I only worked 7hrs on 4760", "only 2hrs for 4862", "it was really 5", "should only be 4", "total was 6". The word "only" or a flat restated number tied to a specific job almost always means a correction, not new work. replace_hours: false ONLY for messages that clearly describe additional new work on top of what's already logged ("another 2 hrs", "plus 2 more on it", "did 2 more hours this afternoon"). Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
 - supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase. The reverse also holds: a job's work description is not a supply. "4760 2hrs seals" or "6hrs bearings" describes the work done — extract supplies ONLY when the text presents them as materials used/consumed ("used 2 cans of brake cleaner", "supplies: wire brush x2", "grabbed a roll of tape"), never from a bare work description.
 - is_help_request: true only if the entire message is a help request
 
-Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.length ? `
+Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.includes('Job entries?') ? `
 
-CONTEXT: Earlier in this conversation we asked the worker which job their work was for. If this message reads as a direct answer — often just a bare job number ("4900") or "shop" — return it as entries: [{"job_number":"<the number or SHOP>","hours":null,"description":"","replace_hours":false}]. A bare boat/ship name answer has no job number: return entries: [{"job_number":null,"hours":null,"description":"<the boat name>","replace_hours":false}]. Never invent data the message does not contain.` : ''}`
+CONTEXT: Earlier in this conversation we asked the worker which job their work was for. If this message reads as a direct answer — often just a bare job number ("4900") or "shop" — return it as entries: [{"job_number":"<the number or SHOP>","hours":null,"description":"","replace_hours":false}]. A bare boat/ship name answer has no job number: return entries: [{"job_number":null,"hours":null,"description":"<the boat name>","replace_hours":false}]. Never invent data the message does not contain.` : ''}${askedQuestions.includes('Lunch?') ? `
+
+CONTEXT: Earlier in this conversation we asked the worker if they took a lunch. If this message reads as a direct answer to that — a bare number of minutes ("30", "45 min"), "half hour"/"1/2 hour" (→30), or "none"/"no"/"worked through"/"nope" (→0) — set lunch_minutes accordingly even without the word "lunch" anywhere in the message. Never invent data the message does not contain.` : ''}`
 
   const payload = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -551,7 +629,7 @@ Deno.serve(async (req: Request) => {
       const json = await req.json()
 
       // App-triggered action (not a Twilio webhook) — request an employee's
-      // confirmation of a manual entry Nicki just typed in
+      // confirmation of a manual entry the office just typed in
       if (json.action === 'request_confirmation') {
         const { data: employee } = await supabase
           .from('employees').select('id, name, phone').eq('id', json.employee_id).single()
@@ -571,7 +649,7 @@ Deno.serve(async (req: Request) => {
         }
 
         const summary = pending.map((e: any) => `${e.jobs?.job_number || 'job'} ${Number(e.hours)}hrs`).join(', ')
-        const msg = `Nicki logged your timesheet for ${friendlyDate(json.work_date)}: ${summary}. Reply to this text to confirm.`
+        const msg = `The office logged your timesheet for ${friendlyDate(json.work_date)}: ${summary}. Reply to this text to confirm.`
         const sendResult = await sendTwilioSms(employee.phone, msg)
 
         await supabase
@@ -660,10 +738,15 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
+  // ── Fill-in-the-blank template request ──
+  if (msgLower === 'template' && mediaUrls.length === 0) {
+    return isTwilio ? twiML(TEMPLATE_TEXT) : jsonReply({ reply: TEMPLATE_TEXT })
+  }
+
   // ── Timesheet view request ("timesheet" / "ts", optional day) ──
   // Deterministic keyword, no Claude call. Guarded on no-media so a photo whose
   // caption happens to say "timesheet" still gets saved as a photo below.
-  const tsMatch = msgLower.match(/^(?:timesheet|ts)(?:\s+(.+))?$/)
+  const tsMatch = msgLower.match(/^(?:timesheets?|ts)(?:\s+(.+))?$/)
   if (tsMatch && mediaUrls.length === 0) {
     const tsDate = resolveDayArg(tsMatch[1] || '', today)
     if (!tsDate) {
@@ -675,13 +758,13 @@ Deno.serve(async (req: Request) => {
     {
       const { data: byPhone } = await supabase
         .from('sms_submissions').select('*')
-        .eq('from_phone', fromPhone).eq('work_date', tsDate)
+        .eq('from_phone', fromPhone).eq('work_date', tsDate).neq('status', 'rejected')
         .order('updated_at', { ascending: false }).limit(1)
       if (byPhone?.length) tsSub = byPhone[0]
       else if (employeeId) {
         const { data: byEmp } = await supabase
           .from('sms_submissions').select('*')
-          .eq('employee_id', employeeId).eq('work_date', tsDate)
+          .eq('employee_id', employeeId).eq('work_date', tsDate).neq('status', 'rejected')
           .order('updated_at', { ascending: false }).limit(1)
         if (byEmp?.length) tsSub = byEmp[0]
       }
@@ -691,23 +774,58 @@ Deno.serve(async (req: Request) => {
       .eq('from_phone', fromPhone).eq('work_date', tsDate)
 
     if (!tsSub && !photoCount) {
-      const r = `Nothing submitted for ${friendlyDate(tsDate)} yet.`
+      // The lookup above deliberately skips rejected rows, so a rejected-only day would
+      // otherwise look identical to "never submitted" — tell the tech what actually happened.
+      let wasRejected = false
+      {
+        const { data } = await supabase
+          .from('sms_submissions').select('id')
+          .eq('from_phone', fromPhone).eq('work_date', tsDate).eq('status', 'rejected')
+          .limit(1)
+        wasRejected = !!data?.length
+        if (!wasRejected && employeeId) {
+          const { data: byEmp } = await supabase
+            .from('sms_submissions').select('id')
+            .eq('employee_id', employeeId).eq('work_date', tsDate).eq('status', 'rejected')
+            .limit(1)
+          wasRejected = !!byEmp?.length
+        }
+      }
+      const r = wasRejected
+        ? `Your ${friendlyDate(tsDate)} submission was rejected. Please resubmit or contact the office.`
+        : `Nothing submitted for ${friendlyDate(tsDate)} yet.`
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
     }
 
     const lines: string[] = [`${friendlyDate(tsDate)}${employeeName ? ' — ' + employeeName.split(' ')[0] : ''}`]
-    for (const e of (tsSub?.entries || [])) {
-      const desc = String(e.description || '').replace(/\s+/g, ' ').trim()
-      const hrs = Number(e.hours) > 0 ? `${e.hours}hrs` : 'hrs TBD'
-      lines.push(`${e.job_number || '?'}: ${hrs}${desc ? ' — ' + desc : ''}`)
-    }
     if (tsSub?.time_in || tsSub?.stated_time_out || tsSub?.lunch_minutes) {
-      const inFmt  = tsSub.time_in ? friendlyTime(tsSub.time_in.substring(0, 5)) : '?'
+      const inFmt  = tsSub.time_in ? friendlyTime(tsSub.time_in.substring(0, 5)) : '??'
       const outFmt = tsSub.stated_time_out ? friendlyTime(tsSub.stated_time_out.substring(0, 5))
-                   : tsSub.calculated_time_out ? friendlyTime(tsSub.calculated_time_out.substring(0, 5)) : '?'
-      const lunchFmt = tsSub.lunch_minutes ? ` | lunch ${tsSub.lunch_minutes}min` : ''
+                   : tsSub.calculated_time_out ? friendlyTime(tsSub.calculated_time_out.substring(0, 5)) : '??'
+      const lunchFmt = tsSub.lunch_minutes ? ` | lunch ${tsSub.lunch_minutes}min` : ' | no lunch'
       lines.push(`In ${inFmt} – Out ${outFmt}${lunchFmt}`)
     }
+    const tsEntries = tsSub?.entries || []
+    const jobBlocks = tsEntries.map((e: any) => {
+      const desc = String(e.description || '').replace(/\s+/g, ' ').trim()
+      const ot = Number(e.ot_hours) || 0
+      const hrs = !(Number(e.hours) > 0) ? 'hrs TBD'
+        : ot > 0 ? `${e.reg_hours}hrs reg, ${ot}hrs OT` : `${e.hours}hrs`
+      return `Job# ${e.job_number || '?'}: ${hrs}` + (desc ? `\n   ${desc}` : '')
+    })
+    if (jobBlocks.length) {
+      lines.push('')
+      lines.push(jobBlocks.join('\n\n'))
+    }
+
+    const tsTotalHours = tsEntries.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0)
+    const tsTotalOT = tsEntries.reduce((s: number, e: any) => s + (Number(e.ot_hours) || 0), 0)
+    const tsTotalReg = Math.round((tsTotalHours - tsTotalOT) * 100) / 100
+    if (tsTotalHours > 0 && (tsEntries.length > 1 || tsTotalOT > 0)) {
+      lines.push('')
+      lines.push(`Total ${tsTotalOT > 0 ? `${tsTotalReg}hrs reg, ${tsTotalOT}hrs OT` : `${tsTotalHours}hrs`}`)
+    }
+
     if (tsSub) {
       lines.push(tsSub.per_diem_location && tsSub.per_diem_location !== 'none'
         ? `PD: ${tsSub.per_diem_location}` : 'No per diem')
@@ -725,7 +843,7 @@ Deno.serve(async (req: Request) => {
   // ── Photo submission ──
   // Photos are recorded quietly: spot a job/ship in the caption if there is one,
   // otherwise assume the day's current job. Never ask. Photos arriving before any
-  // job is known that day stay untagged for Nicki ("Needs ship/job" in Gear Photos).
+  // job is known that day stay untagged for the office ("Needs ship/job" in Gear Photos).
   const hasPhotos = mediaUrls.length > 0
   if (hasPhotos) {
     // Deterministic caption checks only — a bare job number or a ship-ish word.
@@ -741,7 +859,7 @@ Deno.serve(async (req: Request) => {
 
     const jobId = await lookupJobId(supabase, photoContext)
     // The full caption is worth keeping either way — "old card clips, looking for
-    // a spare" is exactly the note Nicki needs next to the photo.
+    // a spare" is exactly the note the office needs next to the photo.
     const note = msgBody.trim() || null
     const saved = await Promise.all(
       mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId, note))
@@ -750,7 +868,7 @@ Deno.serve(async (req: Request) => {
     const firstName = (employeeName || '').split(' ')[0] || ''
     const anySaved = saved.some(r => r !== null)
     const reply = !anySaved
-      ? `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact Nicki if it keeps failing.`
+      ? `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact the office if it keeps failing.`
       : photoContext
       ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
       : `Got the photo${firstName ? ' ' + firstName : ''}.`
@@ -872,7 +990,7 @@ Deno.serve(async (req: Request) => {
   try {
     parsed = await parseWithClaude(msgBody, today, parseContext)
   } catch (_e) {
-    const r = "Couldn't read that one. Reply HELP for the format, or text Nicki directly."
+    const r = "Couldn't read that one. Reply HELP for the format, or text the office directly."
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
@@ -946,7 +1064,8 @@ Deno.serve(async (req: Request) => {
   // descriptions join. A text with no job number attaches to the day's current job.
   const lastJob = await getLastJobForDay(supabase, fromPhone, workDate, submission)
   const prevEntries: any[] = submission?.entries || []
-  let allEntries: any[] = mergeEntries(prevEntries, parsed.entries || [], lastJob)
+  const mergeStamp = new Date().toISOString()
+  let allEntries: any[] = mergeEntries(prevEntries, parsed.entries || [], lastJob, mergeStamp)
 
   // Supplies accumulate across texts the same way entries do. If no job number was
   // given with a supply, attribute it to the first job we know about for the day.
@@ -963,8 +1082,11 @@ Deno.serve(async (req: Request) => {
 
   // Latest non-null parsed value wins — "lunch 30" or "actually I finished at 6"
   // later in the day overrides whatever was stored (or defaulted) earlier.
+  // Silent default, same philosophy as lunch/PD — a tech who doesn't mention a
+  // start time almost always started around 7; the office corrects the exceptions.
   const mergedTimeIn    = parsed.time_in
                         ?? (submission?.time_in ? submission.time_in.substring(0, 5) : null)
+                        ?? '07:00'
   const mergedStatedOut = parsed.stated_time_out
                         ?? (submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : null)
   const mergedLunch     = parsed.lunch_minutes != null ? parsed.lunch_minutes
@@ -1040,21 +1162,40 @@ Deno.serve(async (req: Request) => {
   const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
   const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)
 
+  // Entries this specific message actually touched — the reply only ever confirms
+  // what was just reported, not the whole day (the tech already knows the rest;
+  // "TS" is there if they want the full picture).
+  const touchedEntriesWithOT = allEntriesWithOT.filter((e: any) => e.last_mentioned_at === mergeStamp)
+
+  // ── Catch a job number that doesn't match any real job (typo or stale number) ──
+  // instead of silently storing it for the office to discover during review.
+  // Scoped to this message too — don't re-flag an old bad number every reply after.
+  const distinctJobNums = Array.from(new Set(
+    touchedEntriesWithOT.map((e: any) => e.job_number).filter((j: any) => j && String(j).toUpperCase() !== 'SHOP')
+  )) as string[]
+  let unknownJobs: string[] = []
+  if (distinctJobNums.length > 0) {
+    const { data: knownJobs } = await supabase.from('jobs').select('job_number').in('job_number', distinctJobNums)
+    const knownSet = new Set((knownJobs || []).map((j: any) => String(j.job_number).toLowerCase()))
+    unknownJobs = distinctJobNums.filter((j: string) => !knownSet.has(j.toLowerCase()))
+  }
+
   // ── Determine what's missing ──
   const missingEmployee = !mergedEmployeeId
   // After mergeEntries, null-job entries survive only when NO job is known at all
   // for the day — the single remaining case where the bot asks a question.
   const hasUnattributedWork = allEntries.some((e: any) => !e.job_number)
 
-  // Fields Nicki will need to fill in (shown in review screen)
+  // Fields the office will need to fill in (shown in review screen)
   const flags: string[] = []
-  if (!mergedTimeIn) flags.push('start time missing')
 
   // ── Decide ──
-  // The bot records quietly: lunch/PD/supplies are never asked about (they default
-  // at save time and Nicki corrects habitual forgetters). The only question left is
-  // the job question, asked at most once, and only when work was described with no
-  // job to attach it to.
+  // The bot records quietly: PD/supplies are never asked about (they default at save
+  // time and the office corrects habitual forgetters). Two questions remain: the job
+  // question (work described with no job to attach it to), and a lunch question that
+  // only fires on a longer day (>5hrs) where lunch was never mentioned at all — a
+  // silent 0 there is much more likely to be a forgotten entry than a real thing.
+  const needsLunchAsk = totalHours > 8 && mergedLunch == null && !isFollowUp
   let reply = ''
   let nextStatus = 'collecting'
   let pendingQuestions: string[] = []
@@ -1062,8 +1203,8 @@ Deno.serve(async (req: Request) => {
 
   if (missingEmployee) {
     // Employee couldn't be identified (unknown phone or unmatched name).
-    // Save immediately for Nicki instead of asking for follow-up.
-    reply = `Got it. Nicki will match this to you and get it into the system.`
+    // Save immediately for the office instead of asking for follow-up.
+    reply = `Got it. The office will match this to you and get it into the system.`
     nextStatus = 'submitted'
     flags.push('employee not identified — needs manual assignment')
 
@@ -1074,9 +1215,13 @@ Deno.serve(async (req: Request) => {
     pendingQuestions = ['Job entries?']
 
   } else if (hasUnattributedWork && isFollowUp) {
-    reply = `Got it${firstName ? ' ' + firstName : ''} — Nicki will match the job.`
+    reply = `Got it${firstName ? ' ' + firstName : ''} — the office will match the job.`
     nextStatus = 'submitted'
     flags.push('no job entries — needs manual entry')
+
+  } else if (needsLunchAsk) {
+    reply = `Got it${firstName ? ' ' + firstName : ''} — that's over 8hrs. Did you take a lunch?\n("lunch 30" or "no lunch")`
+    pendingQuestions = ['Lunch?']
   }
 
   if (!reply) nextStatus = 'submitted'
@@ -1085,7 +1230,7 @@ Deno.serve(async (req: Request) => {
     if (allEntries.some((e: any) => !(Number(e.hours) > 0))) {
       flags.push('job hours missing — need total hours or an out time')
     }
-    reply = daySummaryReply(firstName, allEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags)
+    reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length)
   }
 
   // ── Save/update submission ──
@@ -1103,7 +1248,7 @@ Deno.serve(async (req: Request) => {
     time_in:            mergedTimeIn || null,
     stated_time_out:    mergedStatedOut || null,
     // Silent defaults — the bot never asks about lunch/PD anymore. A tech who
-    // took lunch or is staying out will say so; Nicki corrects the forgetters.
+    // took lunch or is staying out will say so; the office corrects the forgetters.
     lunch_minutes:      mergedLunch ?? 0,
     per_diem_location:  mergedPerDiem ?? 'none',
     calculated_time_out: calcOut,
@@ -1124,7 +1269,7 @@ Deno.serve(async (req: Request) => {
 
   if (saveError) {
     console.error('sms_submissions save failed:', saveError.message)
-    const r = "Something went wrong saving that — text Nicki directly so it doesn't get lost."
+    const r = "Something went wrong saving that — text the office directly so it doesn't get lost."
     return isTwilio ? twiML(r) : jsonReply({ reply: r, error: saveError.message }, 500)
   }
 

@@ -16,7 +16,7 @@ Used supplies? Add them too: "supplies brake cleaner x1, wire brushes x2"
 
 ## Copy-paste template
 
-Don't want to type it from scratch every day? Copy this, fill in the blanks, delete any lines you don't need, and send it:
+Don't want to type it from scratch every day? Text **TEMPLATE** to either number and it'll text this back to you — or just copy it from here, fill in the blanks, delete any lines you don't need, and send it:
 
 ```
 In: [time]
