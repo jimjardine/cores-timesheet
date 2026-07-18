@@ -13,9 +13,15 @@
  * Each scenario uses a unique timestamp-suffixed phone so multi-turn scenarios
  * build state correctly and runs never interfere with each other.
  *
- * Since 2026-07-13 the function asks "any shop supplies used?" whenever a report
- * doesn't mention supplies, so most scenarios end with a "none" follow-up turn
- * before the Done confirmation. Full run is ~15 min (13s between Claude calls).
+ * Since 2026-07-17 the bot records quietly: it never asks about lunch/PD/supplies
+ * (they default to 0 / none), texts without a job number attach to the day's last
+ * job, same-job texts merge into one entry, and "TS [day]" shows the day's record.
+ * The only question left is the job question, and only when no job is known at
+ * all. Most scenarios are single-turn; a full run is a few minutes (13s between
+ * Claude calls for the free-tier rate limit).
+ *
+ * The "photo" scenario needs outbound network to a public image host and storage
+ * write access — filter it out with a name filter if it gets flaky.
  */
 
 const EDGE_URL      = 'https://wgjuflwbkmgirhqoqfgp.supabase.co/functions/v1/sms-timesheet'
@@ -33,15 +39,15 @@ function phone(n) {
   return String(1000000000 + (Number(RUN_ID) * 20) + n).slice(-10)
 }
 
-async function sms(fromPhone, body) {
+async function sms(fromPhone, body, mediaUrls = null) {
   // Long runs occasionally hit a transient ECONNRESET — retry rather than
-  // abandoning a 15-minute run at scenario 24.
+  // abandoning a long run near the end.
   for (let attempt = 1; ; attempt++) {
     try {
       const res = await fetch(EDGE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from_phone: fromPhone, body }),
+        body: JSON.stringify({ from_phone: fromPhone, body, ...(mediaUrls ? { media_urls: mediaUrls } : {}) }),
       })
       return (await res.json()).reply ?? ''
     } catch (err) {
@@ -55,7 +61,7 @@ async function sms(fromPhone, body) {
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
 // Mirror the edge function's Atlantic-time date handling so date scenarios
-// ("yesterday") can assert the exact date string in the confirmation.
+// ("yesterday") can assert the exact date string in the TS view.
 function atlanticDate(offsetDays = 0) {
   const d = new Date(Date.now() - 4 * 60 * 60 * 1000 - offsetDays * 86400000)
   return d.toISOString().split('T')[0]
@@ -69,14 +75,6 @@ function friendlyDate(dstr) {
 }
 
 const TEST_TECH_ID = 'e3044c0c-9628-46e0-9837-2526240b63c3'
-
-async function deleteSubmissions(fromPhone) {
-  // Content-Profile routes the DELETE to the Cores schema (tables moved out of public)
-  await fetch(`${SUPABASE_URL}/rest/v1/sms_submissions?from_phone=eq.${fromPhone}`, {
-    method: 'DELETE',
-    headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' },
-  })
-}
 
 async function cleanupTestTech() {
   // Delete ALL of Test Tech's submissions regardless of date.
@@ -98,9 +96,10 @@ async function scenario(name, fromPhone, steps) {
   console.log(`\n▶ ${name}`)
 
   let stepNum = 0
-  for (const [msg, expects] of steps) {
+  for (const step of steps) {
+    const [msg, expects, mediaUrls] = step
     stepNum++
-    const reply = await sms(fromPhone, msg)
+    const reply = await sms(fromPhone, msg, mediaUrls)
     const checks = Array.isArray(expects) ? expects : [expects]
     let ok = true
 
@@ -129,9 +128,10 @@ async function scenario(name, fromPhone, steps) {
   passed++
 }
 
-// ── scenarios ──────────────────────────────────────────────────────────────
+// No question should ever mention these — the bot doesn't ask about them anymore.
+const NO_NAG = [{ absent: 'lunch?' }, { absent: 'per diem tonight' }, { absent: 'supplies used' }]
 
-const SUPPLIES_Q = 'supplies used?'
+// ── scenarios ──────────────────────────────────────────────────────────────
 
 // 1. Unknown number gets saved for Nicki to match manually
 await scenario('unknown number', phone(1), [
@@ -140,328 +140,255 @@ await scenario('unknown number', phone(1), [
 
 // 2. HELP reply returns the help text
 await scenario('help request', phone(2), [
-  ['HELP', ['Cores Timesheets', 'Reply HELP']],
+  ['HELP', ['Cores Timesheets', 'TIMESHEET', 'Reply HELP']],
 ])
 
-// 3. All-in-one: jobs + times + lunch + PD in one message (phone auto-lookup via TEST_PHONE)
+// 3. All-in-one: jobs + times + lunch + PD in one message, one quiet ack back
 await cleanupTestTech()
 await scenario('all in one by phone', TEST_PHONE, [
   ['In 7:30, 4760 6hrs engine work, 4862 2hrs fuel lines, lunch 30, no PD', [
     'Got it Test',
-    SUPPLIES_Q,
-  ]],
-  ['none', [
-    'Done Test',
-    '4760: 6hrs reg',
-    '4862: 2hrs reg',
-    'Total: 8hrs reg',
-    'No per diem',
-    'No supplies',
-    '7:30am',
+    '4760: 6hrs',
+    '4862: 2hrs',
+    'Total 8hrs',
+    ...NO_NAG,
   ]],
 ])
 
-// 4. Multi-turn: jobs first, then follow-up answers lunch + PD, then supplies
+// 4. Day-start in-time only: acknowledged, never asks which job
 await cleanupTestTech()
-await scenario('multi-turn follow-up', phone(4), [
-  ['This is Test. Started 7am, 4760 6hrs bearings, 4862 2hrs, til 4', [
+await scenario('in time only no questions', phone(4), [
+  ['This is Test. In 7:30', [
     'Got it Test',
-    'lunch?',
-    'per diem',
-    SUPPLIES_Q,
-  ]],
-  ['Lunch 30, no PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    'lunch 30min',
-    'No per diem',
-    '7am',
+    'in 7:30am',
+    { absent: 'Which job' },
+    ...NO_NAG,
   ]],
 ])
 
-// 5. "Nope" accepted as a negative for every pending question (PD + supplies)
+// 5. Defaults: nothing said about lunch/PD → lunch 0 / no PD, visible in TS view.
+// With lunch defaulting to 0, the 7–3:30 bounds recompute the single job to 8.5hrs
+// (span minus no lunch) — the tech sees it in the ack and can text "lunch 30" to fix.
 await cleanupTestTech()
-await scenario('nope = no per diem', phone(5), [
-  ['This is Test. 4760 8hrs engine work, started 7am, til 3:30, lunch 30', ['per diem', SUPPLIES_Q]],
-  ['Nope', ['No per diem', 'No supplies', 'Done Test']],
+await scenario('silent defaults', phone(5), [
+  ['This is Test. 4760 8hrs engine work, in 7, out 330', ['Got it Test', '4760: 8.5hrs', ...NO_NAG]],
+  ['ts', ['4760: 8.5hrs', 'No per diem', { absent: 'lunch' }]],
 ])
 
-// 6. "No lunch" accepted for zero-minute lunch; supplies gets its solo round after
+// 6. Assume last job: a later text with no job number lands on the day's job
 await cleanupTestTech()
-await scenario('no lunch', phone(6), [
-  ['This is Test. 4760 8hrs, started 7am, til 3:30, no PD', ['lunch?', SUPPLIES_Q]],
-  ['No lunch', [SUPPLIES_Q]],
-  ['none', ['no lunch', 'Done Test']],
+await scenario('assume last job description', phone(6), [
+  ['This is Test. 4900 2hrs on a pump', ['Got it Test', '4900: 2hrs']],
+  ['fixed the head', ['4900: 2hrs', 'head', { absent: 'Which job' }]],
 ])
 
-// 7. Hours inferred from time bounds when "all day" used
+// 7. Assume last job with hours: "another 2 hrs" adds to the same job line
 await cleanupTestTech()
-await scenario('all day inference', phone(7), [
-  ['This is Test. Worked all day on 4760, started 7am, til 3:30, lunch 30, no PD', ['Got it Test', SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760:',
-    'No per diem',
+await scenario('assume last job hours add', phone(7), [
+  ['This is Test. 4900 2hrs pump work', ['4900: 2hrs']],
+  ['another 2 hrs on it', ['4900: 4hrs', { absent: 'Which job' }]],
+])
+
+// 8. Same job texted twice merges into ONE line, hours summed
+await cleanupTestTech()
+await scenario('merge same job', phone(8), [
+  ['This is Test. 4760 2hrs pump', ['4760: 2hrs']],
+  ['4760 1hr head gasket', ['4760: 3hrs', { absent: '4760: 2hrs' }, { absent: '4760: 1hr' }]],
+])
+
+// 9. Hours correction replaces instead of summing
+await cleanupTestTech()
+await scenario('hours correction replaces', phone(9), [
+  ['This is Test. 4760 2hrs pump', ['4760: 2hrs']],
+  ['actually that was 3hrs', ['4760: 3hrs', { absent: '5hrs' }]],
+])
+
+// 10. No job known at all → the ONE remaining question, answered with a bare number
+await cleanupTestTech()
+await scenario('no job yet asks once', phone(10), [
+  ['This is Test. spent the morning fixing the head', ['Which job']],
+  ['4900', ['Got it Test', '4900:', 'head']],
+])
+
+// 11. Out-time correction after submitting — latest value wins, no re-asks
+await cleanupTestTech()
+await scenario('out time correction', phone(11), [
+  ['This is Test. in 7, 4760 8hrs engine work, out 330, lunch 30', ['4760: 8hrs']],
+  ['actually I finished at 6', ['Got it Test', ...NO_NAG]],
+  ['ts', ['Out 6pm', 'lunch 30min']],
+])
+
+// 12. Lunch correction after submitting — hours recompute from the bounds with
+// the corrected lunch (7–3:30 minus 60 = 7.5hrs; minus 30 = 8hrs)
+await cleanupTestTech()
+await scenario('lunch correction', phone(12), [
+  ['This is Test. Started 7am, 4760 8hrs, til 3:30, lunch 60', ['4760: 7.5hrs']],
+  ['This is Test. Actually lunch was only 30 min', ['Got it Test', '4760: 8hrs', ...NO_NAG]],
+  ['ts', ['lunch 30min', { absent: 'lunch 60min' }]],
+])
+
+// 13. TS view: full day summary on demand, including per diem location
+await cleanupTestTech()
+await scenario('timesheet view', phone(13), [
+  ['This is Test. 4760 8hrs, in 7, out 330, lunch 30, staying at Delta Halifax', ['4760: 8hrs']],
+  ['timesheet', [friendlyDate(atlanticDate(0)), '4760: 8hrs', 'In 7am', 'PD: Delta Halifax']],
+  ['ts', ['4760: 8hrs']],
+])
+
+// 14. TS view: nothing submitted yet
+await scenario('timesheet empty', phone(14), [
+  ['ts', ['Nothing submitted for']],
+  ['ts blah', ["Didn't catch that day"]],
+])
+
+// 15. Backdated report + "ts yesterday"
+await cleanupTestTech()
+await scenario('yesterday', phone(15), [
+  ['This is Test. forgot to send yesterday - 4760 8hrs engine work, in 7, out 330, lunch 30, no pd', ['Got it Test', '4760: 8hrs']],
+  ['ts yesterday', [friendlyDate(atlanticDate(1)), '4760: 8hrs']],
+])
+
+// 16. Overtime shows in the running total
+await cleanupTestTech()
+await scenario('overtime', phone(16), [
+  ['This is Test. Started 7am, 4760 10hrs engine work, no lunch, no PD', [
+    '4760: 10hrs',
+    'Total 10hrs (2 OT)',
   ]],
 ])
 
-// 8. OT kicks in after 8 regular hours (single job)
+// 17. Split day across two jobs with OT
 await cleanupTestTech()
-await scenario('overtime', phone(8), [
-  ['This is Test. Started 7am, 4760 10hrs engine work, no lunch, no PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    /4760: 8hrs reg \+ 2hrs OT/,
-    /Total: 10hrs/,
+await scenario('split day OT', phone(17), [
+  ['This is Test. Started 7am, 4760 6hrs bearings, 4862 4hrs fuel lines, lunch 30, no PD', [
+    '4760: 6hrs',
+    '4862: 4hrs',
+    'Total 10hrs (2 OT)',
   ]],
 ])
 
-// 9. Split day: OT attributed to the second job
+// 18. Hours inferred from time bounds when "all day" used
 await cleanupTestTech()
-await scenario('split day OT', phone(9), [
-  ['This is Test. Started 7am, 4760 6hrs bearings, 4862 4hrs fuel lines, lunch 30, no PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 6hrs reg',
-    /4862: 2hrs reg \+ 2hrs OT/,
-    /Total: 10hrs/,
+await scenario('all day inference', phone(18), [
+  ['This is Test. Worked all day on 4760, started 7am, til 3:30, lunch 30, no PD', [
+    'Got it Test',
+    '4760: 8hrs',
   ]],
 ])
 
-// 10. Same-day second text merges into existing record — and the already-answered
-//     supplies question is NOT asked again on the reopened conversation
+// 19. Supplies mixed into an hours text are captured (visible in TS view)
 await cleanupTestTech()
-await scenario('same day second text', phone(10), [
-  ['This is Test. Started 7am, 4760 4hrs bearings, lunch 30, no PD', [SUPPLIES_Q]],
-  ['none', ['Done Test', '4760: 4hrs reg', 'No supplies']],
-  ['This is Test. Also 4862 2hrs fuel lines', [
-    'Done Test',
-    '4760',
-    '4862',
-    { absent: SUPPLIES_Q },
-  ]],
+await scenario('supplies inline', phone(19), [
+  ['This is Test. 4760 6hrs bearings, used 2 cans of brake cleaner, in 7, lunch 30', ['4760: 6hrs']],
+  ['ts', ['Supplies:', 'brake cleaner x2']],
 ])
 
-// 11. Correction: updating lunch after submission re-reads stored values, no re-asks
+// 20. A job's work description is not a supply — "4hrs seals" stays out of supplies
 await cleanupTestTech()
-await scenario('lunch correction', phone(11), [
-  ['This is Test. Started 7am, 4760 8hrs, til 3:30, lunch 60, no PD', [SUPPLIES_Q]],
-  ['none', ['Done Test', 'lunch 60min']],
-  ['This is Test. Actually lunch was only 30 min', ['Done Test', 'lunch 30min', { absent: SUPPLIES_Q }]],
-])
-
-// 12. Per diem location is captured and echoed back
-await cleanupTestTech()
-await scenario('per diem with location', phone(12), [
-  ['This is Test. 4760 8hrs, started 7am, til 3:30, lunch 30, staying at Delta Halifax', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    'PD: Delta Halifax',
-  ]],
+await scenario('work description is not a supply', phone(20), [
+  ['This is Test. 4760 4hrs seals, in 8, lunch 30, no pd', ['4760: 4hrs']],
+  ['ts', [{ absent: 'Supplies:' }]],
 ])
 
 // ── rough-language scenarios ───────────────────────────────────────────────
 // Simulating how different techs actually text: lowercase, typos, run-ons,
 // slang, military time, spelled-out numbers, rambling. All map to Test Tech.
 
-// 13. All lowercase, zero punctuation
+// 21. All lowercase, zero punctuation
 await cleanupTestTech()
-await scenario('lowercase no punctuation', phone(13), [
-  ['this is test worked 4760 8 hrs in at 7 out at 330 half hour lunch no pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    'lunch 30min',
-    'No per diem',
-    '7am',
+await scenario('lowercase no punctuation', phone(21), [
+  ['this is test worked 4760 8 hrs in at 7 out at 330 half hour lunch no pd', ['Got it Test', '4760: 8hrs', ...NO_NAG]],
+])
+
+// 22. Typos everywhere
+await cleanupTestTech()
+await scenario('typos', phone(22), [
+  ['This is Test. wrked on 4760 8hrs, startd 7am, dun at 330, lnch 30, no pd', ['Got it Test', '4760: 8hrs']],
+])
+
+// 23. Military time — times land correctly (checked via TS view)
+await cleanupTestTech()
+await scenario('military time', phone(23), [
+  ['This is Test. 0700 to 1530, 4760 8hrs valve job, lunch 30, no per diem', ['4760: 8hrs']],
+  ['ts', ['In 7am', '3:30pm']],
+])
+
+// 24. Decimal hours across two jobs
+await cleanupTestTech()
+await scenario('decimal hours', phone(24), [
+  ['This is Test. 4760 6.5hrs hyd pump, 4862 1.5hrs, in 7, lunch 30, no PD', [
+    '4760: 6.5hrs',
+    '4862: 1.5hrs',
+    'Total 8hrs',
   ]],
 ])
 
-// 14. Typos everywhere
+// 25. "worked thru lunch" + "going home" with OT
 await cleanupTestTech()
-await scenario('typos', phone(14), [
-  ['This is Test. wrked on 4760 8hrs, startd 7am, dun at 330, lnch 30, no pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    'lunch 30min',
-    'No per diem',
+await scenario('worked thru lunch', phone(25), [
+  ['This is Test. in at 6, 4760 10hrs gearbox teardown, worked thru lunch, going home after', [
+    '4760: 10hrs',
+    'Total 10hrs (2 OT)',
   ]],
 ])
 
-// 15. Military time
+// 26. "its [name]" identification form (no apostrophe)
 await cleanupTestTech()
-await scenario('military time', phone(15), [
-  ['This is Test. 0700 to 1530, 4760 8hrs valve job, lunch 30, no per diem', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '7am',
-    '3:30pm',
-    '4760: 8hrs reg',
+await scenario('its name form', phone(26), [
+  ['its test, 4760 8hrs, in 8, out 430, lunch 30, no pd', ['Got it Test', '4760: 8hrs']],
+])
+
+// 27. Spelled-out numbers ("eight hours", "started at seven")
+await cleanupTestTech()
+await scenario('spelled out numbers', phone(27), [
+  ['This is Test. eight hours on 4760 today, started at seven, lunch 30, no PD', ['4760: 8hrs']],
+])
+
+// 28. Run-on: three jobs, bare numbers, no "hrs" anywhere
+await cleanupTestTech()
+await scenario('run-on three jobs', phone(28), [
+  ['this is test 4760 3 4862 3 4901 2 in 7 lunch 30 no pd', [
+    '4760: 3hrs',
+    '4862: 3hrs',
+    '4901: 2hrs',
+    'Total 8hrs',
   ]],
 ])
 
-// 16. Decimal hours across two jobs
+// 29. Rambling with filler words, casual hotel mention, OT
 await cleanupTestTech()
-await scenario('decimal hours', phone(16), [
-  ['This is Test. 4760 6.5hrs hyd pump, 4862 1.5hrs, in 7, lunch 30, no PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 6.5hrs reg',
-    '4862: 1.5hrs reg',
-    'Total: 8hrs reg',
+await scenario('rambling with hotel', phone(29), [
+  ['hey its test here, long day lol. did the engine swap on 4760, took me like 9 hrs. got in at 630. grabbed a quick half hr lunch. crashing at the comfort inn in sydney tonight', [
+    '4760: 9hrs',
+    'Total 9hrs (1 OT)',
+    ...NO_NAG,
   ]],
+  ['ts', [/PD: .*[Cc]omfort/]],
 ])
 
-// 17. "worked thru lunch" + "going home" as no-lunch / no-PD, with OT
+// 30. ALL CAPS
 await cleanupTestTech()
-await scenario('worked thru lunch', phone(17), [
-  ['This is Test. in at 6, 4760 10hrs gearbox teardown, worked thru lunch, going home after', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    /4760: 8hrs reg \+ 2hrs OT/,
-    'no lunch',
-    'No per diem',
-  ]],
+await scenario('all caps', phone(30), [
+  ['THIS IS TEST 4760 8HRS IN 7 OUT 330 LUNCH 30 NO PD', ['Got it Test', '4760: 8hrs']],
 ])
 
-// 18. "its [name]" identification form (no apostrophe)
+// 31. Newline-separated fragments, terse
 await cleanupTestTech()
-await scenario('its name form', phone(18), [
-  ['its test, 4760 8hrs, in 8, out 430, lunch 30, no pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    '8am',
-  ]],
+await scenario('newline fragments', phone(31), [
+  ['This is Test\n4760 8hrs\nin 7 out 3\nno lunch\nno pd', ['Got it Test', '4760: 8hrs', ...NO_NAG]],
 ])
 
-// 19. Forgot to send yesterday — date resolves to yesterday AND survives the
-//     supplies follow-up (a "none" reply must not re-date the report to today)
-await cleanupTestTech()
-await scenario('yesterday', phone(19), [
-  ['This is Test. forgot to send yesterday - 4760 8hrs engine work, in 7, out 330, lunch 30, no pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    friendlyDate(atlanticDate(1)),
-    '4760: 8hrs reg',
-  ]],
-])
+// ── photo scenarios (need outbound network + storage writes; filter out if flaky) ──
 
-// 20. Spelled-out numbers ("eight hours", "started at seven")
-await cleanupTestTech()
-await scenario('spelled out numbers', phone(20), [
-  ['This is Test. eight hours on 4760 today, started at seven, lunch 30, no PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    '7am',
-  ]],
-])
+const TEST_IMAGE = 'https://placehold.co/60x60.jpg'
 
-// 21. Run-on: three jobs, bare numbers, no "hrs" anywhere
+// 32. Photo with a job # caption tags directly; uncaptioned photo assumes the
+//     day's job; a comment after a photo never triggers the job question
 await cleanupTestTech()
-await scenario('run-on three jobs', phone(21), [
-  ['this is test 4760 3 4862 3 4901 2 in 7 lunch 30 no pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 3hrs reg',
-    '4862: 3hrs reg',
-    '4901: 2hrs reg',
-    'Total: 8hrs reg',
-  ]],
-])
-
-// 22. Rambling with filler words, casual hotel mention, OT
-await cleanupTestTech()
-await scenario('rambling with hotel', phone(22), [
-  ['hey its test here, long day lol. did the engine swap on 4760, took me like 9 hrs. got in at 630. grabbed a quick half hr lunch. crashing at the comfort inn in sydney tonight', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    /4760: 8hrs reg \+ 1hrs OT/,
-    'lunch 30min',
-    /PD: .*[Cc]omfort/,
-  ]],
-])
-
-// 23. Newline-separated fragments, terse
-await cleanupTestTech()
-await scenario('newline fragments', phone(23), [
-  ['This is Test\n4760 8hrs\nin 7 out 3\nno lunch\nno pd', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    'no lunch',
-    'No per diem',
-  ]],
-])
-
-// 24. Multi-turn with casual follow-up answers ("took a half hour, heading home")
-await cleanupTestTech()
-await scenario('casual follow-up answers', phone(24), [
-  ['yo its test, put in 8 on 4760 today doing exhaust work, started at 7', [
-    'lunch?',
-    'per diem',
-  ]],
-  ['took a half hour, heading home', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    'lunch 30min',
-    'No per diem',
-  ]],
-])
-
-// 25. ALL CAPS
-await cleanupTestTech()
-await scenario('all caps', phone(25), [
-  ['THIS IS TEST 4760 8HRS IN 7 OUT 330 LUNCH 30 NO PD', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4760: 8hrs reg',
-    'No per diem',
-  ]],
-])
-
-// 26. Casual per diem hotel phrasing ("im at the wandlyn inn tonight")
-await cleanupTestTech()
-await scenario('casual hotel phrasing', phone(26), [
-  ['this is test. 8 hrs on 4862 electrical, in at 7, out at 330, 30 min lunch, im at the wandlyn inn tonight', [SUPPLIES_Q]],
-  ['none', [
-    'Done Test',
-    '4862: 8hrs reg',
-    /PD: .*[Ww]andlyn/,
-  ]],
-])
-
-// ── supplies-question scenarios (added 2026-07-14 after the triple re-ask) ──
-
-// 27. "supplies are in my gear photo" counts as an answer — and it STAYS answered
-//     when a later text reopens the conversation (the Jul 14 bug)
-await cleanupTestTech()
-await scenario('supplies via photo answer', phone(27), [
-  ['This is Test. 4760 8hrs engine work, in 7, out 330, lunch 30, no pd', [SUPPLIES_Q]],
-  ['i used shop supplies, took a picture of them', ['Done Test', 'gear photo']],
-  ['This is Test. also did 1hr on 4862 fuel lines', ['Done Test', { absent: SUPPLIES_Q }]],
-])
-
-// 28. A supplies answer that never says "supplies" or a job number still parses
-//     (the parser is told what question the reply is answering)
-await cleanupTestTech()
-await scenario('supplies answer without keyword', phone(28), [
-  ['This is Test. 4760 8hrs cleaning heads, in 7, out 330, lunch 30, no pd', [SUPPLIES_Q]],
-  ['Yes 3 cans of #44 red. All of them were open. They were in the yellow case', [
-    'Done Test',
-    '#44 red',
-    'x3',
-  ]],
-])
-
-// 29. A job's work description is not a supply — "4hrs seals" must not become
-//     "seals x1" in the supplies list (so the supplies question still gets asked)
-await cleanupTestTech()
-await scenario('work description is not a supply', phone(29), [
-  ['This is Test. 4760 4hrs seals, in 8, lunch 30, no pd', [SUPPLIES_Q]],
-  ['none', ['Done Test', 'No supplies']],
+await scenario('photo tagging', phone(32), [
+  ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
+  ['', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
+  ['old card clips, looking for a spare', [{ absent: 'Which job' }, { absent: 'job number' }]],
 ])
 
 // ── summary ────────────────────────────────────────────────────────────────
