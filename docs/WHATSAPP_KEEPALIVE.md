@@ -2,90 +2,65 @@
 
 ## What this is and why
 
-Twilio's WhatsApp Sandbox session expires after roughly 72 hours of inactivity between the sandbox number and a joined user — once it expires, the user has to manually re-send `join cookies-could` to the sandbox number before it'll work again. While Jim's real WhatsApp sender is still pending approval, this job automatically texts `join cookies-could` to his WhatsApp number every ~72 hours so that never has to happen manually.
+Twilio's WhatsApp Sandbox session expires after roughly 72 hours of inactivity — once it expires, whoever joined has to manually re-send `join cookies-could` to the sandbox number (`+14155238886`) before it'll work again. While Jim's real WhatsApp Business sender is still pending approval, this keeps his sandbox join alive automatically.
 
-It runs entirely inside Supabase — a `pg_cron` job checks in every 6 hours and, once 66+ hours have passed since the last send, calls the `sms-timesheet` edge function via `pg_net`, which sends the WhatsApp message through Twilio. No Claude session or external scheduler is involved; it'll keep running indefinitely until turned off below.
+**Important technical constraint:** the `join cookies-could` message must come *from Jim's own WhatsApp account* (+14734146000) *to* the sandbox — that's how Twilio's sandbox opt-in works. The Twilio REST API can only send messages *as* a number Twilio itself owns (the sandbox number, or an approved WhatsApp Business sender) — it can never send *as* an arbitrary personal WhatsApp account. So this can't be done as a pure server-side/Supabase job; it has to drive the real WhatsApp Web client, logged in as Jim.
 
-**Once Jim's real WhatsApp number goes live, turn this off** — see "How to turn it off" below.
+**Once Jim's real WhatsApp Business number goes live, this should be cancelled** — see "How to turn it off" below.
 
-## How to change the recipient number
+## How it actually works
 
-```bash
-supabase secrets set WHATSAPP_KEEPALIVE_TO_PHONE=+1XXXXXXXXXX --project-ref wgjuflwbkmgirhqoqfgp
-```
+A recurring Claude Code cron job (`CronCreate`, job id `25a95e52`, `17 */12 * * *` — every 12 hours) checks a local timestamp file and, once 54+ hours have passed since the last send, drives Chrome via the `claude-in-chrome` browser tools to:
 
-Takes effect on the next send automatically — no redeploy, no migration. The number must already be joined to the Twilio Sandbox (i.e. it has sent `join cookies-could` to the sandbox number at least once), or the send will fail.
+1. Open `https://web.whatsapp.com` (must already be logged in — see below).
+2. Open the "Twilio" Business Account chat (the sandbox conversation).
+3. Type and send `join cookies-could`.
+4. Record the new send time to `~/.cores_whatsapp_keepalive_last_sent`.
 
-## How to add/rotate the shared secret
+**Two important limitations:**
 
-The cron job and the edge function authenticate to each other with a shared secret. **It lives in two places that must match:**
+- **This only runs while a specific Claude Code session stays open.** It is NOT a background daemon or a system service — if the terminal/session that created the cron job closes for any reason (quit, crash, reboot), the job disappears immediately, not just after some grace period. It needs to be recreated by asking Claude to set it up again in a new session.
+- **Recurring cron jobs auto-expire after 7 days** regardless of whether the session stays open, and need to be re-armed (just ask Claude to redo the `CronCreate` call — same cron expression and prompt as above).
 
-1. Edge Function secret:
-   ```bash
-   supabase secrets set WHATSAPP_KEEPALIVE_SECRET=<new value> --project-ref wgjuflwbkmgirhqoqfgp
-   ```
-2. The Vault entry Postgres reads when calling out:
-   ```sql
-   update vault.secrets
-   set secret = '<same new value>'
-   where name = 'whatsapp_keepalive_secret';
-   ```
+Given both, this is a best-effort mechanism tied to how often this laptop has an active Claude Code session going — which is why the acceptable failure mode here is "you haven't used Claude Code in a while," not a hard guarantee.
 
-If these ever get out of sync, sends will silently fail with a `401 unauthorized` from the edge function — that mismatch is the first thing to check if the keep-alive stops working.
+## WhatsApp Web login
 
-## How to change the cadence or the 66-hour threshold
+The automation reuses whatever Chrome profile Claude's browser tools are already connected to. As long as:
+- You don't manually unlink the device (phone → WhatsApp → Settings → Linked Devices)
+- Chrome's cookies/site data for that profile don't get cleared
+- Your phone doesn't go offline for a very long stretch
 
-- **The 66-hour send gate** lives in `"Cores".check_whatsapp_keepalive()` — edit and `create or replace function ...` (either a new migration file, or run it ad hoc via the `execute_sql` MCP tool / Supabase SQL editor).
-- **The 6-hour poll interval** lives in the cron schedule:
-  ```sql
-  select cron.alter_job(
-    (select jobid from cron.job where jobname = 'whatsapp-keepalive-check'),
-    schedule := '<new 5-field cron expression>'
-  );
-  ```
-
-## How to turn it off (and back on)
-
-One line, no migration or redeploy needed:
-
-```sql
-update "Cores".whatsapp_keepalive_state set enabled = false;
-```
-
-The cron job keeps running every 6 hours but no-ops instantly on this check — cheap and self-documenting. To turn it back on later:
-
-```sql
-update "Cores".whatsapp_keepalive_state set enabled = true;
-```
+...the WhatsApp Web session should stay logged in indefinitely without re-scanning a QR code. If the cron job ever reports "WhatsApp Web logged out, needs to be re-scanned," you'll need to scan a fresh QR code with your phone (Settings → Linked Devices → Link a Device) the next time you're in a session with Claude.
 
 ## How to check it's working
 
-```sql
--- Is the job registered and active?
-select jobid, jobname, schedule, active from cron.job where jobname = 'whatsapp-keepalive-check';
+Ask Claude to run `CronList` to confirm the job is still registered (remember: gone if the session that created it has since closed). You can also check the local state file directly:
 
--- Current state (enabled? when did it last actually send?)
-select * from "Cores".whatsapp_keepalive_state;
-
--- Did it fire, and on schedule?
-select * from cron.job_run_details
-where jobid = (select jobid from cron.job where jobname = 'whatsapp-keepalive-check')
-order by start_time desc limit 5;
-
--- Did the actual HTTP call to the edge function succeed?
-select id, status_code, content, created from net._http_response order by created desc limit 5;
+```bash
+cat ~/.cores_whatsapp_keepalive_last_sent
 ```
 
-A healthy run shows `status_code = 200` and `content` containing `{"ok":true}`.
+This shows the UTC timestamp of the last confirmed send.
 
-## Where everything lives
+## How to turn it off
+
+Ask Claude to run `CronDelete` on job id `25a95e52` (or whatever the current job id is — ask Claude to look it up via `CronList` if this doc is stale). No code, migration, or secret changes needed — this mechanism lives entirely in the cron scheduler and a local timestamp file.
+
+## How to change the cadence or threshold
+
+Ask Claude to cancel the existing job (`CronDelete`) and recreate it with a new cron expression / elapsed-hours threshold — there's no config file to hand-edit, since the logic lives in the prompt text of the scheduled job itself.
+
+## Superseded approach (disabled, not in use)
+
+An earlier attempt tried to solve this by having the `sms-timesheet` edge function send an automated WhatsApp ping *from* the sandbox *to* Jim every ~72h via `pg_cron` + `pg_net` inside Supabase. This turned out not to solve the actual problem — Twilio's sandbox timeout is based on messages sent *to* the sandbox by the joined user, not messages received from it — so it's been disabled (`update "Cores".whatsapp_keepalive_state set enabled = false;`). The code, migration, secrets, and Vault entries are still in place (harmless, inert) in case a variant of that mechanism is ever useful for something else:
 
 | Piece | Name |
 |---|---|
 | Edge function | `supabase/functions/sms-timesheet/index.ts` — `sendTwilioWhatsApp()` helper + `action === 'whatsapp_keepalive'` branch |
 | Edge Function secrets | `WHATSAPP_KEEPALIVE_SECRET`, `WHATSAPP_KEEPALIVE_TO_PHONE` |
 | Vault secrets (Postgres side) | `whatsapp_keepalive_secret`, `whatsapp_keepalive_url` |
-| State table | `"Cores".whatsapp_keepalive_state` (single row, `id = true`) |
+| State table | `"Cores".whatsapp_keepalive_state` (single row, `id = true`, currently `enabled = false`) |
 | Postgres function | `"Cores".check_whatsapp_keepalive()` |
-| Cron job | `whatsapp-keepalive-check` (`0 */6 * * *`) |
+| Cron job (inert) | `whatsapp-keepalive-check` (`0 */6 * * *`) |
 | Migration | `supabase/migrations/20260719120000_whatsapp_keepalive.sql` |
