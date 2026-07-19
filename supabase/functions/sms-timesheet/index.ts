@@ -27,14 +27,14 @@ Reply HELP + a word above for details (e.g. "HELP jobs").
 const TEMPLATE_TEXT = `Copy this, fill in the blanks, delete lines you don't need, then send it back:
 
 In: [time]
-Job [job #]: [hours]hrs - [what you did]
-Job [job #]: [hours]hrs - [what you did]
+Job [job_number]: [hours]hrs - [what_you_did]
+Job [job_number]: [hours]hrs - [what_you_did]
 Out: [time]
-Lunch: [minutes, or "no lunch"]
-PD: [where you're staying, or "no PD"]
+Lunch: [minutes]
+PD: [location_or_no_pd]
 Supplies: [item] x[qty] (delete this line if you didn't use any)
 
-Add more Job lines if you worked more than two.`
+Add more Job lines if you worked more than two. Double-tap a [bracketed] word to select and replace it in one go.`
 
 const HELP_TOPICS: Record<string, string> = {
   hours: `HOURS — format guide
@@ -273,6 +273,29 @@ async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; e
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({ To: to, From: from, Body: body }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    return { ok: false, error: `Twilio send failed (${res.status}): ${detail.slice(0, 200)}` }
+  }
+  return { ok: true }
+}
+
+// Sends via the WhatsApp Sandbox (not the SMS number) — both To and From need
+// the whatsapp: prefix or Twilio delivers it as a plain SMS instead.
+async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
+  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
+
+  const from = 'whatsapp:+14155238886' // Twilio WhatsApp Sandbox shared number
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ To: `whatsapp:${to}`, From: from, Body: body }),
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
@@ -634,6 +657,22 @@ Deno.serve(async (req: Request) => {
       }
     } else {
       const json = await req.json()
+
+      // App-triggered action (not a Twilio webhook) — a pg_cron job pings this
+      // every ~72h to keep the WhatsApp Sandbox session from expiring while
+      // Jim's real WhatsApp sender is still pending. Shared-secret gated since
+      // this function runs with verify_jwt disabled (required for Twilio).
+      if (json.action === 'whatsapp_keepalive') {
+        const expected = Deno.env.get('WHATSAPP_KEEPALIVE_SECRET')
+        if (!expected || json.secret !== expected) {
+          return jsonReply({ ok: false, error: 'unauthorized' }, 401)
+        }
+        const to = Deno.env.get('WHATSAPP_KEEPALIVE_TO_PHONE')
+        if (!to) return jsonReply({ ok: false, error: 'WHATSAPP_KEEPALIVE_TO_PHONE not configured' })
+
+        const sendResult = await sendTwilioWhatsApp(to, 'join cookies-could')
+        return jsonReply(sendResult)
+      }
 
       // App-triggered action (not a Twilio webhook) — request an employee's
       // confirmation of a manual entry the office just typed in
