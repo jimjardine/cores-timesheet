@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { ensureStatPay, isStatHoliday } from '../utils/statPay'
+import { isWeekend } from '../utils/weeklyCompilationPdf'
+import { fmtHours } from '../utils/format'
+
+// Rounds a minute delta to the nearest quarter hour, as hours (e.g. -150 -> -2.5)
+const deltaMinsToHours = (mins) => Math.round(mins / 15) / 4
 
 const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -13,7 +18,7 @@ const STATUS_COLORS = {
   rejected:   '#cc2222',
 }
 
-export default function SmsReview() {
+export default function SmsReview({ onApproved } = {}) {
   const [submissions, setSubmissions] = useState([])
   const [jobs, setJobs]               = useState([])
   const [employees, setEmployees]     = useState([])
@@ -153,6 +158,7 @@ export default function SmsReview() {
     }
     await ensureStatPay(sub.employee_id, sub.work_date)
     await load()
+    onApproved?.()
     setActing(null)
   }
 
@@ -235,8 +241,10 @@ export default function SmsReview() {
         .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date).eq('is_stat_pay', false)
       alreadyWorked = (existing || []).reduce((s, e) => s + Number(e.hours || 0), 0)
     }
-    // Work on a stat holiday is all OT — no reg allowance at all
-    const statDay = editFields.work_date ? await isStatHoliday(editFields.work_date) : false
+    // Work on a stat holiday or weekend is all OT — no reg allowance at all
+    const statDay = editFields.work_date
+      ? (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
+      : false
     let regLeft = statDay ? 0 : Math.max(0, otThreshold - alreadyWorked)
     const entries = cleaned.map(e => {
       const hours = Math.round(e.hours * 100) / 100
@@ -399,7 +407,10 @@ export default function SmsReview() {
         if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
         if (sub.per_diem_location == null)             flags.push('per diem unknown')
         if ((!sub.supplies || sub.supplies.length === 0) && sub.supplies_note === 'photo') flags.push('📷 supplies in gear photo — itemize from Gear Photos tab')
-        if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) flags.push(`time delta ${sub.delta_minutes > 0 ? '+' : ''}${sub.delta_minutes}min`)
+        if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) {
+          const deltaHrs = deltaMinsToHours(sub.delta_minutes)
+          flags.push(`time delta ${deltaHrs > 0 ? '+' : ''}${fmtHours(deltaHrs)}hrs`)
+        }
         if (sub.status === 'collecting' && (sub.pending_questions || []).length > 0) {
           flags.push(`⏳ awaiting reply — ${sub.pending_questions.join(' | ')}`)
         }
@@ -454,7 +465,7 @@ export default function SmsReview() {
                   <span><strong>Lunch:</strong> {sub.lunch_minutes != null ? (sub.lunch_minutes === 0 ? 'None' : `${sub.lunch_minutes}min`) : '?'}</span>
                   {sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 0 && (
                     <span style={{ color: Math.abs(sub.delta_minutes) > 15 ? '#c00' : '#888' }}>
-                      <strong>Δ:</strong> {sub.delta_minutes > 0 ? '+' : ''}{sub.delta_minutes}min
+                      <strong>Δ:</strong> {(() => { const h = deltaMinsToHours(sub.delta_minutes); return `${h > 0 ? '+' : ''}${fmtHours(h)}hrs` })()}
                     </span>
                   )}
                   <span><strong>Per diem:</strong> {sub.per_diem_location === 'none' ? 'No' : sub.per_diem_location || '?'}</span>

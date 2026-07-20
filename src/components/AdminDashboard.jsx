@@ -31,7 +31,7 @@ const calculateExpectedHours = (timeIn, timeOut, lunchMinutes) => {
 }
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('timesheets')
+  const [activeTab, setActiveTab] = useState('sms')
 
   // ── Timesheets tab ──
   const [entries, setEntries] = useState([])
@@ -223,8 +223,8 @@ export default function AdminDashboard() {
 
     // Save new job if being added
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
-      // Work on a stat holiday is all OT
-      const statDay = await isStatHoliday(editFields.work_date)
+      // Work on a stat holiday or weekend is all OT
+      const statDay = (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
       const { error: newJobError } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editFields.employee_id,
         work_date: editFields.work_date,
@@ -282,8 +282,8 @@ export default function AdminDashboard() {
     }
 
     try {
-      // Work on a stat holiday is all OT
-      const statDay = await isStatHoliday(editEntry.work_date)
+      // Work on a stat holiday or weekend is all OT
+      const statDay = (await isStatHoliday(editEntry.work_date)) || isWeekend(editEntry.work_date)
       const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
         employee_id: editEntry.employee_id,
         work_date: editEntry.work_date,
@@ -345,8 +345,9 @@ export default function AdminDashboard() {
       const { data: otCfg } = await supabase.schema('Cores').from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
       const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
 
-      // Work on a stat holiday is all OT — the 8 reg hrs come from the auto stat-pay entry
-      const statDay = await isStatHoliday(manualFields.work_date)
+      // Work on a stat holiday or weekend is all OT — the 8 reg hrs on a stat
+      // day come from the auto stat-pay entry instead
+      const statDay = (await isStatHoliday(manualFields.work_date)) || isWeekend(manualFields.work_date)
 
       // Fetch existing entries for this employee on this date to include in OT calc
       const { data: existingToday } = await supabase.schema('Cores').from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date).eq('is_stat_pay', false)
@@ -848,8 +849,8 @@ export default function AdminDashboard() {
                   <tr key={d.date} style={weekend ? { background: '#fafafa' } : {}}>
                     <td style={tdStyleWc}>{dayName(d.date)}</td>
                     <td style={{ ...tdStyleWc, color: '#888' }}>{fmtShortDate(d.date)}</td>
-                    <td style={{ ...tdStyleWc, textAlign: 'right', color: weekend ? '#ccc' : '#2d6a38' }}>
-                      {weekend ? '—' : (d.regHours ? fmtHours(d.regHours) : '')}
+                    <td style={{ ...tdStyleWc, textAlign: 'right', color: weekend && !d.regHours ? '#ccc' : '#2d6a38' }}>
+                      {d.regHours ? fmtHours(d.regHours) : (weekend ? '—' : '')}
                     </td>
                     <td style={{ ...tdStyleWc, textAlign: 'right', background: weekend ? '#e5e5e5' : 'transparent', color: d.otHours ? '#c0392b' : '#ccc', fontWeight: d.otHours ? 600 : 400 }}>
                       {d.otHours ? fmtHours(d.otHours) : ''}
@@ -1763,7 +1764,7 @@ export default function AdminDashboard() {
       })()}
 
       {/* ── SMS Review tab ── */}
-      {activeTab === 'sms' && <SmsReview />}
+      {activeTab === 'sms' && <SmsReview onApproved={loadTimesheets} />}
       {activeTab === 'photos' && <GearPhotos />}
 
     </div>

@@ -15,6 +15,7 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • PHONE# — phone directory
 • PHOTO — gear photos
 • TIMESHEET — what's logged for a day
+• REJECT — delete today's entry
 • SUPPLIES — log parts used
 • OTHER — using someone else's phone
 
@@ -24,17 +25,16 @@ Reply HELP + a word above for details (e.g. "HELP jobs").
 
 // Sent back verbatim when a tech texts TEMPLATE — kept in sync with the
 // "Copy-paste template" section of public/SMS_CHEAT_SHEET.md.
-const TEMPLATE_TEXT = `Copy this, fill in the blanks, delete lines you don't need, then send it back:
-
-In: [time]
-Job [job_number]: [hours]hrs - [what_you_did]
-Job [job_number]: [hours]hrs - [what_you_did]
+// Nothing here but what's meant to go back to the bot — a tech doing a
+// select-all-and-copy on the reply shouldn't have to strip out instructions
+// first. Usage guidance lives in HELP_TOPICS.template and the cheat sheet instead.
+const TEMPLATE_TEXT = `In: [time]
+Job [job#]: [hours]hrs - [task]
+Job [job#]: [hours]hrs - [task]
 Out: [time]
 Lunch: [minutes]
-PD: [location_or_no_pd]
-Supplies: [item] x[qty] (delete this line if you didn't use any)
-
-Add more Job lines if you worked more than two. Double-tap a [bracketed] word to select and replace it in one go.`
+PD: [y/n]
+Supplies: [product] x[qty]`
 
 const HELP_TOPICS: Record<string, string> = {
   hours: `HOURS — format guide
@@ -79,6 +79,13 @@ Add a day for another date: "TS yesterday", "TS monday".`,
 
   template: '', // alias, filled in below
 
+  reject: `REJECT — delete an entry
+
+Totally botched a day's text? Reply REJECT and it wipes today's entry so
+you can start over. Add a day for another date: "REJECT yesterday".
+Only works before the office approves it — after that, they'll need to fix
+or delete it on their end.`,
+
   supplies: `SUPPLIES — log parts used
 
 Add them to your hours text or on their own:
@@ -93,7 +100,13 @@ Start your text with: "This is Joey" so the hours land on their timesheet, not y
 HELP_TOPICS.format = HELP_TOPICS.hours
 HELP_TOPICS.photos = HELP_TOPICS.photo
 HELP_TOPICS.ts = HELP_TOPICS.timesheet
-HELP_TOPICS.template = TEMPLATE_TEXT
+HELP_TOPICS.template = `TEMPLATE — fill-in-the-blank text
+
+Text TEMPLATE any time for a copy-paste starting point:
+
+${TEMPLATE_TEXT}
+
+Fill in the blanks, delete any lines you don't need, add more Job lines if you worked more than two, then send it back. Double-tap a [bracketed] word to select and replace it in one go.`
 
 function helpReply(topicRaw: string | undefined): string {
   const topic = (topicRaw || '').trim().toLowerCase().replace(/[^a-z]/g, '')
@@ -890,6 +903,50 @@ Deno.serve(async (req: Request) => {
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
+  // ── Self-service delete ("reject", optional day) ──
+  // A tech who completely botched a day's entry can wipe it themselves, as long
+  // as the office hasn't approved it yet — once approved it's real payroll data
+  // and has to go through the office (Timesheets tab → Delete) instead.
+  const rejectMatch = msgLower.match(/^reject(?:\s+(.+))?$/)
+  if (rejectMatch && mediaUrls.length === 0) {
+    const rejectDate = resolveDayArg(rejectMatch[1] || '', today)
+    if (!rejectDate) {
+      const r = `Didn't catch that day. Try "reject", "reject yesterday" or "reject monday".`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    let target: any = null
+    {
+      const { data: byPhone } = await supabase
+        .from('sms_submissions').select('*')
+        .eq('from_phone', fromPhone).eq('work_date', rejectDate)
+        .order('updated_at', { ascending: false }).limit(1)
+      if (byPhone?.length) target = byPhone[0]
+      else if (employeeId) {
+        const { data: byEmp } = await supabase
+          .from('sms_submissions').select('*')
+          .eq('employee_id', employeeId).eq('work_date', rejectDate)
+          .order('updated_at', { ascending: false }).limit(1)
+        if (byEmp?.length) target = byEmp[0]
+      }
+    }
+
+    if (!target) {
+      const r = `Nothing submitted for ${friendlyDate(rejectDate)} to delete.`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+    if (target.status === 'approved') {
+      const r = `Your ${friendlyDate(rejectDate)} entry's already been approved by the office — contact them directly to fix it.`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    const { error: deleteError } = await supabase.from('sms_submissions').delete().eq('id', target.id)
+    const r = deleteError
+      ? `Something went wrong deleting that — contact the office directly.`
+      : `Deleted your ${friendlyDate(rejectDate)} entry. Text your hours again whenever you're ready.`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
   // ── Photo submission ──
   // Photos are recorded quietly: spot a job/ship in the caption if there is one,
   // otherwise assume the day's current job. Never ask. Photos arriving before any
@@ -1205,9 +1262,12 @@ Deno.serve(async (req: Request) => {
       : Promise.resolve({ data: [] }),
     supabase.from('stat_holidays').select('holiday_date').eq('holiday_date', workDate),
   ])
-  // Work on a stat holiday is all OT — the 8 reg hrs come from the auto stat-pay entry
+  // Work on a stat holiday or weekend is all OT — for a stat day, the 8 reg
+  // hrs come from the auto stat-pay entry instead.
   const isStatDay = (statRows || []).length > 0
-  const dailyOTThreshold = isStatDay ? 0 : (otCfg ? Number(otCfg.value) : 8)
+  const workDateDOW = new Date(workDate + 'T12:00:00').getDay()
+  const isWeekendDay = workDateDOW === 0 || workDateDOW === 6
+  const dailyOTThreshold = (isStatDay || isWeekendDay) ? 0 : (otCfg ? Number(otCfg.value) : 8)
   const alreadyWorkedHours = (priorEntries || []).reduce((s: number, e: any) => s + Number(e.hours || 0), 0)
   const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
   const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)

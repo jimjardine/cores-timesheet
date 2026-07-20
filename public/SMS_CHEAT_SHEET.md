@@ -20,15 +20,15 @@ Don't want to type it from scratch every day? Text **TEMPLATE** to either number
 
 ```
 In: [time]
-Job [job #]: [hours]hrs - [what you did]
-Job [job #]: [hours]hrs - [what you did]
+Job [job#]: [hours]hrs - [task]
+Job [job#]: [hours]hrs - [task]
 Out: [time]
-Lunch: [minutes, or "no lunch"]
-PD: [where you're staying, or "no PD"]
-Supplies: [item] x[qty] (delete this line if you didn't use any)
+Lunch: [minutes]
+PD: [y/n]
+Supplies: [product] x[qty]
 ```
 
-Add more `Job` lines if you worked more than two. First time using this? Send a filled-in test message and make sure you get a "Got it" reply back before relying on it for a real day.
+Add more `Job` lines if you worked more than two. Double-tap a `[bracketed]` word to select and replace it in one go — no spaces inside the brackets means you never have to drag-select across words. First time using this? Send a filled-in test message and make sure you get a "Got it" reply back before relying on it for a real day.
 
 ## Missing a job number?
 

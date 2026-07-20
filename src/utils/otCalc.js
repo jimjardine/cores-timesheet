@@ -8,11 +8,16 @@
 //   1. is_stat_pay      → all regular; does NOT consume the weekly allowance
 //                         and does NOT count as hours worked that day
 //   2. manual ot_hours  → honoured as-is (reg = hours - ot_hours)
-//   3. stat holiday     → all OT from the first minute
+//   3. stat holiday or weekend → all OT from the first minute
 //   4. otherwise        → regular up to the daily threshold, then up to the
 //                         weekly threshold; the rest is OT
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+function isWeekend(ymd) {
+  const dow = new Date(ymd + 'T12:00:00').getDay()
+  return dow === 0 || dow === 6
+}
 
 // Pay week runs Thu–Wed
 function payWeekStartYMD(ymd) {
@@ -54,7 +59,7 @@ export function computeOTMap(entries, { dailyThreshold = 8, weeklyThreshold = 40
           const ot = Number(e.ot_hours), reg = hrs - ot
           map[e.id] = { reg, ot, manual: true }
           dayHoursSoFar += hrs; weeklyRegSoFar += reg
-        } else if (statHolidays.has(e.work_date)) {
+        } else if (statHolidays.has(e.work_date) || isWeekend(e.work_date)) {
           map[e.id] = { reg: 0, ot: hrs }
           dayHoursSoFar += hrs
         } else {
