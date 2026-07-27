@@ -47,7 +47,7 @@ async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; e
   const token = Deno.env.get('TWILIO_AUTH_TOKEN')
   if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
 
-  const from = '+19024046969' // existing Cores Twilio number
+  const from = '+15064046969' // existing Cores Twilio number
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: 'POST',
     headers: {

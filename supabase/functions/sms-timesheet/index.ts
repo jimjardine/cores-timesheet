@@ -278,7 +278,7 @@ async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; e
   const token = Deno.env.get('TWILIO_AUTH_TOKEN')
   if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
 
-  const from = '+19024046969' // existing Cores Twilio number
+  const from = '+15064046969' // existing Cores Twilio number
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: 'POST',
     headers: {
@@ -709,7 +709,14 @@ Deno.serve(async (req: Request) => {
 
         const summary = pending.map((e: any) => `${e.jobs?.job_number || 'job'} ${Number(e.hours)}hrs`).join(', ')
         const msg = `The office logged your timesheet for ${friendlyDate(json.work_date)}: ${summary}. Reply to this text to confirm.`
-        const sendResult = await sendTwilioSms(employee.phone, msg)
+
+        // Confirmation texts paused for everyone except Jim while this feature
+        // is being reworked — Jim gets his via WhatsApp instead of SMS.
+        const isJim = normalizePhone(employee.phone) === '5068667302'
+        if (!isJim) {
+          return jsonReply({ ok: true, skipped: true })
+        }
+        const sendResult = await sendTwilioWhatsApp(`+1${normalizePhone(employee.phone)}`, msg)
 
         await supabase
           .from('timesheet_entries')
