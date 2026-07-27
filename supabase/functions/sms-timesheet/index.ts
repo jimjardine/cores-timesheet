@@ -691,7 +691,7 @@ Deno.serve(async (req: Request) => {
       // confirmation of a manual entry the office just typed in
       if (json.action === 'request_confirmation') {
         const { data: employee } = await supabase
-          .from('employees').select('id, name, phone').eq('id', json.employee_id).single()
+          .from('employees').select('id, name, phone, whatsapp_phone').eq('id', json.employee_id).single()
         if (!employee?.phone) {
           return jsonReply({ ok: false, error: 'No phone number on file for this employee' })
         }
@@ -716,7 +716,8 @@ Deno.serve(async (req: Request) => {
         if (!isJim) {
           return jsonReply({ ok: true, skipped: true })
         }
-        const sendResult = await sendTwilioWhatsApp(`+1${normalizePhone(employee.phone)}`, msg)
+        const whatsappTo = normalizePhone(employee.whatsapp_phone || employee.phone)
+        const sendResult = await sendTwilioWhatsApp(`+1${whatsappTo}`, msg)
 
         await supabase
           .from('timesheet_entries')
