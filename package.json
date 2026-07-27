@@ -23,7 +23,8 @@
     "jspdf": "^4.2.1",
     "marked": "^18.0.6",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.2",

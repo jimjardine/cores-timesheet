@@ -1,32 +1,20 @@
-import React, { useState } from 'react'
-import AdminDashboard from './components/AdminDashboard'
-import Reports from './components/Reports'
-import AdminPanel from './components/AdminPanel'
-import PasswordGate from './components/PasswordGate'
+import React from 'react'
+import { HashRouter, Routes, Route } from 'react-router-dom'
+import AdminApp from './AdminApp'
+import EmployeeApp from './employee/EmployeeApp'
 import './App.css'
 
+// HashRouter (not BrowserRouter) — GitHub Pages serves this as a static site
+// with no SPA-fallback 404.html, so hash routes (/#/my) are the only way a
+// deep link (or a refresh) survives without extra deploy infra.
 function App() {
-  const [adminView, setAdminView] = useState('reports')
-
   return (
-    <PasswordGate>
-      <div>
-        <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
-          <span style={{ color: '#fff', fontWeight: 700, marginRight: '1.5rem' }}>Cores Worldwide</span>
-          {[['reports', 'Job Reports'], ['dashboard', 'Timesheets'], ['admin', 'Admin']].map(([key, label]) => (
-            <button key={key} onClick={() => setAdminView(key)} style={{
-              padding: '0.4rem 1rem', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem',
-              background: adminView === key ? '#0066cc' : 'transparent',
-              color: adminView === key ? '#fff' : '#aaa',
-            }}>{label}</button>
-          ))}
-          <button onClick={() => window.location.reload()} style={{ marginLeft: 'auto', padding: '0.4rem 1rem', border: '1px solid #555', borderRadius: '4px', background: 'transparent', color: '#aaa', cursor: 'pointer', fontSize: '0.9rem' }}>Refresh</button>
-        </nav>
-        {adminView === 'reports' && <Reports />}
-        {adminView === 'dashboard' && <AdminDashboard />}
-        {adminView === 'admin' && <AdminPanel />}
-      </div>
-    </PasswordGate>
+    <HashRouter>
+      <Routes>
+        <Route path="/my/*" element={<EmployeeApp />} />
+        <Route path="/*" element={<AdminApp />} />
+      </Routes>
+    </HashRouter>
   )
 }
 

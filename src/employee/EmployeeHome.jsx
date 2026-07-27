@@ -1,0 +1,209 @@
+import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../supabaseClient'
+import { payWeekRange, ensureStatPay, cleanupStatPay } from '../utils/statPay'
+import { computeOTMap } from '../utils/otCalc'
+import { fmtHours } from '../utils/format'
+import { addJobToDay } from '../utils/entrySave'
+import './employee.css'
+
+const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const todayYMD = () => toYMD(new Date())
+
+function addDays(ymd, n) {
+  const d = new Date(ymd + 'T12:00:00')
+  d.setDate(d.getDate() + n)
+  return toYMD(d)
+}
+
+const dayName = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'long' })
+const shortDate = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
+
+export default function EmployeeHome({ employee }) {
+  const navigate = useNavigate()
+  const [weekStart, setWeekStart] = useState(() => payWeekRange(todayYMD())[0])
+  const [entries, setEntries] = useState([])
+  const [supplies, setSupplies] = useState([])
+  const [jobs, setJobs] = useState([])
+  const [payrollConfig, setPayrollConfig] = useState({})
+  const [statHolidays, setStatHolidays] = useState(new Set())
+  const [loading, setLoading] = useState(true)
+  const [addJobFor, setAddJobFor] = useState(null)
+  const [addJobFields, setAddJobFields] = useState({ job_id: '', hours: '', description: '' })
+  const [savingJob, setSavingJob] = useState(false)
+  const [error, setError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  const weekEnd = addDays(weekStart, 6)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase.schema('Cores').from('timesheet_entries')
+      .select('*, jobs(id, job_number, description, customers(name), vessels(name))')
+      .eq('employee_id', employee.id)
+      .gte('work_date', weekStart).lte('work_date', weekEnd)
+      .order('work_date').order('sort_order')
+    setEntries(data || [])
+    const { data: sup } = await supabase.schema('Cores').from('job_supplies')
+      .select('*').eq('employee_id', employee.id)
+      .gte('work_date', weekStart).lte('work_date', weekEnd)
+    setSupplies(sup || [])
+    setLoading(false)
+  }, [employee.id, weekStart, weekEnd])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    supabase.schema('Cores').from('jobs').select('id, job_number, description, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
+    supabase.schema('Cores').from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
+    supabase.schema('Cores').from('stat_holidays').select('holiday_date').then(({ data }) => setStatHolidays(new Set((data || []).map(r => r.holiday_date))))
+  }, [])
+
+  const otMap = computeOTMap(entries, {
+    dailyThreshold: payrollConfig.daily_ot_threshold ?? 8,
+    weeklyThreshold: payrollConfig.weekly_ot_threshold ?? 40,
+    statHolidays,
+  })
+
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+
+  async function saveAddJob(ymd) {
+    if (!addJobFields.job_id || !addJobFields.hours) { setError('Pick a job and enter hours'); return }
+    setSavingJob(true); setError('')
+    const { error: err } = await addJobToDay(supabase, {
+      employeeId: employee.id, workDate: ymd,
+      jobId: addJobFields.job_id, hours: addJobFields.hours, description: addJobFields.description,
+      entrySource: 'self', confirmationStatus: 'not_required',
+    })
+    if (err) { setError(err.message); setSavingJob(false); return }
+    await ensureStatPay(employee.id, ymd)
+    await load()
+    setSavingJob(false)
+    setAddJobFor(null)
+    setAddJobFields({ job_id: '', hours: '', description: '' })
+  }
+
+  async function deleteEntry(entry) {
+    const { error: err } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id)
+    if (err) { setError(err.message); setConfirmDeleteId(null); return }
+    await supabase.schema('Cores').from('job_supplies').delete()
+      .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+    await cleanupStatPay(entry.employee_id, entry.work_date)
+    setConfirmDeleteId(null)
+    await load()
+  }
+
+  return (
+    <div className="emp-main">
+      <div className="emp-week-switch">
+        <button onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Previous week">‹</button>
+        <div className="emp-week-label" onClick={() => setWeekStart(payWeekRange(todayYMD())[0])}>
+          {shortDate(weekStart)} – {shortDate(weekEnd)}
+        </div>
+        <button onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Next week">›</button>
+      </div>
+
+      {error && <div className="emp-error">{error}</div>}
+
+      {loading ? (
+        <div className="emp-empty">Loading…</div>
+      ) : days.map((ymd) => {
+        const dayEntries = entries.filter(e => e.work_date === ymd)
+        const daySupplies = supplies.filter(s => s.work_date === ymd)
+        const totalHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
+        const perDiem = dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
+        const isStat = dayEntries.some(e => e.is_stat_pay)
+
+        return (
+          <div className="emp-card" key={ymd}>
+            <div className="emp-day-header">
+              <div>
+                <div className="emp-day-name">
+                  {dayName(ymd)}
+                  {isStat && <span className="emp-chip emp-chip-stat">STAT</span>}
+                  {perDiem > 0 && <span className="emp-chip emp-chip-pd">PD ×{perDiem}</span>}
+                </div>
+                <div className="emp-day-date">{shortDate(ymd)}</div>
+              </div>
+              {totalHours > 0 && <div className="emp-day-total">{fmtHours(totalHours)}h</div>}
+            </div>
+
+            {dayEntries.length === 0 && <div className="emp-empty">No hours logged</div>}
+
+            {dayEntries.map((e) => {
+              const ot = otMap[e.id]?.ot || 0
+              return (
+                <div className="emp-job-row" key={e.id} onClick={() => navigate(`entry/${e.id}/edit`)}>
+                  <div className="emp-job-info">
+                    <div className="emp-job-number">
+                      {e.jobs?.job_number || (e.is_stat_pay ? 'Stat pay' : '—')}
+                      {ot > 0 && <span className="emp-chip emp-chip-ot">OT {fmtHours(ot)}</span>}
+                    </div>
+                    {e.description && <div className="emp-job-desc">{e.description}</div>}
+                  </div>
+                  <div className="emp-job-hours">{fmtHours(e.hours)}h</div>
+                </div>
+              )
+            })}
+
+            {daySupplies.length > 0 && (
+              <div className="emp-hint">
+                Supplies: {daySupplies.map(s => `${s.supply_name} ×${s.quantity}`).join(', ')}
+              </div>
+            )}
+
+            {addJobFor === ymd ? (
+              <div style={{ marginTop: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
+                <div className="emp-field">
+                  <label>Job</label>
+                  <select value={addJobFields.job_id} onChange={e => setAddJobFields(f => ({ ...f, job_id: e.target.value }))}>
+                    <option value="">Select a job…</option>
+                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
+                  </select>
+                </div>
+                <div className="emp-field">
+                  <label>Hours</label>
+                  <input type="number" step="0.25" min="0" value={addJobFields.hours}
+                    onChange={e => setAddJobFields(f => ({ ...f, hours: e.target.value }))} />
+                </div>
+                <div className="emp-field">
+                  <label>Notes (optional)</label>
+                  <input type="text" value={addJobFields.description}
+                    onChange={e => setAddJobFields(f => ({ ...f, description: e.target.value }))} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="emp-btn" disabled={savingJob} onClick={() => saveAddJob(ymd)}>
+                    {savingJob ? 'Saving…' : 'Save job'}
+                  </button>
+                  <button className="emp-btn emp-btn-secondary" onClick={() => setAddJobFor(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.6rem' }}
+                onClick={() => { setAddJobFor(ymd); setError('') }}>+ Add job</button>
+            )}
+
+            {dayEntries.length > 0 && (
+              <div style={{ marginTop: '0.5rem' }}>
+                {dayEntries.map(e => confirmDeleteId === e.id ? (
+                  <span key={e.id} style={{ marginRight: '1rem', fontSize: '0.8rem' }}>
+                    Delete {e.jobs?.job_number || 'entry'}?{' '}
+                    <button className="emp-inline-link" style={{ color: '#c0392b' }} onClick={() => deleteEntry(e)}>Yes</button>
+                    {' / '}
+                    <button className="emp-inline-link" onClick={() => setConfirmDeleteId(null)}>No</button>
+                  </span>
+                ) : (
+                  <button key={e.id} className="emp-inline-link" style={{ marginRight: '1rem', fontSize: '0.8rem' }}
+                    onClick={() => setConfirmDeleteId(e.id)}>Delete {e.jobs?.job_number || 'entry'}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <div style={{ height: '5rem' }} />
+      <button className="emp-btn emp-fab" onClick={() => navigate('entry/new')}>+ Add entry</button>
+    </div>
+  )
+}

@@ -3,7 +3,8 @@ import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import GearPhotos from './GearPhotos'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
-import { ensureStatPay, cleanupStatPay, isStatHoliday } from '../utils/statPay'
+import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
+import { fetchDailyOTContext, computeDailyOTSplit, replaceSupplies, addJobToDay } from '../utils/entrySave'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
@@ -200,42 +201,21 @@ export default function AdminDashboard() {
       return
     }
 
-    // Delete old supplies (tied to whoever/whatever date this entry originally belonged
-    // to) and insert updated ones under the current employee/date, in case either changed
-    await supabase.schema('Cores').from('job_supplies').delete().eq('employee_id', editEntry.employee_id).eq('work_date', editEntry.work_date)
-
-    const validSupplies = editSupplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
-    if (validSupplies.length > 0) {
-      const suppliesToInsert = validSupplies.map(s => ({
-        job_id: s.job_id,
-        employee_id: editFields.employee_id,
-        work_date: editFields.work_date,
-        supply_name: s.supply_name,
-        quantity: Number(s.quantity),
-      }))
-      const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(suppliesToInsert)
-      if (supplyError) {
-        alert(`Supplies save failed: ${supplyError.message}`)
-        setSavingEdit(false)
-        return
-      }
+    // Replace old supplies (tied to whoever/whatever date this entry originally belonged
+    // to) with updated ones under the current employee/date, in case either changed
+    const { error: supplyError } = await replaceSupplies(supabase, editFields.employee_id, editFields.work_date, editSupplies)
+    if (supplyError) {
+      alert(`Supplies save failed: ${supplyError.message}`)
+      setSavingEdit(false)
+      return
     }
 
     // Save new job if being added
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
-      // Work on a stat holiday or weekend is all OT
-      const statDay = (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
-      const { error: newJobError } = await supabase.schema('Cores').from('timesheet_entries').insert({
-        employee_id: editFields.employee_id,
-        work_date: editFields.work_date,
-        job_id: newJobFields.job_id,
-        hours: Number(newJobFields.hours),
-        description: newJobFields.description || '',
-        ot_hours: statDay ? Number(newJobFields.hours) : 0,
-        per_diem: 0,
-        sort_order: 999,
-        entry_source: 'manual',
-        confirmation_status: 'pending',
+      const { error: newJobError } = await addJobToDay(supabase, {
+        employeeId: editFields.employee_id, workDate: editFields.work_date,
+        jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
+        entrySource: 'manual', confirmationStatus: 'pending',
       })
       if (newJobError) {
         alert(`Failed to add job: ${newJobError.message}`)
@@ -282,19 +262,10 @@ export default function AdminDashboard() {
     }
 
     try {
-      // Work on a stat holiday or weekend is all OT
-      const statDay = (await isStatHoliday(editEntry.work_date)) || isWeekend(editEntry.work_date)
-      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
-        employee_id: editEntry.employee_id,
-        work_date: editEntry.work_date,
-        job_id: newJobFields.job_id,
-        hours: Number(newJobFields.hours),
-        description: newJobFields.description || '',
-        ot_hours: statDay ? Number(newJobFields.hours) : 0,
-        per_diem: 0,
-        sort_order: 999,
-        entry_source: 'manual',
-        confirmation_status: 'pending',
+      const { error } = await addJobToDay(supabase, {
+        employeeId: editEntry.employee_id, workDate: editEntry.work_date,
+        jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
+        entrySource: 'manual', confirmationStatus: 'pending',
       })
 
       if (error) {
@@ -341,23 +312,14 @@ export default function AdminDashboard() {
 
     setSavingManual(true)
     try {
-      // Fetch payroll config for OT threshold
-      const { data: otCfg } = await supabase.schema('Cores').from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
-      const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
-
       // Work on a stat holiday or weekend is all OT — the 8 reg hrs on a stat
       // day come from the auto stat-pay entry instead
-      const statDay = (await isStatHoliday(manualFields.work_date)) || isWeekend(manualFields.work_date)
-
-      // Fetch existing entries for this employee on this date to include in OT calc
-      const { data: existingToday } = await supabase.schema('Cores').from('timesheet_entries').select('hours').eq('employee_id', manualFields.employee_id).eq('work_date', manualFields.work_date).eq('is_stat_pay', false)
-      let alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
+      let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, manualFields.employee_id, manualFields.work_date)
 
       // Insert entries with OT split
       const toInsert = validEntries.map((e, i) => {
         const hours = Number(e.hours)
-        const reg = statDay ? 0 : Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorked))
-        const ot = hours - reg
+        const { ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
         alreadyWorked += hours
         return {
           employee_id: manualFields.employee_id,
@@ -386,20 +348,10 @@ export default function AdminDashboard() {
       await requestEntryConfirmation(manualFields.employee_id, manualFields.work_date)
 
       // Insert supplies if any
-      const validSupplies = manualFields.supplies.filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
-      if (validSupplies.length > 0) {
-        const suppliesToInsert = validSupplies.map(s => ({
-          job_id: s.job_id,
-          employee_id: manualFields.employee_id,
-          work_date: manualFields.work_date,
-          supply_name: s.supply_name,
-          quantity: Number(s.quantity),
-        }))
-        const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(suppliesToInsert)
-        if (supplyError) {
-          alert(`Supplies save failed: ${supplyError.message}`)
-          return
-        }
+      const { error: supplyError } = await replaceSupplies(supabase, manualFields.employee_id, manualFields.work_date, manualFields.supplies)
+      if (supplyError) {
+        alert(`Supplies save failed: ${supplyError.message}`)
+        return
       }
 
       await ensureStatPay(manualFields.employee_id, manualFields.work_date)
