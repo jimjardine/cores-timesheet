@@ -112,7 +112,7 @@ export default function Reports() {
       supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
-      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
+      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -444,19 +444,36 @@ export default function Reports() {
               <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
               <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Hours</th>
               <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Description</th>
+              <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Photos</th>
             </tr>
           </thead>
           <tbody>
-            {jobEntries.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(e => (
-              <tr key={e.id} style={{ borderBottom: '1px solid #eee' }}>
-                <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
-                  {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                </td>
-                <td style={{ padding: '0.6rem 0.75rem', ...linkStyle }} onClick={() => goToEmployee(e.employees)}>{e.employees?.name}</td>
-                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{e.hours}</td>
-                <td style={{ padding: '0.6rem 0.75rem', color: '#555' }}>{e.description}</td>
-              </tr>
-            ))}
+            {jobEntries.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(e => {
+              // Scoped to this exact entry — same employee, same day, same job —
+              // not every photo ever taken for this job number (that mixes
+              // everyone's photos across every date, which is wrong for a
+              // recurring job like SHOP that gets logged constantly).
+              const entryPhotos = gearPhotos.filter(p =>
+                p.job_id === job.id && p.employee_id === e.employee_id && p.work_date === e.work_date)
+              return (
+                <tr key={e.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+                    {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </td>
+                  <td style={{ padding: '0.6rem 0.75rem', ...linkStyle }} onClick={() => goToEmployee(e.employees)}>{e.employees?.name}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{e.hours}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', color: '#555' }}>{e.description}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>
+                    {entryPhotos.length > 0 ? (
+                      <span
+                        style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={() => openPhotoGroup(`${job.job_number} — ${e.employees?.name} — ${e.work_date}`, entryPhotos)}
+                      >📷 {entryPhotos.length}</span>
+                    ) : '—'}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
 
