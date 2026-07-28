@@ -16,6 +16,7 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • PHOTO — gear photos
 • TIMESHEET — what's logged for a day
 • REJECT — delete today's entry
+• OFF — say you didn't work a day
 • SUPPLIES — log parts used
 • OTHER — using someone else's phone
 
@@ -85,6 +86,12 @@ Totally botched a day's text? Reply REJECT and it wipes today's entry so
 you can start over. Add a day for another date: "REJECT yesterday".
 Only works before the office approves it — after that, they'll need to fix
 or delete it on their end.`,
+
+  off: `OFF — say you didn't work a day
+
+Text OFF (or "no work", "didn't work") so the office knows you took the day
+off, instead of it just looking like you forgot to text in.
+Add a day for another date: "OFF yesterday", "OFF monday".`,
 
   supplies: `SUPPLIES — log parts used
 
@@ -952,6 +959,57 @@ Deno.serve(async (req: Request) => {
     const r = deleteError
       ? `Something went wrong deleting that — contact the office directly.`
       : `Deleted your ${friendlyDate(rejectDate)} entry. Text your hours again whenever you're ready.`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── Self-service "I didn't work" (day off) ──
+  // So the office can tell "took the day off" apart from "forgot to text in"
+  // on Submission Status, instead of both looking identical (nothing submitted).
+  const offMatch = msgLower.match(/^(?:off|day\s*off|no\s*work|didn'?t\s*work)(?:\s+(.+))?$/)
+  if (offMatch && mediaUrls.length === 0) {
+    if (!employeeId) {
+      const r = `Couldn't find your employee record for that number — text "This is [your name]" first, then try OFF again.`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    const offDate = resolveDayArg(offMatch[1] || '', today)
+    if (!offDate) {
+      const r = `Didn't catch that day. Try "OFF", "OFF yesterday" or "OFF monday".`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    // Block on approved hours AND on a pending/unapproved submission for that
+    // day — not just timesheet_entries, or texting OFF right after texting
+    // real hours (before the office approves them) would silently wipe them
+    // out of view without actually deleting the submission underneath. Same
+    // from_phone-then-employee_id lookup as REJECT/TS above.
+    const { data: existingEntries } = await supabase
+      .from('timesheet_entries').select('id').eq('employee_id', employeeId).eq('work_date', offDate).limit(1)
+    let hasPendingSub = false
+    {
+      const { data: byPhone } = await supabase
+        .from('sms_submissions').select('id')
+        .eq('from_phone', fromPhone).eq('work_date', offDate).in('status', ['collecting', 'submitted']).limit(1)
+      hasPendingSub = !!byPhone?.length
+      if (!hasPendingSub) {
+        const { data: byEmp } = await supabase
+          .from('sms_submissions').select('id')
+          .eq('employee_id', employeeId).eq('work_date', offDate).in('status', ['collecting', 'submitted']).limit(1)
+        hasPendingSub = !!byEmp?.length
+      }
+    }
+    if ((existingEntries && existingEntries.length > 0) || hasPendingSub) {
+      const r = `You've already got hours logged for ${friendlyDate(offDate)} — text REJECT to fix that first if it's wrong.`
+      return isTwilio ? twiML(r) : jsonReply({ reply: r })
+    }
+
+    const { error: offError } = await supabase.from('day_off').upsert(
+      { employee_id: employeeId, work_date: offDate, source: 'sms' },
+      { onConflict: 'employee_id,work_date' }
+    )
+    const r = offError
+      ? `Something went wrong saving that — contact the office directly.`
+      : `Got it — marked ${friendlyDate(offDate)} as a day off.`
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
