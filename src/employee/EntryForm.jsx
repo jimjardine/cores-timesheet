@@ -74,8 +74,10 @@ export default function EntryForm({ employee, mode }) {
   }
 
   async function saveNewDay() {
-    const validLines = jobLines.filter(l => l.job_id && Number(l.hours) > 0)
-    if (validLines.length === 0) { setError('Add at least one job with hours'); return }
+    // Hours may be 0 — that's how a day with no real work still gets logged
+    // (so it counts as "submitted" instead of looking like a forgotten day).
+    const validLines = jobLines.filter(l => l.job_id && l.hours !== '' && Number(l.hours) >= 0)
+    if (validLines.length === 0) { setError('Add at least one job (0 hours is fine if you did no work)'); return }
     setSaving(true); setError('')
 
     let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)
@@ -106,7 +108,7 @@ export default function EntryForm({ employee, mode }) {
 
   async function saveEdit() {
     const hours = Number(editHours)
-    if (!editJobId || !hours || hours <= 0) { setError('Pick a job and enter hours'); return }
+    if (!editJobId || editHours === '' || hours < 0) { setError('Pick a job and enter hours (0 is fine)'); return }
     setSaving(true); setError('')
 
     let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)

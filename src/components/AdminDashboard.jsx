@@ -304,9 +304,11 @@ export default function AdminDashboard() {
       alert('Pick employee and date')
       return
     }
-    const validEntries = manualFields.entries.filter(e => e.job_id && Number(e.hours) > 0)
+    // Hours may be 0 — that's how a day with no real work still gets logged
+    // (so it shows as submitted instead of looking like a missing day).
+    const validEntries = manualFields.entries.filter(e => e.job_id && e.hours !== '' && Number(e.hours) >= 0)
     if (validEntries.length === 0) {
-      alert('Add at least one job with hours')
+      alert('Add at least one job (0 hours is fine if no work was done)')
       return
     }
 
