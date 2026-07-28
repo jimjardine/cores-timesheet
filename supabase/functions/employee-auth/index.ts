@@ -63,6 +63,30 @@ async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; e
   return { ok: true }
 }
 
+// Sends via the WhatsApp Sandbox (not the SMS number) — used for employees
+// who have a whatsapp_phone on file (overseas techs who can't reliably get
+// SMS), same as the request_confirmation path in sms-timesheet.
+async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
+  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
+
+  const from = 'whatsapp:+14155238886' // Twilio WhatsApp Sandbox shared number
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ To: `whatsapp:${to}`, From: from, Body: body }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    return { ok: false, error: `Twilio send failed (${res.status}): ${detail.slice(0, 200)}` }
+  }
+  return { ok: true }
+}
+
 const OTP_TTL_MINUTES = 10
 const MAX_PIN_ATTEMPTS = 5
 const LOCKOUT_MINUTES = 15
@@ -116,7 +140,10 @@ Deno.serve(async (req: Request) => {
     )
     if (error) return jsonReply({ ok: false, error: `Could not start login: ${error.message}` })
 
-    const sendResult = await sendTwilioSms(employee.phone, `Your Cores Timesheet login code is ${otp}. Expires in ${OTP_TTL_MINUTES} minutes.`)
+    const codeMsg = `Your Cores Timesheet login code is ${otp}. Expires in ${OTP_TTL_MINUTES} minutes.`
+    const sendResult = employee.whatsapp_phone
+      ? await sendTwilioWhatsApp(`+1${normalizePhone(employee.whatsapp_phone)}`, codeMsg)
+      : await sendTwilioSms(employee.phone, codeMsg)
     if (!sendResult.ok) return jsonReply({ ok: false, error: `Couldn't send the code: ${sendResult.error}` })
 
     return jsonReply({ ok: true })
