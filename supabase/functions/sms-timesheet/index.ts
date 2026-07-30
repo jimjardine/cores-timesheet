@@ -34,7 +34,7 @@ Job [job#]: [hours]hrs - [task]
 Out: [time]
 Lunch: [minutes]
 PD: [y/n]
-Supplies: [product] x[qty]`
+Supplies: [product + part #] x[qty]`
 
 const HELP_TOPICS: Record<string, string> = {
   hours: `HOURS — format guide
@@ -89,7 +89,9 @@ or delete it on their end.`,
   supplies: `SUPPLIES — log parts used
 
 Add them to your hours text or on their own:
-"supplies brake cleaner x1, wire brushes x2 Job 4358"
+"supplies brake cleaner x1, wire brush PN4521 x2 Job 4358"
+
+Include the part number if there is one — it helps the office match the exact part.
 
 No job number given? It's attributed to the first job in that text.`,
 
@@ -369,7 +371,7 @@ function calcOTBreakdown(entries: any[], dailyThreshold: number, alreadyWorked =
 // last_mentioned_at stamp; legacy rows without stamps fall back to array order).
 // Fallback: the newest job-tagged gear photo — a photo captioned "4900" that
 // morning establishes the day's job before any hours text arrives.
-async function getLastJobForDay(supabase: any, fromPhone: string, workDate: string, submission: any = null): Promise<string | null> {
+async function getLastJobForDay(supabase: any, fromPhone: string, workDate: string, submission: any = null, employeeId: string | null = null): Promise<string | null> {
   let sub = submission
   if (!sub) {
     const { data } = await supabase
@@ -394,7 +396,23 @@ async function getLastJobForDay(supabase: any, fromPhone: string, workDate: stri
     .not('ship_or_job', 'is', null)
     .order('created_at', { ascending: false }).limit(5)
   const tagged = (photos || []).find((p: any) => /^(\d{4}|SHOP)$/i.test((p.ship_or_job || '').trim()))
-  return tagged ? tagged.ship_or_job.trim() : null
+  if (tagged) return tagged.ship_or_job.trim()
+
+  // Nothing logged today yet — techs usually stay on one job for days at a stretch,
+  // so fall back to whatever job this employee last reported on a prior day rather
+  // than asking. Most recent submission wins regardless of review status: even an
+  // unapproved or later-rejected text still tells us what job they were on.
+  if (employeeId) {
+    const { data: recent } = await supabase
+      .from('sms_submissions').select('entries')
+      .eq('employee_id', employeeId).lt('work_date', workDate)
+      .order('work_date', { ascending: false }).limit(5)
+    for (const row of recent || []) {
+      const withJob = (row.entries || []).filter((e: any) => e.job_number)
+      if (withJob.length > 0) return withJob[withJob.length - 1].job_number
+    }
+  }
+  return null
 }
 
 // Accumulate a day's texts into ONE entry per job: hours add (or replace, when
@@ -592,12 +610,10 @@ Rules:
 - lunch_minutes: integer minutes if lunch mentioned ("lunch 30" → 30, "half hour lunch" → 30, "1/2 hour" → 30), 0 if explicitly no lunch ("no lunch", "worked through", "no break") — null if not mentioned at all
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string or SHOP"|null, hours:number|null, description:"verbatim from message", replace_hours:boolean, corrects_job_number:"4-digit string"|null}] — only real job work. corrects_job_number: set this ONLY when the message says a job number already reported today was WRONG and gives the correct one ("actually that was 4760, not 9999", "wrong job, it's 4762 not 4761", "change 9999 to 4760", "meant 4760 not 9999") — corrects_job_number is the OLD/wrong number being replaced, job_number is the NEW/correct number. Leave hours and description null unless the message also restates new work/hours alongside the correction. Otherwise always null. If the message clearly describes work done but names NO job ("fixed the head this afternoon", "another 2 hours on the pump"), still return the entry with job_number null — the app attaches it to the day's current job. But a message with no work description at all (just times/lunch/PD like "In 7:30" or "no lunch, no PD") must return entries: []. replace_hours: true when the message restates the TOTAL/FINAL hours for a job already reported today, rather than describing more work done — this includes "actually that was 3hrs", "make that 6", "not 2, 3 hours", "I only worked 7hrs on 4760", "only 2hrs for 4862", "it was really 5", "should only be 4", "total was 6". The word "only" or a flat restated number tied to a specific job almost always means a correction, not new work. replace_hours: false ONLY for messages that clearly describe additional new work on top of what's already logged ("another 2 hrs", "plus 2 more on it", "did 2 more hours this afternoon"). Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
-- supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity from "x2", "2 cans", "two rolls" etc — default 1 if just named. supply_name is the item without the quantity ("brake cleaner", not "brake cleaner x1"). If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase. The reverse also holds: a job's work description is not a supply. "4760 2hrs seals" or "6hrs bearings" describes the work done — extract supplies ONLY when the text presents them as materials used/consumed ("used 2 cans of brake cleaner", "supplies: wire brush x2", "grabbed a roll of tape"), never from a bare work description.
+- supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity comes ONLY from an explicit count word/pattern at the item's edge — "x2", "2 cans", "two rolls", a bare leading count ("2 wire brushes") — default 1 if no count is given. supply_name is the item's full name MINUS only that count — keep everything else, including any part/model/catalog number, brand, spec, or color ("wire brush PN 4521", "3M 5200 sealant", "#44 red", "1/2 inch hose") verbatim, even if it's a number. A trailing/leading alphanumeric code is a part number, not a quantity, unless it's unambiguously a count word/pattern as above — never drop it. E.g. "wire brush PN4521 x2" → supply_name "wire brush PN4521", quantity 2. "2 wire brushes" → supply_name "wire brushes", quantity 2. If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all. Supplies are NOT job work — never create an entries item from a supplies phrase. The reverse also holds: a job's work description is not a supply. "4760 2hrs seals" or "6hrs bearings" describes the work done — extract supplies ONLY when the text presents them as materials used/consumed ("used 2 cans of brake cleaner", "supplies: wire brush x2", "grabbed a roll of tape"), never from a bare work description.
 - is_help_request: true only if the entire message is a help request
 
-Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.includes('Job entries?') ? `
-
-CONTEXT: Earlier in this conversation we asked the worker which job their work was for. If this message reads as a direct answer — often just a bare job number ("4900") or "shop" — return it as entries: [{"job_number":"<the number or SHOP>","hours":null,"description":"","replace_hours":false}]. A bare boat/ship name answer has no job number: return entries: [{"job_number":null,"hours":null,"description":"<the boat name>","replace_hours":false}]. Never invent data the message does not contain.` : ''}${askedQuestions.includes('Lunch?') ? `
+Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.includes('Lunch?') ? `
 
 CONTEXT: Earlier in this conversation we asked the worker if they took a lunch. If this message reads as a direct answer to that — a bare number of minutes ("30", "45 min"), "half hour"/"1/2 hour" (→30), or "none"/"no"/"worked through"/"nope" (→0) — set lunch_minutes accordingly even without the word "lunch" anywhere in the message. Never invent data the message does not contain.` : ''}`
 
@@ -1177,7 +1193,7 @@ Deno.serve(async (req: Request) => {
   // ── Merge entries ──
   // One entry per job per day: hours accumulate (or replace, for corrections),
   // descriptions join. A text with no job number attaches to the day's current job.
-  const lastJob = await getLastJobForDay(supabase, fromPhone, workDate, submission)
+  const lastJob = await getLastJobForDay(supabase, fromPhone, workDate, submission, employeeId)
   const prevEntries: any[] = submission?.entries || []
   const mergeStamp = new Date().toISOString()
   let allEntries: any[] = mergeEntries(prevEntries, parsed.entries || [], lastJob, mergeStamp)
@@ -1300,19 +1316,21 @@ Deno.serve(async (req: Request) => {
 
   // ── Determine what's missing ──
   const missingEmployee = !mergedEmployeeId
-  // After mergeEntries, null-job entries survive only when NO job is known at all
-  // for the day — the single remaining case where the bot asks a question.
+  // After mergeEntries, null-job entries survive only when NO job is known at all —
+  // not today, not any prior day (getLastJobForDay's cross-day fallback covers the
+  // usual "still on the same job" case) — meaning this employee has no job history
+  // to fall back on at all.
   const hasUnattributedWork = allEntries.some((e: any) => !e.job_number)
 
   // Fields the office will need to fill in (shown in review screen)
   const flags: string[] = []
 
   // ── Decide ──
-  // The bot records quietly: PD/supplies are never asked about (they default at save
-  // time and the office corrects habitual forgetters). Two questions remain: the job
-  // question (work described with no job to attach it to), and a lunch question that
-  // only fires on a longer day (>5hrs) where lunch was never mentioned at all — a
-  // silent 0 there is much more likely to be a forgotten entry than a real thing.
+  // The bot records quietly: job number, PD, and supplies are never asked about —
+  // they default (or fall back to the last-known job) at save time, and the office
+  // corrects the exceptions. The one question left is lunch, which only fires on a
+  // longer day (>8hrs) where lunch was never mentioned at all — a silent 0 there is
+  // much more likely to be a forgotten entry than a real thing.
   const needsLunchAsk = totalHours > 8 && mergedLunch == null && !isFollowUp
   let reply = ''
   let nextStatus = 'collecting'
@@ -1326,13 +1344,10 @@ Deno.serve(async (req: Request) => {
     nextStatus = 'submitted'
     flags.push('employee not identified — needs manual assignment')
 
-  } else if (hasUnattributedWork && !isFollowUp) {
-    // Work described, no job named, nothing to assume — the entries are stored
-    // (so the description isn't lost) and the one question goes out.
-    reply = `Got it${firstName ? ' ' + firstName : ''}. Which job # is that for?\n(e.g. "4760" — or the boat name)`
-    pendingQuestions = ['Job entries?']
-
-  } else if (hasUnattributedWork && isFollowUp) {
+  } else if (hasUnattributedWork) {
+    // No job named and no history to assume from (this employee's first-ever
+    // text) — save it anyway so the description isn't lost, and let the office
+    // pick the job during review instead of texting back and forth over it.
     reply = `Got it${firstName ? ' ' + firstName : ''} — the office will match the job.`
     nextStatus = 'submitted'
     flags.push('no job entries — needs manual entry')

@@ -47,6 +47,7 @@ export default function EntryForm({ employee, mode }) {
         .select('*').eq('id', entryId).eq('employee_id', employee.id).single()
       if (cancelled) return
       if (!entry) { setError('Entry not found'); setLoading(false); return }
+      if (entry.entry_source !== 'self') { setError('locked'); setOriginalEntry(entry); setLoading(false); return }
       setOriginalEntry(entry)
       setWorkDate(entry.work_date)
       setEditJobId(entry.job_id || '')
@@ -150,6 +151,17 @@ export default function EntryForm({ employee, mode }) {
   }
 
   if (loading) return <div className="emp-main"><div className="emp-empty">Loading…</div></div>
+
+  if (error === 'locked') {
+    return (
+      <div className="emp-main">
+        <a className="emp-back-link" onClick={() => navigate('..')}>‹ Back</a>
+        <div className="emp-card">
+          <div className="emp-empty">🔒 This entry has been approved — the office will need to make any changes now.</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="emp-main">

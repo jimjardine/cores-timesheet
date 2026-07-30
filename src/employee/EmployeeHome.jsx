@@ -24,6 +24,7 @@ export default function EmployeeHome({ employee }) {
   const [weekStart, setWeekStart] = useState(() => payWeekRange(todayYMD())[0])
   const [entries, setEntries] = useState([])
   const [supplies, setSupplies] = useState([])
+  const [submissions, setSubmissions] = useState([])
   const [jobs, setJobs] = useState([])
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
@@ -48,6 +49,15 @@ export default function EmployeeHome({ employee }) {
       .select('*').eq('employee_id', employee.id)
       .gte('work_date', weekStart).lte('work_date', weekEnd)
     setSupplies(sup || [])
+    // Texted-in days not yet approved by the office — shown so a tech can see
+    // and fix a text before Nicki reviews it. Approved ones already show up
+    // above via timesheet_entries, so they're excluded here.
+    const { data: subs } = await supabase.schema('Cores').from('sms_submissions')
+      .select('*').eq('employee_id', employee.id)
+      .gte('work_date', weekStart).lte('work_date', weekEnd)
+      .neq('status', 'approved')
+      .order('updated_at', { ascending: false })
+    setSubmissions(subs || [])
     setLoading(false)
   }, [employee.id, weekStart, weekEnd])
 
@@ -84,7 +94,8 @@ export default function EmployeeHome({ employee }) {
   }
 
   async function deleteEntry(entry) {
-    const { error: err } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id)
+    if (entry.entry_source !== 'self') { setError('This entry has been approved and can only be changed by the office.'); setConfirmDeleteId(null); return }
+    const { error: err } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id).eq('employee_id', employee.id)
     if (err) { setError(err.message); setConfirmDeleteId(null); return }
     await supabase.schema('Cores').from('job_supplies').delete()
       .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
@@ -113,6 +124,10 @@ export default function EmployeeHome({ employee }) {
         const totalHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
         const perDiem = dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
         const isStat = dayEntries.some(e => e.is_stat_pay)
+        // Most recent non-approved submission for this day, if any — texted in
+        // but not yet reviewed, so it's still editable from here.
+        const daySub = submissions.find(s => s.work_date === ymd)
+        const subTotalHours = (daySub?.entries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0)
 
         return (
           <div className="emp-card" key={ymd}>
@@ -132,10 +147,14 @@ export default function EmployeeHome({ employee }) {
 
             {dayEntries.map((e) => {
               const ot = otMap[e.id]?.ot || 0
+              // Approved (or office-entered) hours are locked once they've been
+              // reviewed — only entries a tech added themselves can be reopened.
+              const locked = e.entry_source !== 'self'
               return (
-                <div className="emp-job-row" key={e.id} onClick={() => navigate(`entry/${e.id}/edit`)}>
+                <div className="emp-job-row" key={e.id} onClick={locked ? undefined : () => navigate(`entry/${e.id}/edit`)} style={locked ? { cursor: 'default' } : undefined}>
                   <div className="emp-job-info">
                     <div className="emp-job-number">
+                      {locked && <span title="Approved — office only" style={{ marginRight: '0.3rem' }}>🔒</span>}
                       {e.jobs?.job_number || (e.is_stat_pay ? 'Stat pay' : '—')}
                       {ot > 0 && <span className="emp-chip emp-chip-ot">OT {fmtHours(ot)}</span>}
                     </div>
@@ -149,6 +168,29 @@ export default function EmployeeHome({ employee }) {
             {daySupplies.length > 0 && (
               <div className="emp-hint">
                 Supplies: {daySupplies.map(s => `${s.supply_name} ×${s.quantity}`).join(', ')}
+              </div>
+            )}
+
+            {daySub && (
+              <div style={{ marginTop: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                  <span className="emp-chip" style={{ marginLeft: 0, background: daySub.status === 'rejected' ? '#fdecea' : '#fff4de', color: daySub.status === 'rejected' ? '#c0392b' : '#a06b00' }}>
+                    {daySub.status === 'rejected' ? '✗ declined — edit to resend' : '⏳ texted in — awaiting approval'}
+                  </span>
+                  {subTotalHours > 0 && <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{fmtHours(subTotalHours)}h</span>}
+                </div>
+                {(daySub.entries || []).map((e, i) => (
+                  <div key={i} style={{ fontSize: '0.85rem', color: '#555', padding: '0.15rem 0' }}>
+                    {e.job_number || '?'}: {e.hours != null ? `${fmtHours(e.hours)}h` : 'hrs TBD'}{e.description ? ` — ${e.description}` : ''}
+                  </div>
+                ))}
+                {(daySub.supplies || []).length > 0 && (
+                  <div className="emp-hint">
+                    Supplies: {daySub.supplies.map(s => `${s.supply_name} ×${s.quantity}`).join(', ')}
+                  </div>
+                )}
+                <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
+                  onClick={() => navigate(`pending/${daySub.id}/edit`)}>Edit</button>
               </div>
             )}
 
@@ -183,9 +225,9 @@ export default function EmployeeHome({ employee }) {
                 onClick={() => { setAddJobFor(ymd); setError('') }}>+ Add job</button>
             )}
 
-            {dayEntries.length > 0 && (
+            {dayEntries.some(e => e.entry_source === 'self') && (
               <div style={{ marginTop: '0.5rem' }}>
-                {dayEntries.map(e => confirmDeleteId === e.id ? (
+                {dayEntries.filter(e => e.entry_source === 'self').map(e => confirmDeleteId === e.id ? (
                   <span key={e.id} style={{ marginRight: '1rem', fontSize: '0.8rem' }}>
                     Delete {e.jobs?.job_number || 'entry'}?{' '}
                     <button className="emp-inline-link" style={{ color: '#c0392b' }} onClick={() => deleteEntry(e)}>Yes</button>

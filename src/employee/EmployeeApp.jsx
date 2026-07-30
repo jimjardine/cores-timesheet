@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import EmployeeLogin from './EmployeeLogin'
 import EmployeeHome from './EmployeeHome'
 import EntryForm from './EntryForm'
+import PendingEntryEdit from './PendingEntryEdit'
 import './employee.css'
 
 const SESSION_KEY = 'cores_employee_session'
@@ -36,6 +37,7 @@ export default function EmployeeApp() {
         <Route index element={<EmployeeHome employee={session} />} />
         <Route path="entry/new" element={<EntryForm employee={session} mode="new" />} />
         <Route path="entry/:entryId/edit" element={<EntryForm employee={session} mode="edit" />} />
+        <Route path="pending/:subId/edit" element={<PendingEntryEdit employee={session} />} />
         <Route path="*" element={<Navigate to="." replace />} />
       </Routes>
     </div>

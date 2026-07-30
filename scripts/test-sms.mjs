@@ -13,12 +13,13 @@
  * Each scenario uses a unique timestamp-suffixed phone so multi-turn scenarios
  * build state correctly and runs never interfere with each other.
  *
- * Since 2026-07-17 the bot records quietly: it never asks about lunch/PD/supplies
- * (they default to 0 / none), texts without a job number attach to the day's last
- * job, same-job texts merge into one entry, and "TS [day]" shows the day's record.
- * The only question left is the job question, and only when no job is known at
- * all. Most scenarios are single-turn; a full run is a few minutes (13s between
- * Claude calls for the free-tier rate limit).
+ * Since 2026-07-29 the bot never asks the job question either: texts without a
+ * job number attach to the day's last job, falling back across days if nothing's
+ * been logged yet today (techs usually stay on one job for a stretch) — and if
+ * there's truly no job history at all, the text is saved quietly for the office
+ * to match instead of asking. The only question left is lunch, and only on a
+ * >8hr day where lunch was never mentioned. Most scenarios are single-turn; a
+ * full run is a few minutes (13s between Claude calls for the free-tier rate limit).
  *
  * The "photo" scenario needs outbound network to a public image host and storage
  * write access — filter it out with a name filter if it gets flaky.
@@ -203,11 +204,21 @@ await scenario('hours correction replaces', phone(9), [
   ['actually that was 3hrs', ['4760: 3hrs', { absent: '5hrs' }]],
 ])
 
-// 10. No job known at all → the ONE remaining question, answered with a bare number
+// 10. No job known at all (fresh employee, zero history) → saved quietly for
+// the office to match instead of asking
 await cleanupTestTech()
-await scenario('no job yet asks once', phone(10), [
-  ['This is Test. spent the morning fixing the head', ['Which job']],
-  ['4900', ['Got it Test', '4900:', 'head']],
+await scenario('no job history saves quietly', phone(10), [
+  ['This is Test. spent the morning fixing the head', ['office will match the job', { absent: 'Which job' }]],
+])
+
+// 10b. No job number mentioned today, but yesterday's text named one → carries
+// over silently (techs usually stay on one job for a stretch). Step 2 restates
+// "This is Test" only because the synthetic test phone isn't a real registered
+// employee phone (real phones resolve identity every message regardless of date).
+await cleanupTestTech()
+await scenario('carries over yesterdays job', phone(33), [
+  ['This is Test. yesterday 4900 6hrs pump work, in 7, out 130, lunch 30, no pd', ['4900: 6hrs']],
+  ['This is Test. fixed the head today', ['Got it Test', '4900:', 'head', { absent: 'Which job' }]],
 ])
 
 // 11. Out-time correction after submitting — latest value wins, no re-asks
@@ -288,6 +299,14 @@ await cleanupTestTech()
 await scenario('work description is not a supply', phone(20), [
   ['This is Test. 4760 4hrs seals, in 8, lunch 30, no pd', ['4760: 4hrs']],
   ['ts', [{ absent: 'Supplies:' }]],
+])
+
+// 20b. Supplies keep their part number — only the count ("x2") is stripped from
+// the item name, not a trailing alphanumeric part/catalog number
+await cleanupTestTech()
+await scenario('supplies keep part number', phone(34), [
+  ['This is Test. 4760 6hrs bearings, used wire brush PN4521 x2, in 7, lunch 30, no pd', ['4760: 6hrs']],
+  ['ts', ['Supplies:', 'PN4521', 'x2']],
 ])
 
 // ── rough-language scenarios ───────────────────────────────────────────────
