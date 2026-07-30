@@ -144,7 +144,7 @@ export default function EmployeeHome({ employee }) {
               {totalHours > 0 && <div className="emp-day-total">{fmtHours(totalHours)}h</div>}
             </div>
 
-            {dayEntries.length === 0 && <div className="emp-empty">No hours logged</div>}
+            {dayEntries.length === 0 && !daySub && <div className="emp-empty">No hours logged</div>}
 
             {dayEntries.map((e) => {
               const ot = otMap[e.id]?.ot || 0
