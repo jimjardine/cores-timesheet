@@ -200,7 +200,7 @@ export default function PendingEntryEdit({ employee }) {
             </div>
             <div className="emp-field">
               <label>Notes (optional)</label>
-              <input type="text" value={line.description} onChange={e => setEntryField(i, 'description', e.target.value)} />
+              <textarea rows={2} value={line.description} onChange={e => setEntryField(i, 'description', e.target.value)} />
             </div>
           </div>
         ))}

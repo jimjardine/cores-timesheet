@@ -764,11 +764,12 @@ export default function SmsReview({ onApproved } = {}) {
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
-                        <input
+                        <textarea
+                          rows={2}
                           value={e.description}
                           onChange={ev => setEntryField(i, 'description', ev.target.value)}
                           placeholder="what was done"
-                          style={inp}
+                          style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}
                         />
                       </td>
                       <td>

@@ -220,7 +220,7 @@ export default function EntryForm({ employee, mode }) {
                 </div>
                 <div className="emp-field">
                   <label>Notes (optional)</label>
-                  <input type="text" value={line.description} onChange={e => updateJobLine(i, { description: e.target.value })} />
+                  <textarea rows={2} value={line.description} onChange={e => updateJobLine(i, { description: e.target.value })} />
                 </div>
               </div>
             ))}
@@ -238,7 +238,7 @@ export default function EntryForm({ employee, mode }) {
             <input type="number" step="0.25" min="0" value={editHours} onChange={e => setEditHours(e.target.value)} />
             <div style={{ height: '0.6rem' }} />
             <label>Notes (optional)</label>
-            <input type="text" value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+            <textarea rows={2} value={editDescription} onChange={e => setEditDescription(e.target.value)} />
           </div>
         )}
 
