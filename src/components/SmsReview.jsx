@@ -101,9 +101,13 @@ export default function SmsReview({ onApproved } = {}) {
 
   // ── Approve ───────────────────────────────────────────────────────────────
   async function approve(sub) {
+    const entries = sub.entries || []
+    if (entries.some(e => !e.description?.trim())) {
+      alert('Every job needs a note describing what was done — click Edit to add one before approving.')
+      return
+    }
     setActing(sub.id)
     const hasPD = sub.per_diem_location && sub.per_diem_location !== 'none'
-    const entries = sub.entries || []
 
     // Map job numbers to IDs — case-insensitive so "shop"/"Shop"/"SHOP" all match
     const jobMap = {}
@@ -231,6 +235,7 @@ export default function SmsReview({ onApproved } = {}) {
 
     if (cleaned.some(e => !e.job_number)) { alert('Every entry needs a job number'); return }
     if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
+    if (cleaned.some(e => !e.description)) { alert('Every entry needs a note describing what was done'); return }
 
     // Seed the split with hours already in timesheet_entries for this employee/date,
     // matching the edge function — otherwise a second submission that day gets reg

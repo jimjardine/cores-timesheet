@@ -179,6 +179,11 @@ export default function AdminDashboard() {
   }
 
   async function saveEdit() {
+    if (!editFields.description?.trim()) { alert('Add a note describing what was done'); return }
+    if (addingNewJob && newJobFields.job_id && newJobFields.hours && !newJobFields.description?.trim()) {
+      alert('Add a note describing the new job')
+      return
+    }
     setSavingEdit(true)
     const reg = Number(editFields.reg_hours) || 0
     const ot  = Number(editFields.ot_hours)  || 0
@@ -260,6 +265,10 @@ export default function AdminDashboard() {
       alert('Pick job and enter hours')
       return
     }
+    if (!newJobFields.description?.trim()) {
+      alert('Add a note describing what was done')
+      return
+    }
 
     try {
       const { error } = await addJobToDay(supabase, {
@@ -309,6 +318,10 @@ export default function AdminDashboard() {
     const validEntries = manualFields.entries.filter(e => e.job_id && e.hours !== '' && Number(e.hours) >= 0)
     if (validEntries.length === 0) {
       alert('Add at least one job (0 hours is fine if no work was done)')
+      return
+    }
+    if (validEntries.some(e => !e.description?.trim())) {
+      alert('Add a note describing what was done for each job')
       return
     }
 

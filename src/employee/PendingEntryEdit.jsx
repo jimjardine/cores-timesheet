@@ -77,6 +77,7 @@ export default function PendingEntryEdit({ employee }) {
     if (cleaned.some(e => !e.job_number)) { setError('Every entry needs a job'); return }
     if (cleaned.some(e => !(Number(e.hours) >= 0))) { setError('Hours can\'t be blank (0 is fine for a day off)'); return }
     if (cleaned.length === 0) { setError('Add at least one job'); return }
+    if (cleaned.some(e => !e.description)) { setError('Add a note describing what was done for each job'); return }
     setSaving(true); setError('')
 
     const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(supabase, employee.id, sub.work_date)
@@ -199,7 +200,7 @@ export default function PendingEntryEdit({ employee }) {
               <input type="number" step="0.25" min="0" value={line.hours} onChange={e => setEntryField(i, 'hours', e.target.value)} />
             </div>
             <div className="emp-field">
-              <label>Notes (optional)</label>
+              <label>Notes</label>
               <textarea rows={2} value={line.description} onChange={e => setEntryField(i, 'description', e.target.value)} />
             </div>
           </div>

@@ -79,6 +79,7 @@ export default function EmployeeHome({ employee }) {
 
   async function saveAddJob(ymd) {
     if (!addJobFields.job_id || !addJobFields.hours) { setError('Pick a job and enter hours'); return }
+    if (!addJobFields.description.trim()) { setError('Add a note describing what was done'); return }
     setSavingJob(true); setError('')
     const { error: err } = await addJobToDay(supabase, {
       employeeId: employee.id, workDate: ymd,
@@ -209,7 +210,7 @@ export default function EmployeeHome({ employee }) {
                     onChange={e => setAddJobFields(f => ({ ...f, hours: e.target.value }))} />
                 </div>
                 <div className="emp-field">
-                  <label>Notes (optional)</label>
+                  <label>Notes</label>
                   <input type="text" value={addJobFields.description}
                     onChange={e => setAddJobFields(f => ({ ...f, description: e.target.value }))} />
                 </div>

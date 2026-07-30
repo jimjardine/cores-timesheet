@@ -309,6 +309,16 @@ await scenario('supplies keep part number', phone(34), [
   ['ts', ['Supplies:', 'PN4521', 'x2']],
 ])
 
+// 20c. A bare number stuck on a supply with no "job"/"for" marker is part of
+// the item (a part number), never reinterpreted or truncated into job_number —
+// it should fall back to the day's job, same as any other unmarked supply
+await cleanupTestTech()
+await scenario('supply part number not mistaken for job number', phone(35), [
+  ['This is Test. 4760 6hrs bearings, in 7, lunch 30, no pd', ['4760: 6hrs']],
+  ['2 wire brushes 43622', [{ absent: 'Which job' }]],
+  ['ts', ['Supplies:', '43622', '(4760)']],
+])
+
 // ── rough-language scenarios ───────────────────────────────────────────────
 // Simulating how different techs actually text: lowercase, typos, run-ons,
 // slang, military time, spelled-out numbers, rambling. All map to Test Tech.

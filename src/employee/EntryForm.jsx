@@ -79,6 +79,7 @@ export default function EntryForm({ employee, mode }) {
     // (so it counts as "submitted" instead of looking like a forgotten day).
     const validLines = jobLines.filter(l => l.job_id && l.hours !== '' && Number(l.hours) >= 0)
     if (validLines.length === 0) { setError('Add at least one job (0 hours is fine if you did no work)'); return }
+    if (validLines.some(l => !l.description.trim())) { setError('Add a note describing what was done for each job'); return }
     setSaving(true); setError('')
 
     let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)
@@ -110,6 +111,7 @@ export default function EntryForm({ employee, mode }) {
   async function saveEdit() {
     const hours = Number(editHours)
     if (!editJobId || editHours === '' || hours < 0) { setError('Pick a job and enter hours (0 is fine)'); return }
+    if (!editDescription.trim()) { setError('Add a note describing what was done'); return }
     setSaving(true); setError('')
 
     let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)
@@ -219,7 +221,7 @@ export default function EntryForm({ employee, mode }) {
                   <input type="number" step="0.25" min="0" value={line.hours} onChange={e => updateJobLine(i, { hours: e.target.value })} />
                 </div>
                 <div className="emp-field">
-                  <label>Notes (optional)</label>
+                  <label>Notes</label>
                   <textarea rows={2} value={line.description} onChange={e => updateJobLine(i, { description: e.target.value })} />
                 </div>
               </div>
@@ -237,7 +239,7 @@ export default function EntryForm({ employee, mode }) {
             <label>Hours</label>
             <input type="number" step="0.25" min="0" value={editHours} onChange={e => setEditHours(e.target.value)} />
             <div style={{ height: '0.6rem' }} />
-            <label>Notes (optional)</label>
+            <label>Notes</label>
             <textarea rows={2} value={editDescription} onChange={e => setEditDescription(e.target.value)} />
           </div>
         )}

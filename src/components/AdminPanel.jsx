@@ -175,6 +175,11 @@ export default function AdminPanel() {
         : await supabase.schema('Cores').from('employees').insert(empPayload)
       if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
     } else if (type === 'entry') {
+      if (!payload.description?.trim()) {
+        alert('Add a note describing what was done')
+        setSaving(false)
+        return
+      }
       const entryPayload = {
         work_date: payload.work_date,
         job_id: payload.job_id || null,
