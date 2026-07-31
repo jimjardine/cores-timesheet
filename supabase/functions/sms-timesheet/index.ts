@@ -319,6 +319,38 @@ async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boole
   return { ok: true }
 }
 
+// ── Low-stock alerts ──────────────────────────────────────────────────────
+// TODO: flip to false once this has been verified against real texts — until
+// then every alert routes to Jim via WhatsApp instead of the real recipients,
+// so nothing goes to Nicki/Tracy while this is still being tested.
+const LOW_STOCK_DEV_MODE = true
+const LOW_STOCK_DEV_WHATSAPP_TO = '4734146000' // Jim's whatsapp_phone
+const LOW_STOCK_RECIPIENTS = [
+  { name: 'Nicki', phone: '9024971844' },
+  { name: 'Tracy', phone: '5873210043' },
+]
+
+// Fire-and-forget notification, not persisted anywhere — the office acts on
+// the text itself rather than a tracked list. Called for both the Claude-
+// parsed text path and the deterministic photo-caption path.
+async function sendLowStockAlert(item: string, jobRef: string | null, reporterFirstName: string, photoUrl: string | null): Promise<void> {
+  const jobPart = jobRef ? ` (Job ${jobRef})` : ''
+  const reporter = reporterFirstName || 'a tech'
+  const photoPart = photoUrl ? `\n${photoUrl}` : ''
+  const msg = `🔴 Low stock: ${item}${jobPart} — reported by ${reporter}.${photoPart}`
+
+  // Best-effort — a Twilio hiccup here must never break timesheet processing.
+  try {
+    if (LOW_STOCK_DEV_MODE) {
+      await sendTwilioWhatsApp(`+1${LOW_STOCK_DEV_WHATSAPP_TO}`, `[DEV — would go to Nicki/Tracy]\n${msg}`)
+      return
+    }
+    await Promise.all(LOW_STOCK_RECIPIENTS.map(r => sendTwilioSms(`+1${r.phone}`, msg)))
+  } catch (err: any) {
+    console.error('Low-stock alert send failed:', err.message)
+  }
+}
+
 // Atlantic Time (UTC-4 summer / UTC-3.5 NS — using -4 as safe approximation)
 function atlanticToday(): string {
   const now = new Date(Date.now() - 4 * 60 * 60 * 1000)
@@ -598,6 +630,7 @@ Return exactly this JSON structure (all fields required, use null when absent):
   "per_diem_location": null,
   "entries": [],
   "supplies": [],
+  "low_stock": [],
   "is_help_request": false
 }
 
@@ -611,6 +644,7 @@ Rules:
 - per_diem_location: hotel/location string if staying overnight, "none" if explicitly no per diem ("no PD", "no per diem", "going home", "nope", "no", "worked in the shop", "at the shop", "local", "not staying") — null if not mentioned at all
 - entries: [{job_number:"4-digit string or SHOP"|null, hours:number|null, description:"verbatim from message", replace_hours:boolean, corrects_job_number:"4-digit string"|null}] — only real job work. corrects_job_number: set this ONLY when the message says a job number already reported today was WRONG and gives the correct one ("actually that was 4760, not 9999", "wrong job, it's 4762 not 4761", "change 9999 to 4760", "meant 4760 not 9999") — corrects_job_number is the OLD/wrong number being replaced, job_number is the NEW/correct number. Leave hours and description null unless the message also restates new work/hours alongside the correction. Otherwise always null. If the message clearly describes work done but names NO job ("fixed the head this afternoon", "another 2 hours on the pump"), still return the entry with job_number null — the app attaches it to the day's current job. But a message with no work description at all (just times/lunch/PD like "In 7:30" or "no lunch, no PD") must return entries: []. replace_hours: true when the message restates the TOTAL/FINAL hours for a job already reported today, rather than describing more work done — this includes "actually that was 3hrs", "make that 6", "not 2, 3 hours", "I only worked 7hrs on 4760", "only 2hrs for 4862", "it was really 5", "should only be 4", "total was 6". The word "only" or a flat restated number tied to a specific job almost always means a correction, not new work. replace_hours: false ONLY for messages that clearly describe additional new work on top of what's already logged ("another 2 hrs", "plus 2 more on it", "did 2 more hours this afternoon"). Internal shop work with no customer job ("shop", "job shop", "shop work", "in the shop doing X") gets job_number "SHOP" (always uppercase). hours: the number ONLY if the worker explicitly stated hours for that specific job as a duration ("4760 6hrs", "3.5 hours on 4862") — otherwise null. A time range attached to a job ("4709 9 to 5", "4760 from 8 to 4") is NOT explicit hours — leave hours null even though it looks computable; do not subtract or compute anything yourself. Never estimate, guess, or split a shift total across jobs yourself, even if you know time_in/stated_time_out — the app does that math from the overall time bounds and lunch after parsing.
 - supplies: [{job_number:"4-digit string", supply_name:string, quantity:number}] — materials/consumables used on a job, e.g. "supplies brake cleaner x1, wire brushes x2 Job 4358" or mixed in with hours ("4760 6hrs bearings, used 2 cans brake cleaner"). Quantity comes ONLY from an explicit count word/pattern at the item's edge — "x2", "2 cans", "two rolls", a bare leading count ("2 wire brushes") — default 1 if no count is given. supply_name is the item's full name MINUS only that count — keep everything else, including any part/model/catalog number, brand, spec, or color ("wire brush PN 4521", "3M 5200 sealant", "#44 red", "1/2 inch hose", "wire brushes 43622") verbatim, even if it's a number, EVEN IF it happens to look like a job number. A trailing/leading alphanumeric code stuck directly onto the item is a part number, not a quantity and not a job number — never drop it, never move it into job_number, and never truncate/reshape it to fit any format. E.g. "wire brush PN4521 x2" → supply_name "wire brush PN4521", quantity 2. "2 wire brushes" → supply_name "wire brushes", quantity 2. "2 Wire brushes 43622" → supply_name "wire brushes 43622", quantity 2, job_number "" (the trailing number isn't labeled as a job, so it stays part of the item — never invent or reshape a job_number from it). job_number is set ONLY when the message explicitly marks a number as the job — "Job 4358", "for 4760", "on job 4862" — a bare number with no such marker is part of the item name, full stop. If no job number is given with the supplies, use the job from the same message; empty string if no job mentioned at all (the app then falls back to whatever job the day's already on). Supplies are NOT job work — never create an entries item from a supplies phrase. The reverse also holds: a job's work description is not a supply. "4760 2hrs seals" or "6hrs bearings" describes the work done — extract supplies ONLY when the text presents them as materials used/consumed ("used 2 cans of brake cleaner", "supplies: wire brush x2", "grabbed a roll of tape"), never from a bare work description.
+- low_stock: [{item:string, job_number:"4-digit string"|null}] — set ONLY when the message signals an item is nearly or fully depleted: "last one/can/box/roll/tube/bottle/pair/bag", "running low", "almost out", "getting low", "down to the last one", "need to order more X". This is independent of whether the same item also appears in supplies (used X — supplies can be reported without being low, and a low item might not be phrased as "used" at all — e.g. "heads up, brake cleaner is down to one can" gets low_stock even though nothing was consumed just now). item is the item name, same style as supply_name (keep part/catalog numbers attached, strip only an explicit count). job_number only if explicitly marked as job for that message ("Job 4358") — otherwise null, never guessed.
 - is_help_request: true only if the entire message is a help request
 
 Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.includes('Lunch?') ? `
@@ -997,6 +1031,19 @@ Deno.serve(async (req: Request) => {
     )
 
     const firstName = (employeeName || '').split(' ')[0] || ''
+
+    // Deterministic low-stock check — same "never ask, just flag" approach as
+    // everything else here; no Claude call for photos, same as job detection above.
+    const LOW_STOCK_RE = /\b(last (one|can|box|roll|tube|bottle|pair|bag|couple)|running low|almost out|getting low|down to (the )?last)\b/i
+    if (LOW_STOCK_RE.test(msgBody)) {
+      const firstSaved = saved.find(r => r !== null)
+      const photoUrl = firstSaved
+        ? `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/gear-photos/${firstSaved.path}`
+        : null
+      const itemGuess = note && note.length <= 80 ? note : 'something (see photo)'
+      await sendLowStockAlert(itemGuess, photoContext, firstName, photoUrl)
+    }
+
     const anySaved = saved.some(r => r !== null)
     const reply = !anySaved
       ? `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact the office if it keeps failing.`
@@ -1112,7 +1159,7 @@ Deno.serve(async (req: Request) => {
 
   // ── Parse with Claude ──
   let parsed: any = {
-    entries: [], supplies: [], name_override: null, work_date: null,
+    entries: [], supplies: [], low_stock: [], name_override: null, work_date: null,
     time_in: null, stated_time_out: null,
     lunch_minutes: null, per_diem_location: null,
     is_help_request: false
@@ -1238,6 +1285,15 @@ Deno.serve(async (req: Request) => {
   if (mergedEmployeeId && mergedEmployeeId !== employeeId) {
     const { data: empRow } = await supabase.from('employees').select('name').eq('id', mergedEmployeeId).single()
     if (empRow) employeeName = empRow.name
+  }
+
+  // Notify the office immediately when something's flagged low — this doesn't
+  // wait for approval like everything else, since reordering is time-sensitive.
+  if ((parsed.low_stock || []).length > 0) {
+    const reporterFirstName = (employeeName || '').split(' ')[0] || ''
+    await Promise.all((parsed.low_stock || []).map((ls: any) =>
+      sendLowStockAlert(String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
+    ))
   }
 
   // If any entry has no hours but we have start + end times, infer hours from the time bounds.

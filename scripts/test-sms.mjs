@@ -319,6 +319,23 @@ await scenario('supply part number not mistaken for job number', phone(35), [
   ['ts', ['Supplies:', '43622', '(4760)']],
 ])
 
+// 20d. Low stock reported alongside normal supply usage — the job-costing
+// side is unaffected (still logs the supply to the job); the alert itself
+// goes out via a side-channel WhatsApp to Jim in dev mode, not checkable
+// here, so this just confirms the main flow doesn't break or leak into entries
+await cleanupTestTech()
+await scenario('low stock with supply usage', phone(36), [
+  ['This is Test. 4760 6hrs bearings, used the last can of brake cleaner, in 7, lunch 30, no pd', ['4760: 6hrs']],
+  ['ts', ['Supplies:', 'brake cleaner']],
+])
+
+// 20e. Low stock reported with no usage/job context at all — must not create
+// a job entry from it (it's not work, and it's not tied to any hours)
+await cleanupTestTech()
+await scenario('low stock without usage', phone(37), [
+  ['This is Test. heads up, we are almost out of shop rags', [{ absent: 'Which job' }]],
+])
+
 // ── rough-language scenarios ───────────────────────────────────────────────
 // Simulating how different techs actually text: lowercase, typos, run-ons,
 // slang, military time, spelled-out numbers, rambling. All map to Test Tech.
@@ -418,6 +435,14 @@ await scenario('photo tagging', phone(32), [
   ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
   ['', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
   ['old card clips, looking for a spare', [{ absent: 'Which job' }, { absent: 'job number' }]],
+])
+
+// 33. Low-stock caption on a photo — deterministic (no Claude call for photos),
+// must not break the normal "got the photo" reply/job tagging
+await cleanupTestTech()
+await scenario('photo low stock caption', phone(38), [
+  ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
+  ['last one! 4760', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
 ])
 
 // ── summary ────────────────────────────────────────────────────────────────
