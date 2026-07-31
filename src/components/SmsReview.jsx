@@ -29,7 +29,7 @@ export default function SmsReview({ onApproved } = {}) {
   const [expanded, setExpanded]       = useState({})
   const [acting, setActing]           = useState(null)
   const [noteDrafts, setNoteDrafts]   = useState({})
-  const [photoModalJob, setPhotoModalJob]     = useState(null)
+  const [photoModal, setPhotoModal]           = useState(null) // { title, photos }
   const [photoLightbox, setPhotoLightbox]     = useState(null)
 
   // Test harness
@@ -50,7 +50,7 @@ export default function SmsReview({ onApproved } = {}) {
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
-      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, created_at').not('job_id', 'is', null),
+      supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
@@ -74,7 +74,12 @@ export default function SmsReview({ onApproved } = {}) {
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || 'Unknown'
   const getEmployee = (id) => employees.find(e => e.id === id) || { name: 'Unknown', active: null }
-  const photosPerJob = gearPhotos.reduce((acc, p) => { acc[p.job_id] = (acc[p.job_id] || 0) + 1; return acc }, {})
+
+  // Scoped to one job on one day for one employee — not every photo ever taken
+  // for that job number, which mixes everyone's photos across every date and is
+  // meaningless for a recurring job like SHOP that's logged constantly.
+  const entryPhotos = (jobId, employeeId, workDate) =>
+    gearPhotos.filter(p => p.job_id === jobId && p.employee_id === employeeId && p.work_date === workDate)
 
   const toggle = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
@@ -495,7 +500,8 @@ export default function SmsReview({ onApproved } = {}) {
                         const matchedJob = jobs.find(j => j.job_number.toUpperCase() === (e.job_number || '').toUpperCase())
                         const reg = e.reg_hours ?? e.hours
                         const ot  = e.ot_hours ?? 0
-                        const photoCount = matchedJob ? (photosPerJob[matchedJob.id] || 0) : 0
+                        const thisEntryPhotos = matchedJob ? entryPhotos(matchedJob.id, sub.employee_id, sub.work_date) : []
+                        const photoCount = thisEntryPhotos.length
                         return (
                           <tr key={i} style={{ borderTop: '1px solid #eee' }}>
                             <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600 }}>{e.job_number}</td>
@@ -510,7 +516,7 @@ export default function SmsReview({ onApproved } = {}) {
                             <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}>
                               {photoCount > 0 ? (
                                 <span
-                                  onClick={() => setPhotoModalJob(matchedJob)}
+                                  onClick={() => setPhotoModal({ title: `${matchedJob.job_number} — ${employeeName(sub.employee_id)} — ${sub.work_date}`, photos: thisEntryPhotos })}
                                   style={{ color: '#0066cc', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
                                 >📷 {photoCount}</span>
                               ) : '—'}
@@ -664,17 +670,17 @@ export default function SmsReview({ onApproved } = {}) {
       })}
 
       {/* Photo modal */}
-      {photoModalJob && (() => {
-        const jobPhotos = gearPhotos.filter(p => p.job_id === photoModalJob.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+      {photoModal && (() => {
+        const jobPhotos = [...photoModal.photos].sort((a, b) => b.created_at.localeCompare(a.created_at))
         return (
           <div
-            onClick={() => setPhotoModalJob(null)}
+            onClick={() => setPhotoModal(null)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
           >
             <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, padding: '1.25rem', width: '100%', maxWidth: 700, maxHeight: '80vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3 style={{ margin: 0 }}>{photoModalJob.job_number} — {jobPhotos.length} photo{jobPhotos.length === 1 ? '' : 's'}</h3>
-                <button onClick={() => setPhotoModalJob(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
+                <h3 style={{ margin: 0 }}>{photoModal.title} — {jobPhotos.length} photo{jobPhotos.length === 1 ? '' : 's'}</h3>
+                <button onClick={() => setPhotoModal(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
                 {jobPhotos.map(p => (
