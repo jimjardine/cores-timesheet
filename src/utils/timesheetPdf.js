@@ -7,9 +7,20 @@ import { fmtHours } from './format'
 export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [] }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
   const margin = 40
   const contentW = pageW - margin * 2
   let y = margin
+
+  // Starts a new page when the next block wouldn't fit in the remaining
+  // vertical space, so long entries push content onto page 2+ instead of
+  // running off the bottom of a single page.
+  const ensureSpace = (neededH) => {
+    if (y + neededH > pageH - margin) {
+      doc.addPage()
+      y = margin
+    }
+  }
 
   const fmtTime = t => {
     if (!t) return ''
@@ -110,14 +121,18 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   // ── Job # / Hrs / Description of Work table ──
   const col1W = 55, col2W = 45
   const col3X = margin + col1W + col2W
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
-  doc.text('Job #', margin + 4, y)
-  doc.text('Hrs', margin + col1W + 4, y)
-  doc.text('Description of Work', col3X + 4, y)
-  y += 4
-  doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5)
-  doc.text('Record: Make, Model, and Serial # or equipment/engine you are working on', col3X + 4, y + 8)
-  y += 14
+
+  const drawTableHeader = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+    doc.text('Job #', margin + 4, y)
+    doc.text('Hrs', margin + col1W + 4, y)
+    doc.text('Description of Work', col3X + 4, y)
+    y += 4
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5)
+    doc.text('Record: Make, Model, and Serial # or equipment/engine you are working on', col3X + 4, y + 8)
+    y += 14
+  }
+  drawTableHeader()
 
   // Rows grow with wrapped description text so long entries don't overlap
   // the next row
@@ -127,31 +142,79 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   const minRowH = 16
   const rowData = jobLines.map(line => {
     const wrapped = doc.splitTextToSize(String(line.description || ''), descMaxW)
-    return { ...line, wrapped, h: Math.max(minRowH, wrapped.length * lineH + 5) }
+    return { ...line, wrapped }
   })
-  while (rowData.length < 3) rowData.push({ jobNumber: '', hours: null, wrapped: [], h: minRowH })
+  while (rowData.length < 3) rowData.push({ jobNumber: '', hours: null, wrapped: [] })
 
-  const tableTop = y
+  let tableTop = y
   let rowY = tableTop
   doc.setLineWidth(0.5)
   doc.line(margin, tableTop, pageW - margin, tableTop)
+
+  const closeTableBorders = (top, bottom) => {
+    doc.line(margin, top, margin, bottom)
+    doc.line(margin + col1W, top, margin + col1W, bottom)
+    doc.line(col3X, top, col3X, bottom)
+    doc.line(pageW - margin, top, pageW - margin, bottom)
+  }
+  const startTablePage = () => {
+    doc.addPage()
+    y = margin
+    drawTableHeader()
+    tableTop = y
+    rowY = tableTop
+    doc.setLineWidth(0.5)
+    doc.line(margin, tableTop, pageW - margin, tableTop)
+  }
+
+  // Each row is drawn in chunks of wrapped lines that fit in the space left
+  // on the current page — a description long enough to fill (or exceed) a
+  // whole page spills its remaining lines onto a fresh page instead of
+  // running off the bottom of this one.
   rowData.forEach(r => {
-    doc.text(String(r.jobNumber || ''), margin + 4, rowY + 11)
-    doc.text(r.hours != null && r.hours !== '' ? fmtHours(r.hours) : '', margin + col1W + 4, rowY + 11)
-    r.wrapped.forEach((ln, i) => doc.text(ln, col3X + 4, rowY + 11 + i * lineH))
-    rowY += r.h
-    doc.line(margin, rowY, pageW - margin, rowY)
+    let remaining = r.wrapped.slice()
+    let firstChunk = true
+    let rowDone = false
+    while (!rowDone) {
+      const availH = pageH - margin - rowY
+      const maxLines = Math.max(0, Math.floor((availH - 5) / lineH))
+      let chunk = null
+      let chunkH = 0
+
+      if (remaining.length === 0) {
+        if (availH >= minRowH) { chunk = []; chunkH = minRowH; rowDone = true }
+      } else if (remaining.length * lineH + 5 <= availH) {
+        chunk = remaining; chunkH = remaining.length * lineH + 5; remaining = []; rowDone = true
+      } else if (maxLines >= 1 && availH >= minRowH) {
+        chunk = remaining.slice(0, maxLines)
+        remaining = remaining.slice(maxLines)
+        chunkH = chunk.length * lineH + 5
+      }
+
+      if (chunk === null) {
+        closeTableBorders(tableTop, rowY)
+        startTablePage()
+        continue
+      }
+
+      if (firstChunk) {
+        doc.text(String(r.jobNumber || ''), margin + 4, rowY + 11)
+        doc.text(r.hours != null && r.hours !== '' ? fmtHours(r.hours) : '', margin + col1W + 4, rowY + 11)
+      }
+      chunk.forEach((ln, i) => doc.text(ln, col3X + 4, rowY + 11 + i * lineH))
+      rowY += chunkH
+      doc.line(margin, rowY, pageW - margin, rowY)
+      firstChunk = false
+    }
   })
   const tableBottom = rowY
-  doc.line(margin, tableTop, margin, tableBottom)
-  doc.line(margin + col1W, tableTop, margin + col1W, tableBottom)
-  doc.line(col3X, tableTop, col3X, tableBottom)
-  doc.line(pageW - margin, tableTop, pageW - margin, tableBottom)
+  closeTableBorders(tableTop, tableBottom)
 
   y = tableBottom + 20
 
   // ── Extra's / Shop Supplies / Non Compliance Log (blank sections) ──
   const blankSection = (label) => {
+    ensureSpace(30)
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
     doc.text('Job #', margin + 4, y + 12)
     doc.text(label, margin + col1W + col2W + 4, y + 12)
@@ -163,14 +226,15 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   blankSection("Extra's")
 
   // ── Shop Supplies (filled from job_supplies) ──
+  const supRowH = 16
+  const supRowCount = Math.max(supplyLines.length, 1)
+  ensureSpace(16 + supRowH * supRowCount)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
   doc.text('Job #', margin + 4, y + 12)
   doc.text('Qty', margin + col1W + 4, y + 12)
   doc.text('Shop Supplies', margin + col1W + col2W + 4, y + 12)
   y += 16
   const supTop = y
-  const supRowH = 16
-  const supRowCount = Math.max(supplyLines.length, 1)
   const supBottom = supTop + supRowH * supRowCount
   supplyLines.forEach((s, i) => {
     const rowY = supTop + i * supRowH
@@ -193,6 +257,7 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   y += 15
 
   // ── Signatures ──
+  ensureSpace(95)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
   doc.text('Employee Signature:', margin, y)
   doc.line(margin + 110, y + 3, margin + 280, y + 3)
