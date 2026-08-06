@@ -212,17 +212,21 @@ export default function PendingEntryEdit({ employee }) {
           {supplies.map((line, i) => {
             const entryJobNumbers = [...new Set(entries.map(e => e.job_number.trim()).filter(Boolean))]
             return (
-              <div className="emp-row-2" key={i} style={{ marginTop: '0.4rem' }}>
-                <select value={line.job_number} onChange={e => setSupplyField(i, 'job_number', e.target.value)}>
-                  <option value="">Job…</option>
-                  {entryJobNumbers.map(jn => <option key={jn} value={jn}>{jn}</option>)}
-                </select>
-                <div style={{ display: 'flex', gap: '0.4rem' }}>
-                  <input type="text" placeholder="brake cleaner PN4521" value={line.supply_name}
-                    onChange={e => setSupplyField(i, 'supply_name', e.target.value)} style={{ flex: 1 }} />
-                  <input type="number" min="0" step="0.5" value={line.quantity}
-                    onChange={e => setSupplyField(i, 'quantity', e.target.value)} style={{ width: '4.5rem' }} />
+              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.4rem' }}>
+                <div className="emp-row-2" style={{ flex: 1 }}>
+                  <select value={line.job_number} onChange={e => setSupplyField(i, 'job_number', e.target.value)}>
+                    <option value="">Job…</option>
+                    {entryJobNumbers.map(jn => <option key={jn} value={jn}>{jn}</option>)}
+                  </select>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input type="text" placeholder="brake cleaner PN4521" value={line.supply_name}
+                      onChange={e => setSupplyField(i, 'supply_name', e.target.value)} style={{ flex: 1 }} />
+                    <input type="number" min="0" step="0.5" value={line.quantity}
+                      onChange={e => setSupplyField(i, 'quantity', e.target.value)} style={{ width: '4.5rem' }} />
+                  </div>
                 </div>
+                <button className="emp-remove-line" style={{ position: 'static' }}
+                  onClick={() => setSupplies(rows => rows.filter((_, idx) => idx !== i))}>Remove</button>
               </div>
             )
           })}

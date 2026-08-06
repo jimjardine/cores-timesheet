@@ -247,13 +247,17 @@ export default function EntryForm({ employee, mode }) {
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#444' }}>Supplies used (optional)</label>
           {supplyLines.map((line, i) => (
-            <div className="emp-row-2" key={i} style={{ marginTop: '0.4rem' }}>
-              <select value={line.job_id} onChange={e => updateSupplyLine(i, { job_id: e.target.value })}>
-                <option value="">Job…</option>
-                {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
-              </select>
-              <input type="text" placeholder="Supply + qty" value={line.supply_name}
-                onChange={e => updateSupplyLine(i, { supply_name: e.target.value })} />
+            <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.4rem' }}>
+              <div className="emp-row-2" style={{ flex: 1 }}>
+                <select value={line.job_id} onChange={e => updateSupplyLine(i, { job_id: e.target.value })}>
+                  <option value="">Job…</option>
+                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                </select>
+                <input type="text" placeholder="Supply + qty" value={line.supply_name}
+                  onChange={e => updateSupplyLine(i, { supply_name: e.target.value })} />
+              </div>
+              <button className="emp-remove-line" style={{ position: 'static' }}
+                onClick={() => setSupplyLines(l => l.filter((_, idx) => idx !== i))}>Remove</button>
             </div>
           ))}
           <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
