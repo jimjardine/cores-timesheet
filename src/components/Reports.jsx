@@ -383,6 +383,30 @@ export default function Reports() {
         rows.push([emp.name, empJobs.size, fmtHours(totalHrs), fmtHours(totalReg), fmtHours(totalOT), totalPD, `"${[...empCusts].join(', ')}"`, csvDateFrom, csvDateTo].join(','))
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
+    } else if (activeTab === 'supplies') {
+      const rows = ['Job #,Customer,Vessel,Tech,Date,Supply,Qty,Description,Date From,Date To']
+      suppliesTabList
+        .slice()
+        .sort((a, b) => {
+          const jobA = jobsById[a.job_id]?.job_number || ''
+          const jobB = jobsById[b.job_id]?.job_number || ''
+          return jobA.localeCompare(jobB) || a.work_date.localeCompare(b.work_date) || (a.employees?.name || '').localeCompare(b.employees?.name || '')
+        })
+        .forEach(s => {
+          const job = jobsById[s.job_id]
+          rows.push([
+            job?.job_number || '',
+            job?.customers?.name || '',
+            job?.vessels?.name || '',
+            s.employees?.name || '',
+            s.work_date,
+            `"${(s.supply_name || '').replace(/"/g, '""')}"`,
+            Number(s.quantity),
+            `"${(s.description || '').replace(/"/g, '""')}"`,
+            csvDateFrom, csvDateTo,
+          ].join(','))
+        })
+      downloadCSV(rows, `supplies-${dateFileSuffix}.csv`)
     }
   }
 
@@ -679,7 +703,7 @@ export default function Reports() {
       <div className="no-print" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         {['jobs', 'customer', 'vessel', 'employee', 'supplies'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee', supplies: 'Supplies' }[t]))}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
-          {activeTab !== 'supplies' && tabExportBtn}
+          {tabExportBtn}
         </div>
       </div>
 
