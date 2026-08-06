@@ -18,6 +18,7 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • REJECT — delete today's entry
 • SUPPLIES — log parts used
 • MOBILE — link to your mobile timesheet
+• MAIN — link to the main site
 • OTHER — using someone else's phone
 
 Reply HELP + a word above for details (e.g. "HELP jobs").
@@ -28,6 +29,11 @@ Reply HELP + a word above for details (e.g. "HELP jobs").
 // entry, or add a job you forgot to mention. Kept as one constant since it's
 // sent back verbatim by both the MOBILE command and HELP_TOPICS.mobile.
 const MOBILE_URL = 'https://jimjardine.github.io/cores-timesheet/#/my'
+
+// The main site (Job Reports / Admin dashboard) — password-gated, mostly
+// office use, but the phone number is shared by techs and office staff alike
+// so it gets a command too, same as MOBILE.
+const MAIN_URL = 'https://jimjardine.github.io/cores-timesheet/'
 
 // Sent back verbatim when a tech texts TEMPLATE — kept in sync with the
 // "Copy-paste template" section of public/SMS_CHEAT_SHEET.md.
@@ -111,6 +117,13 @@ Text MOBILE any time for the link to your mobile timesheet:
 ${MOBILE_URL}
 
 Log in with your phone number. First time in, you'll set a 4-digit PIN after we text you a one-time code.`,
+
+  main: `MAIN — the main site
+
+Text MAIN any time for the link to the main site (Job Reports / Admin):
+${MAIN_URL}
+
+Password-gated — mostly for office use.`,
 }
 HELP_TOPICS.format = HELP_TOPICS.hours
 HELP_TOPICS.photos = HELP_TOPICS.photo
@@ -876,6 +889,12 @@ Deno.serve(async (req: Request) => {
   // ── Mobile site link request ──
   if (msgLower === 'mobile' && mediaUrls.length === 0) {
     const r = `Check your week here: ${MOBILE_URL}\nLog in with your phone number.`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── Main site link request ──
+  if (msgLower === 'main' && mediaUrls.length === 0) {
+    const r = `Main site: ${MAIN_URL}`
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
