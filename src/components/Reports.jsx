@@ -176,6 +176,8 @@ export default function Reports() {
     return acc
   }, {})
 
+  const [supplySaveStatus, setSupplySaveStatus] = useState({}) // { [id]: 'saving' | 'saved' | 'error' }
+
   function updateSupplyField(id, field, value) {
     setSupplies(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s))
   }
@@ -186,8 +188,15 @@ export default function Reports() {
       if (!(qty > 0)) { alert('Quantity must be greater than 0'); return }
     }
     const value = field === 'quantity' ? Number(supply.quantity) : (supply[field] || null)
+    setSupplySaveStatus(s => ({ ...s, [supply.id]: 'saving' }))
     const { error } = await supabase.schema('Cores').from('job_supplies').update({ [field]: value }).eq('id', supply.id)
-    if (error) alert(`Couldn't save change: ${error.message}`)
+    if (error) {
+      alert(`Couldn't save change: ${error.message}`)
+      setSupplySaveStatus(s => ({ ...s, [supply.id]: 'error' }))
+      return
+    }
+    setSupplySaveStatus(s => ({ ...s, [supply.id]: 'saved' }))
+    setTimeout(() => setSupplySaveStatus(s => (s[supply.id] === 'saved' ? { ...s, [supply.id]: undefined } : s)), 2000)
   }
 
   async function deleteSupply(supply) {
@@ -940,6 +949,10 @@ export default function Reports() {
             </div>
           </div>
 
+          <div className="no-print" style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#888' }}>
+            Edits save automatically when you click out of a field — watch for the "✓ Saved" note on the right of each row.
+          </div>
+
           <div className="print-only" style={{ display: 'none', marginBottom: '1.5rem' }}>
             <h2 style={{ margin: 0 }}>Supplies Report</h2>
             <div style={{ color: '#555', fontSize: '0.9rem' }}>Cores Worldwide — {dateLabel}{dateFrom && dateTo ? ` (${dateFrom} – ${dateTo})` : ''}</div>
@@ -982,6 +995,7 @@ export default function Reports() {
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#888', width: '80px' }}>Qty</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Description</th>
+                                  <th className="no-print" style={{ width: '70px' }}></th>
                                   <th className="no-print" style={{ width: '40px' }}></th>
                                 </tr>
                               </thead>
@@ -1008,6 +1022,11 @@ export default function Reports() {
                                         onBlur={() => saveSupplyField(s, 'description')}
                                         className="print-input"
                                         style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                                    </td>
+                                    <td className="no-print" style={{ textAlign: 'center', fontSize: '0.75rem' }}>
+                                      {supplySaveStatus[s.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
+                                      {supplySaveStatus[s.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
+                                      {supplySaveStatus[s.id] === 'error' && <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ Failed</span>}
                                     </td>
                                     <td className="no-print" style={{ textAlign: 'center' }}>
                                       <button onClick={() => deleteSupply(s)} style={{ padding: '0.25rem 0.5rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontSize: '0.8rem' }}>✕</button>
