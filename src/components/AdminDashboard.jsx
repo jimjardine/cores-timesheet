@@ -942,6 +942,7 @@ export default function AdminDashboard() {
                   <button onClick={() => setEditSupplies(editSupplies.filter((_, idx) => idx !== i))} style={{ padding: '0.4rem 0.6rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontWeight: 600, fontSize: '0.85rem' }}>✕</button>
                 </div>
               ))}
+              <button onClick={() => setEditSupplies([...editSupplies, { job_id: '', supply_name: '', quantity: 1 }])} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f9f9f9', cursor: 'pointer', fontSize: '0.85rem', marginTop: '0.25rem' }}>+ Add supply</button>
             </div>
 
             {!addingNewJob ? (
