@@ -119,6 +119,10 @@ Add a day to check another one:
 > "TS yesterday"
 > "TS monday"
 
+## Want to check your week on your phone?
+
+Text **MOBILE** any time for the link to your mobile timesheet — log in with your phone number to see your hours, fix anything you added yourself, or add a job you forgot to mention. First time in, you'll set a 4-digit PIN after a one-time code gets texted to you.
+
 ## Need someone's number?
 
 Text **PHONE#** for the full phone directory, or **PHONE#** plus a name for just theirs:
@@ -151,7 +155,7 @@ If you give your in and out times, it can work out the hours for you:
 ## Stuck?
 
 - Text or WhatsApp **HELP** (or just **?**) any time for the command list.
-- Add a word to HELP for the full detail on any one of them: **HELP hours**, **HELP jobs**, **HELP phone**, **HELP photo**, **HELP timesheet**, **HELP supplies**, **HELP other**.
+- Add a word to HELP for the full detail on any one of them: **HELP hours**, **HELP jobs**, **HELP phone**, **HELP photo**, **HELP timesheet**, **HELP supplies**, **HELP mobile**, **HELP other**.
 - If a message comes back with "Couldn't read that one," reword it or contact the office directly.
 - Remember: use **SMS** (+1 506 404-6969) or **WhatsApp** (+1 415 523-8886) — they're two different numbers for two different channels.
 

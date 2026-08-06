@@ -17,11 +17,17 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • TIMESHEET — what's logged for a day
 • REJECT — delete today's entry
 • SUPPLIES — log parts used
+• MOBILE — link to your mobile timesheet
 • OTHER — using someone else's phone
 
 Reply HELP + a word above for details (e.g. "HELP jobs").
 
 💬 Use WhatsApp or SMS — works both ways.`
+
+// The tech-facing mobile self-service site — check your week, fix a self-added
+// entry, or add a job you forgot to mention. Kept as one constant since it's
+// sent back verbatim by both the MOBILE command and HELP_TOPICS.mobile.
+const MOBILE_URL = 'https://jimjardine.github.io/cores-timesheet/#/my'
 
 // Sent back verbatim when a tech texts TEMPLATE — kept in sync with the
 // "Copy-paste template" section of public/SMS_CHEAT_SHEET.md.
@@ -98,6 +104,13 @@ No job number given? It's attributed to the first job in that text.`,
   other: `USING SOMEONE ELSE'S PHONE
 
 Start your text with: "This is Joey" so the hours land on their timesheet, not yours.`,
+
+  mobile: `MOBILE — check your week
+
+Text MOBILE any time for the link to your mobile timesheet:
+${MOBILE_URL}
+
+Log in with your phone number. First time in, you'll set a 4-digit PIN after we text you a one-time code.`,
 }
 HELP_TOPICS.format = HELP_TOPICS.hours
 HELP_TOPICS.photos = HELP_TOPICS.photo
@@ -858,6 +871,12 @@ Deno.serve(async (req: Request) => {
   // ── Fill-in-the-blank template request ──
   if (msgLower === 'template' && mediaUrls.length === 0) {
     return isTwilio ? twiML(TEMPLATE_TEXT) : jsonReply({ reply: TEMPLATE_TEXT })
+  }
+
+  // ── Mobile site link request ──
+  if (msgLower === 'mobile' && mediaUrls.length === 0) {
+    const r = `Check your week here: ${MOBILE_URL}\nLog in with your phone number.`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
   // ── Timesheet view request ("timesheet" / "ts", optional day) ──

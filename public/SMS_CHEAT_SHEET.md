@@ -38,6 +38,10 @@ Text **JOBS** for the full list, or **JOBS + boat name** for just that boat.
 
 Text **TIMESHEET** (or **TS**) — add a day like "TS yesterday" for another date.
 
+## Want to check your week on your phone?
+
+Text **MOBILE** for the link to your mobile timesheet, or go straight there and log in with your phone number.
+
 ## Full details
 
 See the Tech Manual for corrections, multi-text days, using someone else's phone, and more.
