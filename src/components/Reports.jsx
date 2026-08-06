@@ -703,7 +703,7 @@ export default function Reports() {
       <div className="no-print" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
         {['jobs', 'customer', 'vessel', 'employee', 'supplies'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee', supplies: 'Supplies' }[t]))}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
-          {tabExportBtn}
+          {activeTab !== 'supplies' && tabExportBtn}
         </div>
       </div>
 
@@ -932,9 +932,12 @@ export default function Reports() {
                 selectedIds={suppliesEmployeeFilterIds} onChange={setSuppliesEmployeeFilterIds}
                 placeholder="All techs" allLabel="All techs" minWidth={180} />
             </div>
-            <button onClick={() => window.print()} style={{ marginLeft: 'auto', padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
-              🖨️ Print / Save as PDF
-            </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+              {tabExportBtn}
+              <button onClick={() => window.print()} style={{ padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                🖨️ Print / Save as PDF
+              </button>
+            </div>
           </div>
 
           <div className="print-only" style={{ display: 'none', marginBottom: '1.5rem' }}>
