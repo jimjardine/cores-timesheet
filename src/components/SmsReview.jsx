@@ -119,6 +119,14 @@ export default function SmsReview({ onApproved } = {}) {
       alert('Every job needs a note describing what was done — click Edit to add one before approving.')
       return
     }
+    // Hours can go stale against time_in/stated_time_out when either gets edited
+    // without the other (see Aug 6 2026 incident — time was corrected but the
+    // job hours weren't, and it slipped through to approval unnoticed).
+    if (sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 15) {
+      const deltaHrs = deltaMinsToHours(sub.delta_minutes)
+      const ok = confirm(`Heads up — this submission's job hours don't match its time span (off by ${Math.abs(deltaHrs)}hrs). Approve anyway?`)
+      if (!ok) return
+    }
     setActing(sub.id)
     const hasPD = sub.per_diem_location && sub.per_diem_location !== 'none'
 
@@ -311,6 +319,14 @@ export default function SmsReview({ onApproved } = {}) {
         const [sh, sm] = updates.stated_time_out.split(':').map(Number)
         updates.delta_minutes = (sh * 60 + sm) - outMins
       }
+    }
+
+    // Warn here, not just at approval — this is the moment a time-field edit can
+    // silently go stale against the hours (edited one, forgot the other).
+    if (updates.delta_minutes != null && Math.abs(updates.delta_minutes) > 15) {
+      const deltaHrs = deltaMinsToHours(updates.delta_minutes)
+      const ok = confirm(`Heads up — job hours (${fmtHours(totalHours)}hrs) don't match Time In/Out minus lunch (off by ${Math.abs(deltaHrs)}hrs). Save anyway?`)
+      if (!ok) return
     }
 
     const { error } = await supabase.schema('Cores').from('sms_submissions').update(updates).eq('id', editModal.id)
