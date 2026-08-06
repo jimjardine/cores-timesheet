@@ -49,6 +49,8 @@ export default function Reports() {
   const [hideEmptyOptions, setHideEmptyOptions] = useState(true)
   const [employeeFilterIds, setEmployeeFilterIds] = useState([])
   const employeeFilterIdsDefaulted = useRef(false)
+  const [suppliesJobFilterIds, setSuppliesJobFilterIds] = useState([])
+  const [suppliesEmployeeFilterIds, setSuppliesEmployeeFilterIds] = useState([])
 
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
@@ -162,6 +164,39 @@ export default function Reports() {
   const jobsById = jobs.reduce((acc, j) => { acc[j.id] = j; return acc }, {})
   const photosPerEmployee = gearPhotos.reduce((acc, p) => { acc[p.employee_id] = (acc[p.employee_id] || 0) + 1; return acc }, {})
 
+  // ── Supplies tab ──
+  const jobIdsWithSupplies = new Set(filteredSupplies.map(s => s.job_id))
+  const employeeIdsWithSupplies = new Set(filteredSupplies.map(s => s.employee_id))
+  const suppliesTabList = filteredSupplies
+    .filter(s => suppliesJobFilterIds.length === 0 || suppliesJobFilterIds.includes(s.job_id))
+    .filter(s => suppliesEmployeeFilterIds.length === 0 || suppliesEmployeeFilterIds.includes(s.employee_id))
+  const suppliesByJob = suppliesTabList.reduce((acc, s) => {
+    if (!acc[s.job_id]) acc[s.job_id] = []
+    acc[s.job_id].push(s)
+    return acc
+  }, {})
+
+  function updateSupplyField(id, field, value) {
+    setSupplies(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s))
+  }
+
+  async function saveSupplyField(supply, field) {
+    if (field === 'quantity') {
+      const qty = Number(supply.quantity)
+      if (!(qty > 0)) { alert('Quantity must be greater than 0'); return }
+    }
+    const value = field === 'quantity' ? Number(supply.quantity) : (supply[field] || null)
+    const { error } = await supabase.schema('Cores').from('job_supplies').update({ [field]: value }).eq('id', supply.id)
+    if (error) alert(`Couldn't save change: ${error.message}`)
+  }
+
+  async function deleteSupply(supply) {
+    if (!confirm(`Delete "${supply.supply_name}" (qty ${Number(supply.quantity)})?`)) return
+    const { error } = await supabase.schema('Cores').from('job_supplies').delete().eq('id', supply.id)
+    if (error) { alert(`Delete failed: ${error.message}`); return }
+    setSupplies(prev => prev.filter(s => s.id !== supply.id))
+  }
+
   function openPhotoGroup(title, photos) {
     setPhotoGroup({ title, photos: [...photos].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
   }
@@ -198,7 +233,7 @@ export default function Reports() {
     const prev = navHistory[navHistory.length - 1]
     if (prev.selectedJob) return `← ${prev.selectedJob.job_number}`
     if (prev.selectedEmployee) return `← ${prev.selectedEmployee.name}`
-    const labels = { jobs: '← Jobs Overview', customer: '← By Customer', vessel: '← By Vessel', employee: '← All Employees', payroll: '← Payroll' }
+    const labels = { jobs: '← Jobs Overview', customer: '← By Customer', vessel: '← By Vessel', employee: '← All Employees', supplies: '← Supplies', payroll: '← Payroll' }
     return labels[prev.activeTab] || '← Back'
   }
 
@@ -579,11 +614,11 @@ export default function Reports() {
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
+        <div className={activeTab === 'supplies' ? 'no-print' : ''}>
           <h1 style={{ margin: 0 }}>Job Reports</h1>
           <p style={{ color: '#888', margin: '0.25rem 0 0' }}>Cores Worldwide — as of {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="no-print" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Status filter */}
           {[['open','Open'], ['closed','Closed'], ['all','All jobs']].map(([key, label]) => (
             <button key={key} onClick={() => setJobStatus(key)} style={{
@@ -618,7 +653,7 @@ export default function Reports() {
         </div>
       </div>
       {datePreset === 'custom' && (
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1.25rem', padding: '0.75rem 1rem', background: '#f8faff', border: '1px solid #d0e0f8', borderRadius: '6px', flexWrap: 'wrap' }}>
+        <div className="no-print" style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1.25rem', padding: '0.75rem 1rem', background: '#f8faff', border: '1px solid #d0e0f8', borderRadius: '6px', flexWrap: 'wrap' }}>
           <label style={{ color: '#555', fontWeight: 600, fontSize: '0.9rem' }}>Custom range:</label>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: '0.35rem 0.6rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }} />
@@ -629,22 +664,22 @@ export default function Reports() {
         </div>
       )}
       {datePreset !== 'all' && (
-        <div style={{ marginBottom: '1.25rem', fontSize: '0.85rem', color: '#0066cc' }}>
+        <div className="no-print" style={{ marginBottom: '1.25rem', fontSize: '0.85rem', color: '#0066cc' }}>
           Showing: <strong>{dateLabel}</strong>{dateFrom && dateTo && datePreset !== 'custom' ? ` (${dateFrom} – ${dateTo})` : ''}
           {' '}<span onClick={() => applyPreset('all')} style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}>clear</span>
         </div>
       )}
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#555', cursor: 'pointer', marginBottom: '1rem', fontSize: '0.9rem' }}>
+      <label className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#555', cursor: 'pointer', marginBottom: '1rem', fontSize: '0.9rem' }}>
         <input type="checkbox" checked={hideEmptyOptions} onChange={e => setHideEmptyOptions(e.target.checked)} />
         Only show items with time logged against them
       </label>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {['jobs', 'customer', 'vessel', 'employee'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee' }[t]))}
+      <div className="no-print" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
+        {['jobs', 'customer', 'vessel', 'employee', 'supplies'].map(t => tabBtn(t, { jobs: 'Jobs Overview', customer: 'By Customer', vessel: 'By Vessel', employee: 'By Employee', supplies: 'Supplies' }[t]))}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
-          {tabExportBtn}
+          {activeTab !== 'supplies' && tabExportBtn}
         </div>
       </div>
 
@@ -851,6 +886,124 @@ export default function Reports() {
             })}
           </tbody>
         </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Supplies ── */}
+      {activeTab === 'supplies' && (
+        <div>
+          <div className="no-print" style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Job:</label>
+              <MultiSelectDropdown
+                options={jobs.filter(j => jobIdsWithSupplies.has(j.id)).map(j => ({ id: j.id, name: `${j.job_number} — ${j.customers?.name || ''}` }))}
+                selectedIds={suppliesJobFilterIds} onChange={setSuppliesJobFilterIds}
+                placeholder="All jobs" allLabel="All jobs" minWidth={220} />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Tech:</label>
+              <MultiSelectDropdown
+                options={employees.filter(e => employeeIdsWithSupplies.has(e.id))}
+                selectedIds={suppliesEmployeeFilterIds} onChange={setSuppliesEmployeeFilterIds}
+                placeholder="All techs" allLabel="All techs" minWidth={180} />
+            </div>
+            <button onClick={() => window.print()} style={{ marginLeft: 'auto', padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
+              🖨️ Print / Save as PDF
+            </button>
+          </div>
+
+          <div className="print-only" style={{ display: 'none', marginBottom: '1.5rem' }}>
+            <h2 style={{ margin: 0 }}>Supplies Report</h2>
+            <div style={{ color: '#555', fontSize: '0.9rem' }}>Cores Worldwide — {dateLabel}{dateFrom && dateTo ? ` (${dateFrom} – ${dateTo})` : ''}</div>
+          </div>
+
+          {Object.keys(suppliesByJob).length === 0 ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No supplies recorded for this period</div>
+          ) : (
+            Object.entries(suppliesByJob)
+              .sort(([aId], [bId]) => (jobsById[aId]?.job_number || '').localeCompare(jobsById[bId]?.job_number || ''))
+              .map(([jobId, rows]) => {
+                const job = jobsById[jobId]
+                const subgroups = rows.reduce((acc, s) => {
+                  const key = `${s.employee_id}|${s.work_date}`
+                  if (!acc[key]) acc[key] = { employee: s.employees, employee_id: s.employee_id, work_date: s.work_date, items: [] }
+                  acc[key].items.push(s)
+                  return acc
+                }, {})
+                return (
+                  <div key={jobId} className="supplies-job-group" style={{ ...card, marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{job?.job_number || 'Unknown Job'}</span>
+                      <span style={{ color: '#aaa' }}>·</span>
+                      <span>{job?.customers?.name}</span>
+                      <span style={{ color: '#aaa' }}>·</span>
+                      <span style={{ color: '#555' }}>{job?.vessels?.name}</span>
+                    </div>
+                    {Object.values(subgroups)
+                      .sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+                      .map(group => {
+                        const photos = gearPhotos.filter(p => p.job_id === jobId && p.employee_id === group.employee_id && p.work_date === group.work_date)
+                        return (
+                          <div key={`${group.employee_id}-${group.work_date}`} className="supplies-subgroup" style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+                            <div style={{ fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
+                              {group.employee?.name || 'Unknown'} — {new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid #ddd' }}>
+                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
+                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#888', width: '80px' }}>Qty</th>
+                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Description</th>
+                                  <th className="no-print" style={{ width: '40px' }}></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.items.map(s => (
+                                  <tr key={s.id}>
+                                    <td style={{ padding: '0.25rem 0.5rem' }}>
+                                      <input value={s.supply_name || ''}
+                                        onChange={e => updateSupplyField(s.id, 'supply_name', e.target.value)}
+                                        onBlur={() => saveSupplyField(s, 'supply_name')}
+                                        className="print-input"
+                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                                    </td>
+                                    <td style={{ padding: '0.25rem 0.5rem' }}>
+                                      <input type="number" step="0.01" value={s.quantity ?? ''}
+                                        onChange={e => updateSupplyField(s.id, 'quantity', e.target.value)}
+                                        onBlur={() => saveSupplyField(s, 'quantity')}
+                                        className="print-input"
+                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem', textAlign: 'center' }} />
+                                    </td>
+                                    <td style={{ padding: '0.25rem 0.5rem' }}>
+                                      <input value={s.description || ''}
+                                        onChange={e => updateSupplyField(s.id, 'description', e.target.value)}
+                                        onBlur={() => saveSupplyField(s, 'description')}
+                                        className="print-input"
+                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                                    </td>
+                                    <td className="no-print" style={{ textAlign: 'center' }}>
+                                      <button onClick={() => deleteSupply(s)} style={{ padding: '0.25rem 0.5rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontSize: '0.8rem' }}>✕</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {photos.length > 0 && (
+                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                {photos.map(p => (
+                                  <div key={p.id} style={{ width: '120px' }}>
+                                    <img src={gearPhotoUrl(p.storage_path)} alt="" style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: '4px', border: '1px solid #eee', display: 'block' }} />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                  </div>
+                )
+              })
           )}
         </div>
       )}

@@ -10,7 +10,7 @@ function AdminApp() {
   return (
     <PasswordGate>
       <div>
-        <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
+        <nav className="no-print" style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
           <span style={{ color: '#fff', fontWeight: 700, marginRight: '1.5rem' }}>Cores Worldwide</span>
           {[['reports', 'Job Reports'], ['dashboard', 'Timesheets'], ['admin', 'Admin']].map(([key, label]) => (
             <button key={key} onClick={() => setAdminView(key)} style={{
