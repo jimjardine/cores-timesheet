@@ -1262,9 +1262,12 @@ Deno.serve(async (req: Request) => {
   // later in the day overrides whatever was stored (or defaulted) earlier.
   // Silent default, same philosophy as lunch/PD — a tech who doesn't mention a
   // start time almost always started around 7; the office corrects the exceptions.
+  // Only applies when there's actual work logged for the day — an "off, zero
+  // hours" text has no entries at all, and defaulting to 7am there produced a
+  // nonsensical "Got it — in 7am" reply for a day the tech said they didn't work.
   const mergedTimeIn    = parsed.time_in
                         ?? (submission?.time_in ? submission.time_in.substring(0, 5) : null)
-                        ?? '07:00'
+                        ?? (allEntries.length > 0 ? '07:00' : null)
   const mergedStatedOut = parsed.stated_time_out
                         ?? (submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : null)
   const mergedLunch     = parsed.lunch_minutes != null ? parsed.lunch_minutes
