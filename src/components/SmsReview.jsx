@@ -25,6 +25,7 @@ export default function SmsReview({ onApproved } = {}) {
   const [gearPhotos, setGearPhotos]   = useState([])
   const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
+  const [sortBy, setSortBy]           = useState('recent')
   const [loading, setLoading]         = useState(true)
   const [expanded, setExpanded]       = useState({})
   const [acting, setActing]           = useState(null)
@@ -74,6 +75,13 @@ export default function SmsReview({ onApproved } = {}) {
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || 'Unknown'
   const getEmployee = (id) => employees.find(e => e.id === id) || { name: 'Unknown', active: null }
+
+  const sortedVisible = [...visible].sort((a, b) => {
+    if (sortBy === 'employee') return employeeName(a.employee_id).localeCompare(employeeName(b.employee_id))
+    if (sortBy === 'workdate') return (b.work_date || '').localeCompare(a.work_date || '')
+    if (sortBy === 'oldest')   return (a.updated_at || '').localeCompare(b.updated_at || '')
+    return (b.updated_at || '').localeCompare(a.updated_at || '') // 'recent' (default, matches original fetch order)
+  })
 
   // Scoped to one job on one day for one employee — not every photo ever taken
   // for that job number, which mixes everyone's photos across every date and is
@@ -388,7 +396,7 @@ export default function SmsReview({ onApproved } = {}) {
       {/* Filter + title */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem' }}>SMS Submissions</h2>
-        <div style={{ display: 'flex', gap: '0.4rem' }}>
+        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
           {['submitted', 'approved', 'rejected', 'all'].map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
               padding: '0.3rem 0.8rem', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: filter === f ? 700 : 400,
@@ -397,6 +405,13 @@ export default function SmsReview({ onApproved } = {}) {
               {f === 'submitted' ? 'Pending' : f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
           ))}
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+            style={{ padding: '0.3rem 0.6rem', border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: '0.85rem', marginLeft: '0.4rem' }}>
+            <option value="recent">Sort: Most recent</option>
+            <option value="oldest">Sort: Oldest first</option>
+            <option value="workdate">Sort: Work date</option>
+            <option value="employee">Sort: Employee A–Z</option>
+          </select>
           <button onClick={load} style={{ padding: '0.3rem 0.8rem', border: '1px solid #ccc', borderRadius: 4, background: 'transparent', cursor: 'pointer', fontSize: '0.85rem' }}>↺</button>
         </div>
       </div>
@@ -409,7 +424,7 @@ export default function SmsReview({ onApproved } = {}) {
         </div>
       )}
 
-      {visible.map(sub => {
+      {sortedVisible.map(sub => {
         const flags = []
         if (!sub.employee_id)                          flags.push('employee unknown')
         if (!sub.time_in)                              flags.push('start time missing')

@@ -55,6 +55,8 @@ export default function AdminDashboard() {
   const [jobs, setJobs] = useState([])
   const [supplies, setSupplies] = useState([])
   const [postedWeeks, setPostedWeeks] = useState({})
+  const [sortCol, setSortCol] = useState('date')
+  const [sortDir, setSortDir] = useState('desc')
 
   // ── Payroll / Weekly Summary tabs ──
   const payWeeks = recentPayWeeks(8)
@@ -528,6 +530,17 @@ export default function AdminDashboard() {
     return map
   })()
 
+  // Column-driven sort for the Timesheets list view — clicking a header toggles
+  // sortCol/sortDir; ties fall back to the original default order (date desc,
+  // then employee name) so rows with equal values don't jump around.
+  const timesheetSortComparators = {
+    employee: (a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''),
+    date:     (a, b) => a.date.localeCompare(b.date),
+    jobs:     (a, b) => a.jobIds.size - b.jobIds.size,
+    reg:      (a, b) => a.reg - b.reg,
+    ot:       (a, b) => a.ot - b.ot,
+    pd:       (a, b) => a.pd - b.pd,
+  }
   const timesheetRows = Object.values(
     filteredEntries.reduce((acc, e) => {
       const key = `${e.employee_id}_${e.work_date}`
@@ -540,7 +553,11 @@ export default function AdminDashboard() {
       acc[key].jobIds.add(e.job_id)
       return acc
     }, {})
-  ).sort((a, b) => b.date.localeCompare(a.date) || (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+  ).sort((a, b) => {
+    const primary = timesheetSortComparators[sortCol](a, b) * (sortDir === 'asc' ? 1 : -1)
+    if (primary !== 0) return primary
+    return b.date.localeCompare(a.date) || (a.employee?.name || '').localeCompare(b.employee?.name || '')
+  })
 
   const totalReg = timesheetRows.reduce((s, r) => s + r.reg, 0)
   const totalOT  = timesheetRows.reduce((s, r) => s + r.ot, 0)
@@ -1261,15 +1278,22 @@ export default function AdminDashboard() {
                   <thead>
                     <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                       {[
-                        { label: 'Employee', align: 'left' },
-                        { label: 'Date', align: 'left' },
-                        { label: 'Jobs', align: 'center' },
-                        { label: 'Reg', align: 'center' },
-                        { label: 'OT', align: 'center' },
-                        { label: 'PD', align: 'center' },
-                        { label: '', align: 'right' },
-                      ].map((h, i) => (
-                        <th key={i} style={{ padding: '0.75rem', textAlign: h.align, fontWeight: 600, color: '#555' }}>{h.label}</th>
+                        { key: 'employee', label: 'Employee', align: 'left' },
+                        { key: 'date', label: 'Date', align: 'left' },
+                        { key: 'jobs', label: 'Jobs', align: 'center' },
+                        { key: 'reg', label: 'Reg', align: 'center' },
+                        { key: 'ot', label: 'OT', align: 'center' },
+                        { key: 'pd', label: 'PD', align: 'center' },
+                        { key: null, label: '', align: 'right' },
+                      ].map((h) => (
+                        <th key={h.key || 'actions'}
+                          onClick={h.key ? () => {
+                            if (sortCol === h.key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+                            else { setSortCol(h.key); setSortDir('asc') }
+                          } : undefined}
+                          style={{ padding: '0.75rem', textAlign: h.align, fontWeight: 600, color: '#555', cursor: h.key ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                          {h.label}{sortCol === h.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </th>
                       ))}
                     </tr>
                   </thead>
