@@ -1252,259 +1252,312 @@ Deno.serve(async (req: Request) => {
     : null
   const workDate = parsed.work_date || openQuestionDate || today
 
-  // ── Find existing submission (continued from the pre-parse phone lookup above) ──
-  // The employee-id fallback (different phone, same person — e.g. borrowed someone else's
-  // phone) stays scoped to work_date: without that, two genuinely unrelated conversations that
-  // happen to share the same "This is X" name on different days/phones would incorrectly merge.
-  if (!submission && employeeId) {
-    const { data: byEmp } = await supabase
-      .from('sms_submissions').select('*')
-      .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'collecting')
-      .order('created_at', { ascending: false }).limit(1)
-    if (byEmp?.length) submission = byEmp[0]
-  }
+  // ── Find/merge/save submission, retrying on a concurrent write ──
+  // Race guard: two texts from the same phone landing close together (e.g. two
+  // quick job updates in a row) both read the same pre-update snapshot while
+  // Claude parses (1-9s each), so a blind save let whichever finished second
+  // silently clobber the first's entry — even though both already got a "Got it"
+  // reply confirming they were saved. (See Aug 7 2026 incident: a whole job
+  // entry vanished this way, confirmed via WhatsApp read receipts + the bot's
+  // own "Got it" reply for a message that never survived to the stored record.)
+  // Each attempt re-reads the submission fresh and re-merges against it; the
+  // save is conditional on updated_at being unchanged since that read, so a
+  // losing attempt retries against the winner's state instead of overwriting it.
+  // A generous cap: techs in poor-signal areas queue several messages at once
+  // (WhatsApp especially — it holds them locally and fires them all the moment
+  // connectivity returns), so a "burst" isn't always just two messages, and each
+  // retry here is a cheap DB round trip, not another slow Claude parse.
+  let reply = ''
+  let nextStatus = 'collecting'
+  let flags: string[] = []
+  let saved = false
+  let saveError: any = null
+  const MAX_SAVE_ATTEMPTS = 10
 
-  // A 'submitted' conversation (correction/reopen flow) does need to match the specific day —
-  // "actually I finished at 6" should correct that day's record, not some other day's.
-  if (!submission) {
-    const { data: byPhone } = await supabase
-      .from('sms_submissions').select('*')
-      .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', 'submitted')
-      .order('created_at', { ascending: false }).limit(1)
-    if (byPhone?.length) submission = byPhone[0]
-    else if (employeeId) {
+  for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS && !saved; attempt++) {
+    submission = null
+
+    // ── Find existing submission (continued from the pre-parse phone lookup above) ──
+    // The employee-id fallback (different phone, same person — e.g. borrowed someone else's
+    // phone) stays scoped to work_date: without that, two genuinely unrelated conversations that
+    // happen to share the same "This is X" name on different days/phones would incorrectly merge.
+    if (!submission && employeeId) {
       const { data: byEmp } = await supabase
         .from('sms_submissions').select('*')
-        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'submitted')
+        .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'collecting')
         .order('created_at', { ascending: false }).limit(1)
       if (byEmp?.length) submission = byEmp[0]
     }
-  }
 
-  // Whether this is a follow-up reply to the one question we still ask (the job question)
-  const isFollowUp = !!(submission && (submission.pending_questions || []).length > 0)
+    // A 'submitted' conversation (correction/reopen flow) does need to match the specific day —
+    // "actually I finished at 6" should correct that day's record, not some other day's.
+    if (!submission) {
+      const { data: byPhone } = await supabase
+        .from('sms_submissions').select('*')
+        .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', 'submitted')
+        .order('created_at', { ascending: false }).limit(1)
+      if (byPhone?.length) submission = byPhone[0]
+      else if (employeeId) {
+        const { data: byEmp } = await supabase
+          .from('sms_submissions').select('*')
+          .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'submitted')
+          .order('created_at', { ascending: false }).limit(1)
+        if (byEmp?.length) submission = byEmp[0]
+      }
+    }
 
-  // ── Merge entries ──
-  // One entry per job per day: hours accumulate (or replace, for corrections),
-  // descriptions join. A text with no job number attaches to the day's current job.
-  const lastJob = await getLastJobForDay(supabase, fromPhone, workDate, submission, employeeId)
-  const prevEntries: any[] = submission?.entries || []
-  const mergeStamp = new Date().toISOString()
-  let allEntries: any[] = mergeEntries(prevEntries, parsed.entries || [], lastJob, mergeStamp)
+    // Whether this is a follow-up reply to the one question we still ask (the job question)
+    const isFollowUp = !!(submission && (submission.pending_questions || []).length > 0)
 
-  // Supplies accumulate across texts the same way entries do. If no job number was
-  // given with a supply, attribute it to the first job we know about for the day.
-  const prevSupplies: any[] = submission?.supplies || []
-  const fallbackJob = allEntries.find((e: any) => e.job_number)?.job_number || lastJob || ''
-  const newSupplies = (parsed.supplies || [])
-    .filter((s: any) => s.supply_name && String(s.supply_name).trim())
-    .map((s: any) => ({
-      job_number:  s.job_number || fallbackJob,
-      supply_name: String(s.supply_name).trim(),
-      quantity:    Number(s.quantity) > 0 ? Number(s.quantity) : 1,
-    }))
-  const allSupplies = [...prevSupplies, ...newSupplies]
+    // ── Merge entries ──
+    // One entry per job per day: hours accumulate (or replace, for corrections),
+    // descriptions join. A text with no job number attaches to the day's current job.
+    const lastJob = await getLastJobForDay(supabase, fromPhone, workDate, submission, employeeId)
+    const prevEntries: any[] = submission?.entries || []
+    const mergeStamp = new Date().toISOString()
+    let allEntries: any[] = mergeEntries(prevEntries, parsed.entries || [], lastJob, mergeStamp)
 
-  // Latest non-null parsed value wins — "lunch 30" or "actually I finished at 6"
-  // later in the day overrides whatever was stored (or defaulted) earlier.
-  // Silent default, same philosophy as lunch/PD — a tech who doesn't mention a
-  // start time almost always started around 7; the office corrects the exceptions.
-  // Only applies when there's actual work logged for the day — an "off, zero
-  // hours" text has no entries at all, and defaulting to 7am there produced a
-  // nonsensical "Got it — in 7am" reply for a day the tech said they didn't work.
-  const mergedTimeIn    = parsed.time_in
-                        ?? (submission?.time_in ? submission.time_in.substring(0, 5) : null)
-                        ?? (allEntries.length > 0 ? '07:00' : null)
-  const mergedStatedOut = parsed.stated_time_out
-                        ?? (submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : null)
-  const mergedLunch     = parsed.lunch_minutes != null ? parsed.lunch_minutes
-                        : (submission?.lunch_minutes != null ? submission.lunch_minutes : null)
-  const mergedPerDiem   = parsed.per_diem_location != null ? parsed.per_diem_location
-                        : (submission?.per_diem_location != null ? submission.per_diem_location : null)
-  // An explicit "This is X" this turn always wins (it's a deliberate statement, possibly a
-  // correction). Otherwise, prefer whichever employee the conversation already belongs to —
-  // a follow-up reply like "no pd" has no name override, so without this the phone-fallback
-  // lookup above would silently reattribute the whole submission to whoever's phone sent it,
-  // even though "This is Andrew" already established it belongs to Andrew.
-  const mergedEmployeeId = employeeIdFromNameOverride ? employeeId : (submission?.employee_id || employeeId || null)
+    // Supplies accumulate across texts the same way entries do. If no job number was
+    // given with a supply, attribute it to the first job we know about for the day.
+    const prevSupplies: any[] = submission?.supplies || []
+    const fallbackJob = allEntries.find((e: any) => e.job_number)?.job_number || lastJob || ''
+    const newSupplies = (parsed.supplies || [])
+      .filter((s: any) => s.supply_name && String(s.supply_name).trim())
+      .map((s: any) => ({
+        job_number:  s.job_number || fallbackJob,
+        supply_name: String(s.supply_name).trim(),
+        quantity:    Number(s.quantity) > 0 ? Number(s.quantity) : 1,
+      }))
+    const allSupplies = [...prevSupplies, ...newSupplies]
 
-  // employeeName must describe whoever mergedEmployeeId actually is. On a follow-up with no
-  // name override, the phone-fallback lookup above may have set employeeName to the phone
-  // owner (e.g. Jim) even though mergedEmployeeId correctly stayed Andrew's — re-resolve
-  // whenever mergedEmployeeId isn't the identity this turn's own lookups landed on.
-  if (mergedEmployeeId && mergedEmployeeId !== employeeId) {
-    const { data: empRow } = await supabase.from('employees').select('name').eq('id', mergedEmployeeId).single()
-    if (empRow) employeeName = empRow.name
-  }
+    // Latest non-null parsed value wins — "lunch 30" or "actually I finished at 6"
+    // later in the day overrides whatever was stored (or defaulted) earlier.
+    // Silent default, same philosophy as lunch/PD — a tech who doesn't mention a
+    // start time almost always started around 7; the office corrects the exceptions.
+    // Only applies when there's actual work logged for the day — an "off, zero
+    // hours" text has no entries at all, and defaulting to 7am there produced a
+    // nonsensical "Got it — in 7am" reply for a day the tech said they didn't work.
+    const mergedTimeIn    = parsed.time_in
+                          ?? (submission?.time_in ? submission.time_in.substring(0, 5) : null)
+                          ?? (allEntries.length > 0 ? '07:00' : null)
+    const mergedStatedOut = parsed.stated_time_out
+                          ?? (submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : null)
+    const mergedLunch     = parsed.lunch_minutes != null ? parsed.lunch_minutes
+                          : (submission?.lunch_minutes != null ? submission.lunch_minutes : null)
+    const mergedPerDiem   = parsed.per_diem_location != null ? parsed.per_diem_location
+                          : (submission?.per_diem_location != null ? submission.per_diem_location : null)
+    // An explicit "This is X" this turn always wins (it's a deliberate statement, possibly a
+    // correction). Otherwise, prefer whichever employee the conversation already belongs to —
+    // a follow-up reply like "no pd" has no name override, so without this the phone-fallback
+    // lookup above would silently reattribute the whole submission to whoever's phone sent it,
+    // even though "This is Andrew" already established it belongs to Andrew.
+    const mergedEmployeeId = employeeIdFromNameOverride ? employeeId : (submission?.employee_id || employeeId || null)
 
-  // Notify the office immediately when something's flagged low — this doesn't
-  // wait for approval like everything else, since reordering is time-sensitive.
-  if ((parsed.low_stock || []).length > 0) {
-    const reporterFirstName = (employeeName || '').split(' ')[0] || ''
-    await Promise.all((parsed.low_stock || []).map((ls: any) =>
-      sendLowStockAlert(String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
-    ))
-  }
+    // employeeName must describe whoever mergedEmployeeId actually is. On a follow-up with no
+    // name override, the phone-fallback lookup above may have set employeeName to the phone
+    // owner (e.g. Jim) even though mergedEmployeeId correctly stayed Andrew's — re-resolve
+    // whenever mergedEmployeeId isn't the identity this turn's own lookups landed on.
+    if (mergedEmployeeId && mergedEmployeeId !== employeeId) {
+      const { data: empRow } = await supabase.from('employees').select('name').eq('id', mergedEmployeeId).single()
+      if (empRow) employeeName = empRow.name
+    }
 
-  // If any entry has no hours but we have start + end times, infer hours from the time bounds.
-  // Common case: "worked on 4760 all day" — hours are null but times tell us how long.
-  const nullHoursEntries = allEntries.filter((e: any) => !e.hours || Number(e.hours) === 0)
-  if (nullHoursEntries.length > 0 && mergedTimeIn && mergedStatedOut) {
-    const boundedHours = (timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60
-    const knownHours   = allEntries.reduce((s: number, e: any) => { const h = Number(e.hours); return h > 0 ? s + h : s }, 0)
-    const remaining    = Math.max(0, Math.round((boundedHours - knownHours) * 100) / 100)
-    const each         = Math.round((remaining / nullHoursEntries.length) * 100) / 100
-    allEntries = allEntries.map((e: any) =>
-      (!e.hours || Number(e.hours) === 0) ? { ...e, hours: each } : e
-    )
-  }
+    // Notify the office immediately when something's flagged low — this doesn't
+    // wait for approval like everything else, since reordering is time-sensitive.
+    // Only ever fires on the first attempt — low_stock is a fixed property of this
+    // message, not of the submission state a retry would be re-merging against, so
+    // repeating it on retry would just double up the alert.
+    if (attempt === 0 && (parsed.low_stock || []).length > 0) {
+      const reporterFirstName = (employeeName || '').split(' ')[0] || ''
+      await Promise.all((parsed.low_stock || []).map((ls: any) =>
+        sendLowStockAlert(String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
+      ))
+    }
 
-  // Single job for the whole day + known shift bounds: the job's hours MUST equal the
-  // bounded elapsed time. Claude sometimes fills entries[].hours from a bare time range on
-  // the job itself ("4709 9 to 5" -> hours: 8, the raw span) despite being told not to —
-  // recompute from the bounds rather than trust that number, since there's no ambiguity
-  // to preserve when there's only one job.
-  if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut) {
-    const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
-    if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours }]
-  }
+    // If any entry has no hours but we have start + end times, infer hours from the time bounds.
+    // Common case: "worked on 4760 all day" — hours are null but times tell us how long.
+    const nullHoursEntries = allEntries.filter((e: any) => !e.hours || Number(e.hours) === 0)
+    if (nullHoursEntries.length > 0 && mergedTimeIn && mergedStatedOut) {
+      const boundedHours = (timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60
+      const knownHours   = allEntries.reduce((s: number, e: any) => { const h = Number(e.hours); return h > 0 ? s + h : s }, 0)
+      const remaining    = Math.max(0, Math.round((boundedHours - knownHours) * 100) / 100)
+      const each         = Math.round((remaining / nullHoursEntries.length) * 100) / 100
+      allEntries = allEntries.map((e: any) =>
+        (!e.hours || Number(e.hours) === 0) ? { ...e, hours: each } : e
+      )
+    }
 
-  // ── Calculate time_out from hours + lunch ──
-  const totalHours = allEntries.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0)
-  let calcOut: string | null = null
-  let deltaMinutes: number | null = null
+    // Single job for the whole day + known shift bounds: the job's hours MUST equal the
+    // bounded elapsed time. Claude sometimes fills entries[].hours from a bare time range on
+    // the job itself ("4709 9 to 5" -> hours: 8, the raw span) despite being told not to —
+    // recompute from the bounds rather than trust that number, since there's no ambiguity
+    // to preserve when there's only one job.
+    if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut) {
+      const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
+      if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours }]
+    }
 
-  if (mergedTimeIn && totalHours > 0) {
-    const lunchMins = mergedLunch || 0
-    calcOut = minsToTime(timeToMins(mergedTimeIn) + Math.round(totalHours * 60) + lunchMins)
-    if (mergedStatedOut) {
-      deltaMinutes = timeToMins(mergedStatedOut) - timeToMins(calcOut)
+    // ── Calculate time_out from hours + lunch ──
+    const totalHours = allEntries.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0)
+    let calcOut: string | null = null
+    let deltaMinutes: number | null = null
+
+    if (mergedTimeIn && totalHours > 0) {
+      const lunchMins = mergedLunch || 0
+      calcOut = minsToTime(timeToMins(mergedTimeIn) + Math.round(totalHours * 60) + lunchMins)
+      if (mergedStatedOut) {
+        deltaMinutes = timeToMins(mergedStatedOut) - timeToMins(calcOut)
+      }
+    }
+
+    // ── OT breakdown ──
+    // Fetch daily threshold + any hours already approved for this employee today
+    // so second/third texts in a day get correct OT attribution
+    const [{ data: otCfg }, { data: priorEntries }, { data: statRows }] = await Promise.all([
+      supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single(),
+      mergedEmployeeId
+        ? supabase.from('timesheet_entries').select('hours').eq('employee_id', mergedEmployeeId).eq('work_date', workDate).eq('is_stat_pay', false)
+        : Promise.resolve({ data: [] }),
+      supabase.from('stat_holidays').select('holiday_date').eq('holiday_date', workDate),
+    ])
+    // Work on a stat holiday or weekend is all OT — for a stat day, the 8 reg
+    // hrs come from the auto stat-pay entry instead.
+    const isStatDay = (statRows || []).length > 0
+    const workDateDOW = new Date(workDate + 'T12:00:00').getDay()
+    const isWeekendDay = workDateDOW === 0 || workDateDOW === 6
+    const dailyOTThreshold = (isStatDay || isWeekendDay) ? 0 : (otCfg ? Number(otCfg.value) : 8)
+    const alreadyWorkedHours = (priorEntries || []).reduce((s: number, e: any) => s + Number(e.hours || 0), 0)
+    const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
+    const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)
+
+    // Entries this specific message actually touched — the reply only ever confirms
+    // what was just reported, not the whole day (the tech already knows the rest;
+    // "TS" is there if they want the full picture).
+    const touchedEntriesWithOT = allEntriesWithOT.filter((e: any) => e.last_mentioned_at === mergeStamp)
+
+    // ── Catch a job number that doesn't match any real job (typo or stale number) ──
+    // instead of silently storing it for the office to discover during review.
+    // Scoped to this message too — don't re-flag an old bad number every reply after.
+    const distinctJobNums = Array.from(new Set(
+      touchedEntriesWithOT.map((e: any) => e.job_number).filter((j: any) => j && String(j).toUpperCase() !== 'SHOP')
+    )) as string[]
+    let unknownJobs: string[] = []
+    if (distinctJobNums.length > 0) {
+      const { data: knownJobs } = await supabase.from('jobs').select('job_number').in('job_number', distinctJobNums)
+      const knownSet = new Set((knownJobs || []).map((j: any) => String(j.job_number).toLowerCase()))
+      unknownJobs = distinctJobNums.filter((j: string) => !knownSet.has(j.toLowerCase()))
+    }
+
+    // ── Determine what's missing ──
+    const missingEmployee = !mergedEmployeeId
+    // After mergeEntries, null-job entries survive only when NO job is known at all —
+    // not today, not any prior day (getLastJobForDay's cross-day fallback covers the
+    // usual "still on the same job" case) — meaning this employee has no job history
+    // to fall back on at all.
+    const hasUnattributedWork = allEntries.some((e: any) => !e.job_number)
+
+    // Fields the office will need to fill in (shown in review screen)
+    flags = []
+
+    // ── Decide ──
+    // The bot records quietly: job number, PD, and supplies are never asked about —
+    // they default (or fall back to the last-known job) at save time, and the office
+    // corrects the exceptions. The one question left is lunch, which only fires on a
+    // longer day (>8hrs) where lunch was never mentioned at all — a silent 0 there is
+    // much more likely to be a forgotten entry than a real thing.
+    const needsLunchAsk = totalHours > 8 && mergedLunch == null && !isFollowUp
+    reply = ''
+    nextStatus = 'collecting'
+    let pendingQuestions: string[] = []
+    const firstName = (employeeName || '').split(' ')[0] || ''
+
+    if (missingEmployee) {
+      // Employee couldn't be identified (unknown phone or unmatched name).
+      // Save immediately for the office instead of asking for follow-up.
+      reply = `Got it. The office will match this to you and get it into the system.`
+      nextStatus = 'submitted'
+      flags.push('employee not identified — needs manual assignment')
+
+    } else if (hasUnattributedWork) {
+      // No job named and no history to assume from (this employee's first-ever
+      // text) — save it anyway so the description isn't lost, and let the office
+      // pick the job during review instead of texting back and forth over it.
+      reply = `Got it${firstName ? ' ' + firstName : ''} — the office will match the job.`
+      nextStatus = 'submitted'
+      flags.push('no job entries — needs manual entry')
+
+    } else if (needsLunchAsk) {
+      reply = `Got it${firstName ? ' ' + firstName : ''} — that's over 8hrs. Did you take a lunch?\n("lunch 30" or "no lunch")`
+      pendingQuestions = ['Lunch?']
+    }
+
+    if (!reply) nextStatus = 'submitted'
+
+    if (nextStatus === 'submitted' && !reply) {
+      if (allEntries.some((e: any) => !(Number(e.hours) > 0))) {
+        flags.push('job hours missing — need total hours or an out time')
+      }
+      reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length, deltaMinutes)
+    }
+
+    // ── Save/update submission ──
+    const prevMsgs: any[] = submission?.raw_messages || []
+    const allMsgs = [
+      ...prevMsgs,
+      { text: msgBody, direction: 'in',  ts: new Date().toISOString() },
+      { text: reply,   direction: 'out', ts: new Date().toISOString() },
+    ]
+
+    const record: any = {
+      from_phone:         fromPhone,
+      employee_id:        mergedEmployeeId,
+      work_date:          workDate,
+      time_in:            mergedTimeIn || null,
+      stated_time_out:    mergedStatedOut || null,
+      // Silent defaults — the bot never asks about lunch/PD anymore. A tech who
+      // took lunch or is staying out will say so; the office corrects the forgetters.
+      lunch_minutes:      mergedLunch ?? 0,
+      per_diem_location:  mergedPerDiem ?? 'none',
+      calculated_time_out: calcOut,
+      delta_minutes:      deltaMinutes,
+      entries:            allEntriesWithOT,
+      supplies:           allSupplies,
+      supplies_note:      null,
+      pending_questions:  pendingQuestions,
+      asked_questions:    Array.from(new Set([...(submission?.asked_questions || []), ...pendingQuestions])),
+      raw_messages:       allMsgs,
+      status:             nextStatus,
+      updated_at:         new Date().toISOString(),
+    }
+
+    if (submission) {
+      // Conditional on updated_at being exactly what we just read — if a concurrent
+      // request already wrote since then, this matches zero rows instead of blindly
+      // overwriting it, and we loop back to re-read + re-merge against the new state.
+      const { data: updatedRows, error: updateErr } = await supabase
+        .from('sms_submissions')
+        .update(record)
+        .eq('id', submission.id)
+        .eq('updated_at', submission.updated_at)
+        .select('id')
+      if (updateErr) { saveError = updateErr; break }
+      if (updatedRows && updatedRows.length > 0) { saved = true; break }
+      if (attempt === MAX_SAVE_ATTEMPTS - 1) {
+        // Exhausted retries under real concurrent load — save unconditionally rather
+        // than drop the message entirely. Logged loudly since this should be rare;
+        // if it ever fires, the retry count below probably needs raising.
+        console.error(`sms_submissions: exhausted ${MAX_SAVE_ATTEMPTS} save retries for phone ${fromPhone}, saving unconditionally`)
+        const { error: fallbackErr } = await supabase.from('sms_submissions').update(record).eq('id', submission.id)
+        if (fallbackErr) saveError = fallbackErr
+        saved = true
+      }
+      // else: conflict — loop back and retry against fresh state
+    } else {
+      const { error: insertErr } = await supabase.from('sms_submissions').insert(record)
+      if (insertErr) { saveError = insertErr; break }
+      saved = true
     }
   }
-
-  // ── OT breakdown ──
-  // Fetch daily threshold + any hours already approved for this employee today
-  // so second/third texts in a day get correct OT attribution
-  const [{ data: otCfg }, { data: priorEntries }, { data: statRows }] = await Promise.all([
-    supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single(),
-    mergedEmployeeId
-      ? supabase.from('timesheet_entries').select('hours').eq('employee_id', mergedEmployeeId).eq('work_date', workDate).eq('is_stat_pay', false)
-      : Promise.resolve({ data: [] }),
-    supabase.from('stat_holidays').select('holiday_date').eq('holiday_date', workDate),
-  ])
-  // Work on a stat holiday or weekend is all OT — for a stat day, the 8 reg
-  // hrs come from the auto stat-pay entry instead.
-  const isStatDay = (statRows || []).length > 0
-  const workDateDOW = new Date(workDate + 'T12:00:00').getDay()
-  const isWeekendDay = workDateDOW === 0 || workDateDOW === 6
-  const dailyOTThreshold = (isStatDay || isWeekendDay) ? 0 : (otCfg ? Number(otCfg.value) : 8)
-  const alreadyWorkedHours = (priorEntries || []).reduce((s: number, e: any) => s + Number(e.hours || 0), 0)
-  const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
-  const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)
-
-  // Entries this specific message actually touched — the reply only ever confirms
-  // what was just reported, not the whole day (the tech already knows the rest;
-  // "TS" is there if they want the full picture).
-  const touchedEntriesWithOT = allEntriesWithOT.filter((e: any) => e.last_mentioned_at === mergeStamp)
-
-  // ── Catch a job number that doesn't match any real job (typo or stale number) ──
-  // instead of silently storing it for the office to discover during review.
-  // Scoped to this message too — don't re-flag an old bad number every reply after.
-  const distinctJobNums = Array.from(new Set(
-    touchedEntriesWithOT.map((e: any) => e.job_number).filter((j: any) => j && String(j).toUpperCase() !== 'SHOP')
-  )) as string[]
-  let unknownJobs: string[] = []
-  if (distinctJobNums.length > 0) {
-    const { data: knownJobs } = await supabase.from('jobs').select('job_number').in('job_number', distinctJobNums)
-    const knownSet = new Set((knownJobs || []).map((j: any) => String(j.job_number).toLowerCase()))
-    unknownJobs = distinctJobNums.filter((j: string) => !knownSet.has(j.toLowerCase()))
-  }
-
-  // ── Determine what's missing ──
-  const missingEmployee = !mergedEmployeeId
-  // After mergeEntries, null-job entries survive only when NO job is known at all —
-  // not today, not any prior day (getLastJobForDay's cross-day fallback covers the
-  // usual "still on the same job" case) — meaning this employee has no job history
-  // to fall back on at all.
-  const hasUnattributedWork = allEntries.some((e: any) => !e.job_number)
-
-  // Fields the office will need to fill in (shown in review screen)
-  const flags: string[] = []
-
-  // ── Decide ──
-  // The bot records quietly: job number, PD, and supplies are never asked about —
-  // they default (or fall back to the last-known job) at save time, and the office
-  // corrects the exceptions. The one question left is lunch, which only fires on a
-  // longer day (>8hrs) where lunch was never mentioned at all — a silent 0 there is
-  // much more likely to be a forgotten entry than a real thing.
-  const needsLunchAsk = totalHours > 8 && mergedLunch == null && !isFollowUp
-  let reply = ''
-  let nextStatus = 'collecting'
-  let pendingQuestions: string[] = []
-  const firstName = (employeeName || '').split(' ')[0] || ''
-
-  if (missingEmployee) {
-    // Employee couldn't be identified (unknown phone or unmatched name).
-    // Save immediately for the office instead of asking for follow-up.
-    reply = `Got it. The office will match this to you and get it into the system.`
-    nextStatus = 'submitted'
-    flags.push('employee not identified — needs manual assignment')
-
-  } else if (hasUnattributedWork) {
-    // No job named and no history to assume from (this employee's first-ever
-    // text) — save it anyway so the description isn't lost, and let the office
-    // pick the job during review instead of texting back and forth over it.
-    reply = `Got it${firstName ? ' ' + firstName : ''} — the office will match the job.`
-    nextStatus = 'submitted'
-    flags.push('no job entries — needs manual entry')
-
-  } else if (needsLunchAsk) {
-    reply = `Got it${firstName ? ' ' + firstName : ''} — that's over 8hrs. Did you take a lunch?\n("lunch 30" or "no lunch")`
-    pendingQuestions = ['Lunch?']
-  }
-
-  if (!reply) nextStatus = 'submitted'
-
-  if (nextStatus === 'submitted' && !reply) {
-    if (allEntries.some((e: any) => !(Number(e.hours) > 0))) {
-      flags.push('job hours missing — need total hours or an out time')
-    }
-    reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length, deltaMinutes)
-  }
-
-  // ── Save/update submission ──
-  const prevMsgs: any[] = submission?.raw_messages || []
-  const allMsgs = [
-    ...prevMsgs,
-    { text: msgBody, direction: 'in',  ts: new Date().toISOString() },
-    { text: reply,   direction: 'out', ts: new Date().toISOString() },
-  ]
-
-  const record: any = {
-    from_phone:         fromPhone,
-    employee_id:        mergedEmployeeId,
-    work_date:          workDate,
-    time_in:            mergedTimeIn || null,
-    stated_time_out:    mergedStatedOut || null,
-    // Silent defaults — the bot never asks about lunch/PD anymore. A tech who
-    // took lunch or is staying out will say so; the office corrects the forgetters.
-    lunch_minutes:      mergedLunch ?? 0,
-    per_diem_location:  mergedPerDiem ?? 'none',
-    calculated_time_out: calcOut,
-    delta_minutes:      deltaMinutes,
-    entries:            allEntriesWithOT,
-    supplies:           allSupplies,
-    supplies_note:      null,
-    pending_questions:  pendingQuestions,
-    asked_questions:    Array.from(new Set([...(submission?.asked_questions || []), ...pendingQuestions])),
-    raw_messages:       allMsgs,
-    status:             nextStatus,
-    updated_at:         new Date().toISOString(),
-  }
-
-  const { error: saveError } = submission
-    ? await supabase.from('sms_submissions').update(record).eq('id', submission.id)
-    : await supabase.from('sms_submissions').insert(record)
 
   if (saveError) {
     console.error('sms_submissions save failed:', saveError.message)
