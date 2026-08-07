@@ -610,8 +610,7 @@ function daySummaryReply(
   const tsHintLine = dayJobCount > jobLines.length ? `Text TS to see the day's progress.` : ''
 
   if (jobLines.length === 0) {
-    const head = timeIn ? `${greeting} — in ${friendlyTime(timeIn)}` : `${greeting}.`
-    return [head, totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')
+    return [`${greeting}.`, totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')
   }
   return [greeting, jobLines.join('\n\n'), totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')
 }

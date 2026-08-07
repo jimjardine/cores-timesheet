@@ -161,8 +161,8 @@ await cleanupTestTech()
 await scenario('in time only no questions', phone(4), [
   ['This is Test. In 7:30', [
     'Got it Test',
-    'in 7:30am',
     { absent: 'Which job' },
+    { absent: 'in 7:30am' },
     ...NO_NAG,
   ]],
 ])
