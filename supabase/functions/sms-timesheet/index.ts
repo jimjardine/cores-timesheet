@@ -264,8 +264,11 @@ async function savePhotoToStorage(
       job_id: jobId,
       note: note,
       // No longer a "we'll ask" marker — just flags the photo as untagged so it
-      // shows under "Needs ship/job" in the Gear Photos tab for the office.
-      pending_context: !shipOrJob,
+      // shows under "Needs ship/job" in the Gear Photos tab for the office. Also
+      // flags a job-number-shaped tag that didn't resolve (e.g. a typo'd job #)
+      // — that used to silently save with job_id null and never surface anywhere
+      // (see Aug 7 2026 incident: "4688" typo'd for "4866" vanished from reports).
+      pending_context: !shipOrJob || (!jobId && /^(\d{4}|SHOP)$/i.test(shipOrJob.trim())),
       photo_latitude: exifData.lat || null,
       photo_longitude: exifData.lng || null,
       photo_timestamp: exifData.timestamp || null,
@@ -1050,9 +1053,11 @@ Deno.serve(async (req: Request) => {
   if (hasPhotos) {
     // Deterministic caption checks only — a bare job number or a ship-ish word.
     let photoContext: string | null = null
+    let sawExplicitJobNumber = false
     const jobNumberMatch = msgBody.match(/\b(\d{4})\b/)
     if (jobNumberMatch) {
       photoContext = jobNumberMatch[1]
+      sawExplicitJobNumber = true
     } else if (/wave|nanaimo|ship|boat/i.test(msgBody)) {
       photoContext = msgBody.trim().substring(0, 50)
     } else {
@@ -1060,6 +1065,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const jobId = await lookupJobId(supabase, photoContext)
+    // Only warn when the tech explicitly typed a job number that doesn't exist —
+    // a ship name or the day's carried-over job not resolving is normal, not a typo.
+    const unrecognizedJobNumber = sawExplicitJobNumber && !jobId
     // The full caption is worth keeping either way — "old card clips, looking for
     // a spare" is exactly the note the office needs next to the photo.
     const note = msgBody.trim() || null
@@ -1084,6 +1092,8 @@ Deno.serve(async (req: Request) => {
     const anySaved = saved.some(r => r !== null)
     const reply = !anySaved
       ? `Couldn't save that photo${firstName ? ' ' + firstName : ''} — try texting it again, or contact the office if it keeps failing.`
+      : unrecognizedJobNumber
+      ? `Got the photo${firstName ? ' ' + firstName : ''} — but didn't recognize Job# ${photoContext}. Text JOBS for the list, or the office will check.`
       : photoContext
       ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
       : `Got the photo${firstName ? ' ' + firstName : ''}.`
