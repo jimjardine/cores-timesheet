@@ -348,12 +348,38 @@ async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boole
   return { ok: true }
 }
 
+// Resend's shared dev sender — fine for a low-volume internal alert like this;
+// no domain verification needed. https://resend.com/docs/api-reference/emails/send-email
+async function sendResendEmail(to: string, subject: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  const apiKey = Deno.env.get('RESEND_API_KEY')
+  if (!apiKey) return { ok: false, error: 'RESEND_API_KEY not configured' }
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: 'Cores Timesheets <onboarding@resend.dev>',
+      to: [to],
+      subject,
+      text,
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    return { ok: false, error: `Resend send failed (${res.status}): ${detail.slice(0, 200)}` }
+  }
+  return { ok: true }
+}
+
 // ── Low-stock alerts ──────────────────────────────────────────────────────
 // TODO: flip to false once this has been verified against real texts — until
-// then every alert routes to Jim via WhatsApp instead of the real recipients,
-// so nothing goes to Nicki/Tracy while this is still being tested.
+// then every alert routes to Jim's email instead of the real recipients, so
+// nothing goes to Nicki/Tracy while this is still being tested.
 const LOW_STOCK_DEV_MODE = true
-const LOW_STOCK_DEV_WHATSAPP_TO = '4734146000' // Jim's whatsapp_phone
+const LOW_STOCK_DEV_EMAIL_TO = 'jimjar@me.com'
 const LOW_STOCK_RECIPIENTS = [
   { name: 'Nicki', phone: '9024971844' },
   { name: 'Tracy', phone: '5873210043' },
@@ -368,10 +394,11 @@ async function sendLowStockAlert(item: string, jobRef: string | null, reporterFi
   const photoPart = photoUrl ? `\n${photoUrl}` : ''
   const msg = `🔴 Low stock: ${item}${jobPart} — reported by ${reporter}.${photoPart}`
 
-  // Best-effort — a Twilio hiccup here must never break timesheet processing.
+  // Best-effort — a send hiccup here must never break timesheet processing.
   try {
     if (LOW_STOCK_DEV_MODE) {
-      await sendTwilioWhatsApp(`+1${LOW_STOCK_DEV_WHATSAPP_TO}`, `[DEV — would go to Nicki/Tracy]\n${msg}`)
+      const result = await sendResendEmail(LOW_STOCK_DEV_EMAIL_TO, `Low stock: ${item}`, `[DEV — would go to Nicki/Tracy]\n\n${msg}`)
+      if (!result.ok) console.error('Low-stock email send failed:', result.error)
       return
     }
     await Promise.all(LOW_STOCK_RECIPIENTS.map(r => sendTwilioSms(`+1${r.phone}`, msg)))
