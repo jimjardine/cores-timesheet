@@ -83,8 +83,6 @@ export default function AdminPanel() {
   const [jobEntries, setJobEntries] = useState({}) // { [jobId]: entries[] }
   const [vesselContacts, setVesselContacts] = useState([])
   const [modalContacts, setModalContacts] = useState([]) // contacts being edited in vessel modal
-  const [lowStockEmailDrafts, setLowStockEmailDrafts] = useState({}) // { [employeeId]: draft email while editing }
-  const [lowStockSaveStatus, setLowStockSaveStatus] = useState({}) // { [employeeId]: 'saving' | 'saved' | 'error' }
 
   useEffect(() => { loadAll() }, [])
 
@@ -214,20 +212,6 @@ export default function AdminPanel() {
     await loadAll()
     setModal(null)
     setSaving(false)
-  }
-
-  async function saveLowStockEmail(emp) {
-    const email = (lowStockEmailDrafts[emp.id] ?? emp.email ?? '').trim()
-    setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'saving' }))
-    const { error } = await supabase.schema('Cores').from('employees').update({ email: email || null }).eq('id', emp.id)
-    if (error) {
-      alert(`Couldn't save email: ${error.message}`)
-      setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'error' }))
-      return
-    }
-    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, email: email || null } : e))
-    setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'saved' }))
-    setTimeout(() => setLowStockSaveStatus(s => (s[emp.id] === 'saved' ? { ...s, [emp.id]: undefined } : s)), 2000)
   }
 
   async function toggleLowStockRecipient(emp) {
@@ -795,53 +779,6 @@ export default function AdminPanel() {
       {/* ── Employees ── */}
       {section === 'employees' && (
         <div>
-          <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '1.25rem', marginBottom: '1.75rem' }}>
-            <h3 style={{ margin: '0 0 0.25rem' }}>📧 Low-Stock Alert Recipients</h3>
-            <p style={{ margin: '0 0 1rem', color: '#888', fontSize: '0.85rem' }}>
-              Whoever's checked here gets an email whenever a tech texts in something running low.
-            </p>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ ...thStyle, width: '30%' }}>Name</th>
-                  <th style={thStyle}>Email</th>
-                  <th style={{ ...thStyle, width: '110px', textAlign: 'center' }}>Alerts?</th>
-                  <th style={{ ...thStyle, width: '70px' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {employees.filter(e => e.active).sort((a, b) => a.name.localeCompare(b.name)).map(e => (
-                  <tr key={e.id}>
-                    <td style={tdStyle}>{e.name}</td>
-                    <td style={tdStyle}>
-                      <input
-                        type="email"
-                        style={{ ...inputStyle, fontSize: '0.85rem' }}
-                        placeholder="name@example.com"
-                        value={lowStockEmailDrafts[e.id] ?? e.email ?? ''}
-                        onChange={ev => setLowStockEmailDrafts(d => ({ ...d, [e.id]: ev.target.value }))}
-                        onBlur={() => saveLowStockEmail(e)}
-                      />
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'center' }}>
-                      <input
-                        type="checkbox"
-                        checked={!!e.low_stock_alert_recipient}
-                        onChange={() => toggleLowStockRecipient(e)}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                      />
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: '0.75rem' }}>
-                      {lowStockSaveStatus[e.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
-                      {lowStockSaveStatus[e.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
-                      {lowStockSaveStatus[e.id] === 'error' && <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ Failed</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
               {['technician', 'office', 'all'].map(r => (
@@ -864,8 +801,10 @@ export default function AdminPanel() {
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Cell</th>
                 <th style={thStyle}>WhatsApp</th>
+                <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
                 <th style={thStyle}>Status</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Low-Stock Alerts</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}></th>
               </tr>
             </thead>
@@ -880,6 +819,7 @@ export default function AdminPanel() {
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{e.name}</td>
                       <td style={{ ...tdStyle, color: phone ? '#333' : '#bbb', fontFamily: 'monospace' }}>{phone || 'No number'}</td>
                       <td style={{ ...tdStyle, color: whatsapp ? '#333' : '#bbb', fontFamily: 'monospace' }}>{whatsapp || '—'}</td>
+                      <td style={{ ...tdStyle, color: e.email ? '#333' : '#bbb' }}>{e.email || '—'}</td>
                       <td style={tdStyle}>
                         <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: e.role === 'technician' ? '#e8eef8' : '#f5f0ff', color: e.role === 'technician' ? '#0055aa' : '#6b21a8' }}>
                           {e.role || 'technician'}
@@ -889,6 +829,14 @@ export default function AdminPanel() {
                         <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: e.active ? '#e6f4ea' : '#f0f0f0', color: e.active ? '#2d6a38' : '#888' }}>
                           {e.active ? 'Active' : 'Inactive'}
                         </span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!e.low_stock_alert_recipient}
+                          onChange={() => toggleLowStockRecipient(e)}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        />
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('employee', e)}>Edit</button>
