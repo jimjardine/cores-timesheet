@@ -301,30 +301,6 @@ function jsonReply(data: unknown, status = 200): Response {
   })
 }
 
-// Proactive outbound send — everything else in this file only replies within
-// an inbound Twilio webhook request (TwiML). This is the one path that pushes
-// a message unprompted (used for manual-entry confirmation requests).
-async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
-  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
-  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
-  if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
-
-  const from = '+15064046969' // existing Cores Twilio number
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ To: to, From: from, Body: body }),
-  })
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    return { ok: false, error: `Twilio send failed (${res.status}): ${detail.slice(0, 200)}` }
-  }
-  return { ok: true }
-}
-
 // Sends via the WhatsApp Sandbox (not the SMS number) — both To and From need
 // the whatsapp: prefix or Twilio delivers it as a plain SMS instead.
 async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
@@ -375,20 +351,14 @@ async function sendResendEmail(to: string, subject: string, text: string): Promi
 }
 
 // ── Low-stock alerts ──────────────────────────────────────────────────────
-// TODO: flip to false once this has been verified against real texts — until
-// then every alert routes to Jim's email instead of the real recipients, so
-// nothing goes to Nicki/Tracy while this is still being tested.
-const LOW_STOCK_DEV_MODE = true
-const LOW_STOCK_DEV_EMAIL_TO = 'jimjar@me.com'
-const LOW_STOCK_RECIPIENTS = [
-  { name: 'Nicki', phone: '9024971844' },
-  { name: 'Tracy', phone: '5873210043' },
-]
-
 // Fire-and-forget notification, not persisted anywhere — the office acts on
 // the text itself rather than a tracked list. Called for both the Claude-
-// parsed text path and the deterministic photo-caption path.
-async function sendLowStockAlert(item: string, jobRef: string | null, reporterFirstName: string, photoUrl: string | null): Promise<void> {
+// parsed text path and the deterministic photo-caption path. Recipients are
+// controlled entirely from the admin panel (Employees > Low-Stock Alert
+// Recipients), not hardcoded — an active employee with an email and
+// low_stock_alert_recipient=true gets every alert. Testing safely just means
+// making sure only your own record is flagged there.
+async function sendLowStockAlert(supabase: any, item: string, jobRef: string | null, reporterFirstName: string, photoUrl: string | null): Promise<void> {
   const jobPart = jobRef ? ` (Job ${jobRef})` : ''
   const reporter = reporterFirstName || 'a tech'
   const photoPart = photoUrl ? `\n${photoUrl}` : ''
@@ -396,12 +366,21 @@ async function sendLowStockAlert(item: string, jobRef: string | null, reporterFi
 
   // Best-effort — a send hiccup here must never break timesheet processing.
   try {
-    if (LOW_STOCK_DEV_MODE) {
-      const result = await sendResendEmail(LOW_STOCK_DEV_EMAIL_TO, `Low stock: ${item}`, `[DEV — would go to Nicki/Tracy]\n\n${msg}`)
-      if (!result.ok) console.error('Low-stock email send failed:', result.error)
+    const { data: recipients } = await supabase
+      .from('employees')
+      .select('email')
+      .eq('low_stock_alert_recipient', true)
+      .eq('active', true)
+      .not('email', 'is', null)
+
+    const emails: string[] = (recipients || []).map((r: any) => r.email).filter(Boolean)
+    if (emails.length === 0) {
+      console.error('Low-stock alert: no recipients configured (Admin > Employees > Low-Stock Alert Recipients)')
       return
     }
-    await Promise.all(LOW_STOCK_RECIPIENTS.map(r => sendTwilioSms(`+1${r.phone}`, msg)))
+
+    const results = await Promise.all(emails.map(email => sendResendEmail(email, `Low stock: ${item}`, msg)))
+    results.forEach((r, i) => { if (!r.ok) console.error(`Low-stock email to ${emails[i]} failed:`, r.error) })
   } catch (err: any) {
     console.error('Low-stock alert send failed:', err.message)
   }
@@ -1113,7 +1092,7 @@ Deno.serve(async (req: Request) => {
         ? `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/gear-photos/${firstSaved.path}`
         : null
       const itemGuess = note && note.length <= 80 ? note : 'something (see photo)'
-      await sendLowStockAlert(itemGuess, photoContext, firstName, photoUrl)
+      await sendLowStockAlert(supabase, itemGuess, photoContext, firstName, photoUrl)
     }
 
     const anySaved = saved.some(r => r !== null)
@@ -1397,7 +1376,7 @@ Deno.serve(async (req: Request) => {
     if (attempt === 0 && (parsed.low_stock || []).length > 0) {
       const reporterFirstName = (employeeName || '').split(' ')[0] || ''
       await Promise.all((parsed.low_stock || []).map((ls: any) =>
-        sendLowStockAlert(String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
+        sendLowStockAlert(supabase, String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
       ))
     }
 

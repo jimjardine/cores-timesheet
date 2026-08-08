@@ -83,6 +83,8 @@ export default function AdminPanel() {
   const [jobEntries, setJobEntries] = useState({}) // { [jobId]: entries[] }
   const [vesselContacts, setVesselContacts] = useState([])
   const [modalContacts, setModalContacts] = useState([]) // contacts being edited in vessel modal
+  const [lowStockEmailDrafts, setLowStockEmailDrafts] = useState({}) // { [employeeId]: draft email while editing }
+  const [lowStockSaveStatus, setLowStockSaveStatus] = useState({}) // { [employeeId]: 'saving' | 'saved' | 'error' }
 
   useEffect(() => { loadAll() }, [])
 
@@ -130,7 +132,7 @@ export default function AdminPanel() {
     } else if (type === 'job') {
       setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open', work_order_number: record?.work_order_number || '' })
     } else if (type === 'employee') {
-      setFields({ name: record?.name || '', phone: record?.phone || '', whatsapp_phone: record?.whatsapp_phone || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
+      setFields({ name: record?.name || '', phone: record?.phone || '', whatsapp_phone: record?.whatsapp_phone || '', email: record?.email || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     } else if (type === 'entry') {
       setFields({ work_date: record?.work_date || '', job_id: record?.job_id || '', hours: record?.hours ?? '', ot_hours: record?.ot_hours ?? '', per_diem: record?.per_diem ?? '0', description: record?.description || '' })
     }
@@ -167,6 +169,7 @@ export default function AdminPanel() {
         name: payload.name.trim(),
         phone: payload.phone.replace(/\D/g, '').slice(-10) || null,
         whatsapp_phone: (payload.whatsapp_phone || '').replace(/\D/g, '').slice(-10) || null,
+        email: (payload.email || '').trim() || null,
         active: payload.active === 'true',
         role: payload.role,
       }
@@ -211,6 +214,31 @@ export default function AdminPanel() {
     await loadAll()
     setModal(null)
     setSaving(false)
+  }
+
+  async function saveLowStockEmail(emp) {
+    const email = (lowStockEmailDrafts[emp.id] ?? emp.email ?? '').trim()
+    setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'saving' }))
+    const { error } = await supabase.schema('Cores').from('employees').update({ email: email || null }).eq('id', emp.id)
+    if (error) {
+      alert(`Couldn't save email: ${error.message}`)
+      setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'error' }))
+      return
+    }
+    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, email: email || null } : e))
+    setLowStockSaveStatus(s => ({ ...s, [emp.id]: 'saved' }))
+    setTimeout(() => setLowStockSaveStatus(s => (s[emp.id] === 'saved' ? { ...s, [emp.id]: undefined } : s)), 2000)
+  }
+
+  async function toggleLowStockRecipient(emp) {
+    const next = !emp.low_stock_alert_recipient
+    if (next && !(emp.email || '').trim()) {
+      alert(`${emp.name} needs an email address before they can receive low-stock alerts.`)
+      return
+    }
+    const { error } = await supabase.schema('Cores').from('employees').update({ low_stock_alert_recipient: next }).eq('id', emp.id)
+    if (error) { alert(`Couldn't update: ${error.message}`); return }
+    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, low_stock_alert_recipient: next } : e))
   }
 
   function promptStatusChange(job, action) {
@@ -767,6 +795,53 @@ export default function AdminPanel() {
       {/* ── Employees ── */}
       {section === 'employees' && (
         <div>
+          <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '1.25rem', marginBottom: '1.75rem' }}>
+            <h3 style={{ margin: '0 0 0.25rem' }}>📧 Low-Stock Alert Recipients</h3>
+            <p style={{ margin: '0 0 1rem', color: '#888', fontSize: '0.85rem' }}>
+              Whoever's checked here gets an email whenever a tech texts in something running low.
+            </p>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...thStyle, width: '30%' }}>Name</th>
+                  <th style={thStyle}>Email</th>
+                  <th style={{ ...thStyle, width: '110px', textAlign: 'center' }}>Alerts?</th>
+                  <th style={{ ...thStyle, width: '70px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {employees.filter(e => e.active).sort((a, b) => a.name.localeCompare(b.name)).map(e => (
+                  <tr key={e.id}>
+                    <td style={tdStyle}>{e.name}</td>
+                    <td style={tdStyle}>
+                      <input
+                        type="email"
+                        style={{ ...inputStyle, fontSize: '0.85rem' }}
+                        placeholder="name@example.com"
+                        value={lowStockEmailDrafts[e.id] ?? e.email ?? ''}
+                        onChange={ev => setLowStockEmailDrafts(d => ({ ...d, [e.id]: ev.target.value }))}
+                        onBlur={() => saveLowStockEmail(e)}
+                      />
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!e.low_stock_alert_recipient}
+                        onChange={() => toggleLowStockRecipient(e)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                    </td>
+                    <td style={{ ...tdStyle, fontSize: '0.75rem' }}>
+                      {lowStockSaveStatus[e.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
+                      {lowStockSaveStatus[e.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
+                      {lowStockSaveStatus[e.id] === 'error' && <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ Failed</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
               {['technician', 'office', 'all'].map(r => (
@@ -993,6 +1068,7 @@ export default function AdminPanel() {
           <Field label="Name"><input style={inputStyle} {...f('name')} placeholder="First Last" /></Field>
           <Field label="Cell Number"><input type="tel" style={inputStyle} {...f('phone')} placeholder="e.g. 902-555-1234" /></Field>
           <Field label="WhatsApp Number (if different)"><input type="tel" style={inputStyle} {...f('whatsapp_phone')} placeholder="Only needed if different from Cell Number" /></Field>
+          <Field label="Email"><input type="email" style={inputStyle} {...f('email')} placeholder="name@example.com" /></Field>
           <Field label="Role">
             <select style={inputStyle} {...f('role')}>
               <option value="technician">Technician</option>
