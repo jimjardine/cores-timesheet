@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
-import { fetchDailyOTContext, computeDailyOTSplit, replaceSupplies } from '../utils/entrySave'
+import { replaceSupplies } from '../utils/entrySave'
 import './employee.css'
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -82,20 +82,16 @@ export default function EntryForm({ employee, mode }) {
     if (validLines.some(l => !l.description.trim())) { setError('Add a note describing what was done for each job'); return }
     setSaving(true); setError('')
 
-    let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)
-    const rows = validLines.map((l, i) => {
-      const hours = Number(l.hours)
-      const { ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
-      alreadyWorked += hours
-      return {
-        employee_id: employee.id, work_date: workDate, job_id: l.job_id,
-        hours, ot_hours: ot, description: l.description || '',
-        per_diem: Number(perDiem) || 0, sort_order: i + 1,
-        time_in: timeIn || null, stated_time_out: timeOut || null,
-        lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),
-        entry_source: 'self', confirmation_status: 'not_required',
-      }
-    })
+    // ot_hours left null — computeOTMap derives reg/OT (daily + weekly
+    // threshold) at display/export time instead. See entrySave.js.
+    const rows = validLines.map((l, i) => ({
+      employee_id: employee.id, work_date: workDate, job_id: l.job_id,
+      hours: Number(l.hours), ot_hours: null, description: l.description || '',
+      per_diem: Number(perDiem) || 0, sort_order: i + 1,
+      time_in: timeIn || null, stated_time_out: timeOut || null,
+      lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),
+      entry_source: 'self', confirmation_status: 'not_required',
+    }))
 
     const { error: insertError } = await supabase.schema('Cores').from('timesheet_entries').insert(rows)
     if (insertError) { setError(insertError.message); setSaving(false); return }
@@ -114,17 +110,11 @@ export default function EntryForm({ employee, mode }) {
     if (!editDescription.trim()) { setError('Add a note describing what was done'); return }
     setSaving(true); setError('')
 
-    let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, employee.id, workDate)
-    // Exclude this entry's own (pre-edit) hours from "already worked" if it's
-    // still on the same day — otherwise its old value double-counts.
-    if (originalEntry.work_date === workDate && !originalEntry.is_stat_pay) {
-      alreadyWorked = Math.max(0, alreadyWorked - Number(originalEntry.hours))
-    }
-    const { ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
-
+    // ot_hours left null — computeOTMap derives reg/OT at display/export
+    // time instead. See entrySave.js.
     const { error: updateError } = await supabase.schema('Cores').from('timesheet_entries').update({
       job_id: editJobId, work_date: workDate,
-      hours, ot_hours: ot, description: editDescription,
+      hours, ot_hours: null, description: editDescription,
       per_diem: Number(perDiem) || 0,
       time_in: timeIn || null, stated_time_out: timeOut || null,
       lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),

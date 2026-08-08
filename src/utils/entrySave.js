@@ -1,8 +1,8 @@
 // Shared timesheet_entries write logic — used by both the office AdminDashboard
 // (manual entry / edit) and the employee mobile self-service site, so the two
-// surfaces can never drift on how hours split into reg/OT or how a job gets
-// added to an existing day. Pulled out of AdminDashboard.jsx's saveManualEntry/
-// saveEdit/saveNewJobToTimesheet, which had this logic three times over.
+// surfaces can never drift on how a job gets added to an existing day.
+// Pulled out of AdminDashboard.jsx's saveManualEntry/saveEdit/saveNewJobToTimesheet,
+// which had this logic three times over.
 import { isStatHoliday } from './statPay'
 
 const cores = (supabase) => supabase.schema('Cores')
@@ -12,17 +12,25 @@ function isWeekend(ymd) {
   return dow === 0 || dow === 6
 }
 
-// Split a job's hours into regular/OT against the daily threshold, given how
-// many regular hours are already accounted for earlier that same day.
+// IMPORTANT: this same-day-only split is for UI *preview* purposes only
+// (PendingEntryEdit's estimate of what a pending submission will look like).
+// Never write its result into timesheet_entries.ot_hours — otCalc.js's
+// computeOTMap treats a non-null ot_hours as a deliberate manual override and
+// skips its own daily+weekly threshold logic for that entry, so stamping a
+// same-day split at write time silently defeats the weekly overtime rule
+// everywhere the entry is later displayed or exported. Every actual insert/
+// update of timesheet_entries in this codebase writes ot_hours: null, except
+// AdminDashboard's Edit modal where an admin explicitly types reg/ot into
+// separate fields — that's the one legitimate manual override.
 export function computeDailyOTSplit(hours, alreadyWorkedToday, dailyOTThreshold, statDay) {
   const reg = statDay ? 0 : Math.min(hours, Math.max(0, dailyOTThreshold - alreadyWorkedToday))
   const ot = hours - reg
   return { reg, ot }
 }
 
-// Everything saveManualEntry needs to know before it can split hours: is this
-// a stat/weekend day (all OT), what's the configured daily threshold, and how
-// many non-stat hours does the employee already have logged that day.
+// Context computeDailyOTSplit needs for a preview: is this a stat/weekend day
+// (all OT), the configured daily threshold, and how many non-stat hours the
+// employee already has logged that day.
 export async function fetchDailyOTContext(supabase, employeeId, workDate) {
   const { data: otCfg } = await cores(supabase).from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
   const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
@@ -52,19 +60,18 @@ export async function replaceSupplies(supabase, employeeId, workDate, supplies) 
 }
 
 // Add one more job line to a day that already has entries (or start a new
-// day with a single job) — all-OT on a stat/weekend day, otherwise all
-// regular. Used for "add another job" on an existing timesheet; a brand-new
-// multi-job day should use computeDailyOTSplit per line instead (see
-// AdminDashboard's saveManualEntry) since that path threshold-splits.
+// day with a single job). Used for "add another job" on an existing
+// timesheet. ot_hours is left null — see note above — so computeOTMap
+// correctly reg/OT-splits it (including stat/weekend and weekly threshold)
+// alongside the day's other entries wherever it's displayed.
 export async function addJobToDay(supabase, { employeeId, workDate, jobId, hours, description, entrySource, confirmationStatus, sortOrder = 999 }) {
-  const statDay = (await isStatHoliday(workDate)) || isWeekend(workDate)
   return cores(supabase).from('timesheet_entries').insert({
     employee_id: employeeId,
     work_date: workDate,
     job_id: jobId,
     hours: Number(hours),
     description: description || '',
-    ot_hours: statDay ? Number(hours) : 0,
+    ot_hours: null,
     per_diem: 0,
     sort_order: sortOrder,
     entry_source: entrySource,

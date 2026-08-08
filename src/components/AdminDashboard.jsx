@@ -4,7 +4,7 @@ import SmsReview from './SmsReview'
 import GearPhotos from './GearPhotos'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
-import { fetchDailyOTContext, computeDailyOTSplit, replaceSupplies, addJobToDay } from '../utils/entrySave'
+import { replaceSupplies, addJobToDay } from '../utils/entrySave'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
@@ -329,32 +329,25 @@ export default function AdminDashboard() {
 
     setSavingManual(true)
     try {
-      // Work on a stat holiday or weekend is all OT — the 8 reg hrs on a stat
-      // day come from the auto stat-pay entry instead
-      let { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(supabase, manualFields.employee_id, manualFields.work_date)
-
-      // Insert entries with OT split
-      const toInsert = validEntries.map((e, i) => {
-        const hours = Number(e.hours)
-        const { ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
-        alreadyWorked += hours
-        return {
-          employee_id: manualFields.employee_id,
-          work_date: manualFields.work_date,
-          job_id: e.job_id,
-          hours: hours,
-          ot_hours: ot,
-          description: e.description || '',
-          per_diem: manualFields.per_diem,
-          sort_order: manualFields.sort_order + i,
-          time_in: manualFields.time_in || null,
-          stated_time_out: manualFields.stated_time_out || null,
-          lunch_minutes: manualFields.lunch_minutes || null,
-          // Nicki typed this in herself — the employee hasn't confirmed it yet
-          entry_source: 'manual',
-          confirmation_status: 'pending',
-        }
-      })
+      // ot_hours left null on every line — computeOTMap derives reg/OT
+      // (stat/weekend, daily + weekly threshold) at display/export time
+      // instead of locking in a same-day-only split here. See entrySave.js.
+      const toInsert = validEntries.map((e, i) => ({
+        employee_id: manualFields.employee_id,
+        work_date: manualFields.work_date,
+        job_id: e.job_id,
+        hours: Number(e.hours),
+        ot_hours: null,
+        description: e.description || '',
+        per_diem: manualFields.per_diem,
+        sort_order: manualFields.sort_order + i,
+        time_in: manualFields.time_in || null,
+        stated_time_out: manualFields.stated_time_out || null,
+        lunch_minutes: manualFields.lunch_minutes || null,
+        // Nicki typed this in herself — the employee hasn't confirmed it yet
+        entry_source: 'manual',
+        confirmation_status: 'pending',
+      }))
 
       const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(toInsert)
       if (error) {

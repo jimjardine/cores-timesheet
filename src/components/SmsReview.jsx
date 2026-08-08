@@ -119,6 +119,13 @@ export default function SmsReview({ onApproved } = {}) {
       alert('Every job needs a note describing what was done — click Edit to add one before approving.')
       return
     }
+    // Matches the validation saveEdit() enforces — approving straight from the
+    // list (without opening Edit) used to skip this, letting a 0/blank-hours
+    // entry (e.g. a job mentioned with no stated duration) through silently.
+    if (entries.some(e => !(Number(e.hours) > 0))) {
+      alert('Every entry needs hours greater than 0 — click Edit to fix it before approving.')
+      return
+    }
     // Hours can go stale against time_in/stated_time_out when either gets edited
     // without the other (see Aug 6 2026 incident — time was corrected but the
     // job hours weren't, and it slipped through to approval unnoticed).
@@ -128,6 +135,23 @@ export default function SmsReview({ onApproved } = {}) {
       if (!ok) return
     }
     setActing(sub.id)
+
+    // Atomically claim the submission before creating any entries — if this
+    // matches zero rows, someone else (another tab/admin) already approved or
+    // rejected it in the meantime, so we must not insert a second copy of the
+    // entries. Previously the status flip happened last, after inserting, so
+    // two concurrent approves could both pass through and duplicate the day's
+    // hours (see FINDINGS_2026-08-08.md).
+    const { data: claimed, error: claimError } = await supabase.schema('Cores').from('sms_submissions')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', sub.id).in('status', ['submitted', 'collecting'])
+      .select('id')
+    if (claimError) { alert('Approve failed: ' + claimError.message); setActing(null); return }
+    if (!claimed || claimed.length === 0) {
+      alert('This submission was already approved or rejected (probably in another tab) — refreshing.')
+      await load(); setActing(null); return
+    }
+
     const hasPD = sub.per_diem_location && sub.per_diem_location !== 'none'
 
     // Map job numbers to IDs — case-insensitive so "shop"/"Shop"/"SHOP" all match
@@ -139,7 +163,10 @@ export default function SmsReview({ onApproved } = {}) {
       job_id:      jobMap[(e.job_number || '').toUpperCase()] || null,
       work_date:   sub.work_date,
       hours:       Number(e.hours),
-      ot_hours:    Number(e.ot_hours ?? 0),
+      // ot_hours left null — the edge function's reg/ot split here is only a
+      // same-day estimate for the review-screen preview; computeOTMap derives
+      // the real split (incl. weekly threshold) at display/export time.
+      ot_hours:    null,
       description: e.description || null,
       // per_diem is a multiplier (×1 standard, ×2 double), not a dollar amount
       per_diem:    i === 0 && hasPD ? 1 : 0,
@@ -156,7 +183,13 @@ export default function SmsReview({ onApproved } = {}) {
 
     if (rows.length > 0) {
       const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(rows)
-      if (error) { alert('Error creating entries: ' + error.message); setActing(null); return }
+      if (error) {
+        // We already claimed this submission as approved — put it back so it's
+        // not stuck "approved" with no entries and can be retried.
+        await supabase.schema('Cores').from('sms_submissions').update({ status: sub.status, updated_at: new Date().toISOString() }).eq('id', sub.id)
+        alert('Error creating entries — submission was reverted, try again: ' + error.message)
+        setActing(null); return
+      }
     }
 
     // Supplies go to job_supplies for job cost reporting (no pricing — invoicing adds that)
@@ -176,11 +209,6 @@ export default function SmsReview({ onApproved } = {}) {
       }
     }
 
-    const { error: statusError } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', sub.id)
-    if (statusError) {
-      // Entries are already in — approving again would duplicate them
-      alert(`Entries were created but the submission couldn't be marked approved: ${statusError.message}\nDo NOT approve it again — refresh and check the Timesheets tab.`)
-    }
     await ensureStatPay(sub.employee_id, sub.work_date)
     await load()
     onApproved?.()
