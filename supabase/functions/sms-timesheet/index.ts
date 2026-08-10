@@ -1160,7 +1160,21 @@ Deno.serve(async (req: Request) => {
   // Deterministic check before Claude parsing so a plain "yes" never gets
   // fed to the parser. Skipped if there's an active collecting/submitted
   // conversation so we don't hijack a normal in-progress submission.
-  if (fromPhone) {
+  //
+  // Two guards keep this from hijacking a real timesheet text (see Aug 7 2026
+  // incident: Finn's full end-of-day report was silently swallowed as a
+  // "confirmed" reply to unrelated two-week-old manual entries, because he had
+  // pending confirmations he was never actually asked about):
+  //   1. Only entries with confirmation_requested_at set count — a pending
+  //      confirmation the employee was never texted about isn't something
+  //      their next message could plausibly be replying to. (Confirmation
+  //      request texts are currently paused for everyone but Jim, so without
+  //      this guard every other employee's next text was always at risk.)
+  //   2. The message itself must look like a short affirmative — a real
+  //      timesheet report falls through to normal parsing below instead of
+  //      being consumed here.
+  const CONFIRMATION_REPLY_RE = /^(y|ya|yea|yeah|yep|yup|yes|correct|confirm(ed)?|ok|okay|k|got it|sounds good|thanks|thank you|good|all good|sure)[.!]?$/i
+  if (fromPhone && CONFIRMATION_REPLY_RE.test(msgBody.trim())) {
     const { data: byPhone } = await supabase.from('employees').select('id, name, phone, whatsapp_phone')
     const phoneMatch = (byPhone || []).find((e: any) =>
       (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
@@ -1174,12 +1188,14 @@ Deno.serve(async (req: Request) => {
         const { data: pendingConfirm } = await supabase
           .from('timesheet_entries').select('id')
           .eq('employee_id', phoneMatch.id).eq('confirmation_status', 'pending')
+          .not('confirmation_requested_at', 'is', null)
 
         if (pendingConfirm && pendingConfirm.length > 0) {
           await supabase
             .from('timesheet_entries')
             .update({ confirmation_status: 'confirmed', confirmed_at: new Date().toISOString(), confirmation_reply_text: msgBody })
             .eq('employee_id', phoneMatch.id).eq('confirmation_status', 'pending')
+            .not('confirmation_requested_at', 'is', null)
 
           const r = 'Thanks, got it — logged as confirmed.'
           return isTwilio ? twiML(r) : jsonReply({ reply: r })
