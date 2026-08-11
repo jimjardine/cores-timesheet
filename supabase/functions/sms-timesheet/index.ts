@@ -324,8 +324,10 @@ async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boole
   return { ok: true }
 }
 
-// Resend's shared dev sender — fine for a low-volume internal alert like this;
-// no domain verification needed. https://resend.com/docs/api-reference/emails/send-email
+// bluelightgin.com is a verified Resend sending domain (as of 2026-08-11) —
+// the shared onboarding@resend.dev sender only ever delivers to the Resend
+// account's own address, so alerts to anyone else (e.g. Tracy) silently
+// never arrived. https://resend.com/docs/api-reference/emails/send-email
 async function sendResendEmail(to: string, subject: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const apiKey = Deno.env.get('RESEND_API_KEY')
   if (!apiKey) return { ok: false, error: 'RESEND_API_KEY not configured' }
@@ -337,7 +339,7 @@ async function sendResendEmail(to: string, subject: string, text: string): Promi
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'Cores Timesheets <onboarding@resend.dev>',
+      from: 'Cores Timesheets <alerts@bluelightgin.com>',
       to: [to],
       subject,
       text,
