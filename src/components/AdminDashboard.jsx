@@ -87,11 +87,13 @@ export default function AdminDashboard() {
     per_diem: 0, sort_order: 1
   })
   const [savingManual, setSavingManual] = useState(false)
-  // Tracks the last value we auto-filled into entries[0].hours (see defaultHoursFor)
-  // so a later employee/date change can tell "still the untouched default" apart
-  // from "admin actually typed something" — either is safe to overwrite, a real
-  // edit never is.
-  const [autoFilledHours, setAutoFilledHours] = useState(null)
+  // Tracks the last { hours, lunch_minutes, stated_time_out } we auto-filled (see
+  // defaultScheduleFor) so a later employee/date change can tell "still the
+  // untouched default" apart from "admin actually typed something" — a field
+  // counts as safe to overwrite only if it still matches the form's own pristine
+  // default OR the last thing we auto-filled; a real edit is never touched.
+  const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null })
+  const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30' }
   const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
@@ -372,7 +374,7 @@ export default function AdminDashboard() {
       await ensureStatPay(manualFields.employee_id, manualFields.work_date)
       await loadTimesheets()
       setManualEntry(null)
-      setAutoFilledHours(null)
+      setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null })
       setManualFields({
         employee_id: '', work_date: toYMD(new Date()),
         time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
@@ -578,12 +580,53 @@ export default function AdminDashboard() {
 
   // Pre-fill convenience for employees on a fixed weekly schedule (e.g. Tracy:
   // 8.75/day Mon-Thu, 5 on Friday) — not used for OT itself, that's computeEntryOT.
-  function defaultHoursFor(employeeId, workDate) {
+  // Time Out is derived from a 7:00 start + the threshold hours + lunch, so it
+  // always lines up with Hours instead of drifting from the form's generic
+  // 15:30 default. Friday has no lunch (matches her actual past Friday entries,
+  // both logged with none); Mon-Thu gets 15 min.
+  function defaultScheduleFor(employeeId, workDate) {
     const emp = employees.find(e => e.id === employeeId)
     if (!emp || (emp.ot_daily_threshold == null && emp.ot_friday_threshold == null)) return null
     const dow = new Date(workDate + 'T12:00:00').getDay()
     if (dow === 0 || dow === 6) return null // weekend — no default, OT-eligible from the first hour anyway
-    return dow === 5 ? emp.ot_friday_threshold : emp.ot_daily_threshold
+    const isFriday = dow === 5
+    const hours = isFriday ? emp.ot_friday_threshold : emp.ot_daily_threshold
+    if (hours == null) return null
+    const lunchMinutes = isFriday ? 0 : 15
+    const outTotalMinutes = 7 * 60 + Math.round(hours * 60) + lunchMinutes
+    const stated_time_out = `${String(Math.floor(outTotalMinutes / 60) % 24).padStart(2, '0')}:${String(outTotalMinutes % 60).padStart(2, '0')}`
+    return { hours, lunch_minutes: lunchMinutes, stated_time_out }
+  }
+
+  // Shared by the Employee and Date fields in the manual-entry modal — either one
+  // changing can bring a fixed-schedule employee's default into or out of scope.
+  // `patch` is the field actually being changed, e.g. {employee_id} or {work_date}.
+  function applyManualFieldChange(patch) {
+    const employee_id = patch.employee_id ?? manualFields.employee_id
+    const work_date = patch.work_date ?? manualFields.work_date
+    const sched = defaultScheduleFor(employee_id, work_date)
+    const next = { ...patch }
+    const nextAuto = { ...autoFilled }
+    let autoChanged = false
+
+    if (sched) {
+      if (manualFields.entries.length === 1 &&
+          (manualFields.entries[0].hours === PRISTINE_MANUAL_DEFAULTS.hours || manualFields.entries[0].hours === autoFilled.hours)) {
+        next.entries = [{ ...manualFields.entries[0], hours: String(sched.hours) }]
+        nextAuto.hours = String(sched.hours); autoChanged = true
+      }
+      if (manualFields.lunch_minutes === PRISTINE_MANUAL_DEFAULTS.lunch_minutes || manualFields.lunch_minutes === autoFilled.lunch_minutes) {
+        next.lunch_minutes = sched.lunch_minutes
+        nextAuto.lunch_minutes = sched.lunch_minutes; autoChanged = true
+      }
+      if (manualFields.stated_time_out === PRISTINE_MANUAL_DEFAULTS.stated_time_out || manualFields.stated_time_out === autoFilled.stated_time_out) {
+        next.stated_time_out = sched.stated_time_out
+        nextAuto.stated_time_out = sched.stated_time_out; autoChanged = true
+      }
+    }
+
+    if (autoChanged) setAutoFilled(nextAuto)
+    setManualFields(f => ({ ...f, ...next }))
   }
 
   function handleExport() {
@@ -1009,36 +1052,14 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Employee</label>
-                <select style={inputStyle} value={manualFields.employee_id || ''} onChange={e => {
-                  const employee_id = e.target.value
-                  const defaultHours = defaultHoursFor(employee_id, manualFields.work_date)
-                  const untouched = manualFields.entries.length === 1 &&
-                    (manualFields.entries[0].hours === '' || manualFields.entries[0].hours === autoFilledHours)
-                  if (defaultHours != null && untouched) {
-                    setAutoFilledHours(String(defaultHours))
-                    setManualFields(f => ({ ...f, employee_id, entries: [{ ...f.entries[0], hours: String(defaultHours) }] }))
-                  } else {
-                    setManualFields(f => ({ ...f, employee_id }))
-                  }
-                }}>
+                <select style={inputStyle} value={manualFields.employee_id || ''} onChange={e => applyManualFieldChange({ employee_id: e.target.value })}>
                   <option value="">— select —</option>
                   {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Date</label>
-                <input type="date" style={inputStyle} value={manualFields.work_date} onChange={e => {
-                  const work_date = e.target.value
-                  const defaultHours = defaultHoursFor(manualFields.employee_id, work_date)
-                  const untouched = manualFields.entries.length === 1 &&
-                    (manualFields.entries[0].hours === '' || manualFields.entries[0].hours === autoFilledHours)
-                  if (defaultHours != null && untouched) {
-                    setAutoFilledHours(String(defaultHours))
-                    setManualFields(f => ({ ...f, work_date, entries: [{ ...f.entries[0], hours: String(defaultHours) }] }))
-                  } else {
-                    setManualFields(f => ({ ...f, work_date }))
-                  }
-                }} />
+                <input type="date" style={inputStyle} value={manualFields.work_date} onChange={e => applyManualFieldChange({ work_date: e.target.value })} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time In</label>
@@ -1124,7 +1145,7 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button onClick={() => { setManualEntry(null); setAutoFilledHours(null) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => { setManualEntry(null); setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null }) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveManualEntry} disabled={savingManual} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
                 {savingManual ? 'Saving…' : 'Save Entry'}
               </button>
