@@ -51,6 +51,44 @@ export default function Reports() {
   const employeeFilterIdsDefaulted = useRef(false)
   const [suppliesJobFilterIds, setSuppliesJobFilterIds] = useState([])
   const [suppliesEmployeeFilterIds, setSuppliesEmployeeFilterIds] = useState([])
+  const [suppliesGroupBy, setSuppliesGroupBy] = useState('date') // 'job' | 'date'
+  const [expandedSupplyGroups, setExpandedSupplyGroups] = useState(new Set())
+  function toggleSupplyGroup(key) {
+    setExpandedSupplyGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  // Column sort — { [tabKey]: { col, dir } }
+  const [tableSort, setTableSort] = useState({})
+  function toggleSort(tabKey, col) {
+    setTableSort(prev => {
+      const cur = prev[tabKey]
+      if (cur && cur.col === col) return { ...prev, [tabKey]: { col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } }
+      return { ...prev, [tabKey]: { col, dir: 'asc' } }
+    })
+  }
+  function sortRows(tabKey, rows, columns, defaultCmp) {
+    const s = tableSort[tabKey]
+    if (!s) return defaultCmp ? [...rows].sort(defaultCmp) : rows
+    const col = columns.find(c => c.key === s.col)
+    if (!col) return rows
+    const sorted = [...rows].sort(col.cmp)
+    return s.dir === 'desc' ? sorted.reverse() : sorted
+  }
+  function renderSortTh(tabKey, col, label, align = 'left') {
+    const s = tableSort[tabKey]
+    const active = s && s.col === col
+    return (
+      <th key={col} onClick={() => toggleSort(tabKey, col)}
+        style={{ padding: '0.75rem', textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+        {label}{active ? (s.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+      </th>
+    )
+  }
 
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
@@ -164,6 +202,37 @@ export default function Reports() {
   const jobsById = jobs.reduce((acc, j) => { acc[j.id] = j; return acc }, {})
   const photosPerEmployee = gearPhotos.reduce((acc, p) => { acc[p.employee_id] = (acc[p.employee_id] || 0) + 1; return acc }, {})
 
+  // Shared by the Jobs / Customer / Vessel tabs — same row shape (job records)
+  const jobColumns = [
+    { key: 'job_number', label: 'Job #', align: 'left', cmp: (a, b) => (a.job_number || '').localeCompare(b.job_number || '', undefined, { numeric: true }) },
+    { key: 'customer', label: 'Customer', align: 'left', cmp: (a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') },
+    { key: 'vessel', label: 'Vessel', align: 'left', cmp: (a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') },
+    { key: 'description', label: 'Description', align: 'left', cmp: (a, b) => (a.description || '').localeCompare(b.description || '') },
+    { key: 'status', label: 'Status', align: 'center', cmp: (a, b) => (a.status || '').localeCompare(b.status || '') },
+    { key: 'hours', label: 'Hours', align: 'center', cmp: (a, b) => (hoursPerJob[a.id] || 0) - (hoursPerJob[b.id] || 0) },
+    { key: 'photos', label: 'Photos', align: 'center', cmp: (a, b) => (photosPerJob[a.id] || 0) - (photosPerJob[b.id] || 0) },
+    { key: 'crew', label: 'Crew', align: 'left', cmp: (a, b) => (crewPerJob[a.id]?.size || 0) - (crewPerJob[b.id]?.size || 0) },
+  ]
+
+  // By Employee tab — materialize rows so header-click sort has something to sort
+  const employeeRows = employees.filter(emp => employeeFilterIds.includes(emp.id)).map(emp => {
+    const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
+    if (empEntries.length === 0) return null
+    return {
+      emp,
+      empJobs: new Set(empEntries.map(e => e.job_id)),
+      empCustomers: new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean)),
+      empHours: empEntries.reduce((s, e) => s + Number(e.hours), 0),
+    }
+  }).filter(Boolean)
+  const employeeColumns = [
+    { key: 'employee', label: 'Employee', align: 'left', cmp: (a, b) => (a.emp.name || '').localeCompare(b.emp.name || '') },
+    { key: 'jobs', label: 'Jobs Worked', align: 'center', cmp: (a, b) => a.empJobs.size - b.empJobs.size },
+    { key: 'hours', label: 'Total Hours', align: 'center', cmp: (a, b) => a.empHours - b.empHours },
+    { key: 'photos', label: 'Photos', align: 'center', cmp: (a, b) => (photosPerEmployee[a.emp.id] || 0) - (photosPerEmployee[b.emp.id] || 0) },
+    { key: 'customers', label: 'Customers', align: 'left', cmp: (a, b) => [...a.empCustomers].join(', ').localeCompare([...b.empCustomers].join(', ')) },
+  ]
+
   // ── Supplies tab ──
   const jobIdsWithSupplies = new Set(filteredSupplies.map(s => s.job_id))
   const employeeIdsWithSupplies = new Set(filteredSupplies.map(s => s.employee_id))
@@ -175,6 +244,34 @@ export default function Reports() {
     acc[s.job_id].push(s)
     return acc
   }, {})
+  // Grouped display, top level switches between Job and Date via suppliesGroupBy
+  const suppliesTopGroups = (() => {
+    const level1KeyFn = suppliesGroupBy === 'date' ? (s => s.work_date) : (s => s.job_id)
+    const byLevel1 = suppliesTabList.reduce((acc, s) => {
+      const k = level1KeyFn(s)
+      if (!acc[k]) acc[k] = []
+      acc[k].push(s)
+      return acc
+    }, {})
+    const level1Keys = Object.keys(byLevel1).sort((a, b) =>
+      suppliesGroupBy === 'date' ? b.localeCompare(a) : (jobsById[a]?.job_number || '').localeCompare(jobsById[b]?.job_number || '')
+    )
+    return level1Keys.map(k => {
+      const rows = byLevel1[k]
+      const subgroups = rows.reduce((acc, s) => {
+        const subKey = suppliesGroupBy === 'date' ? `${s.job_id}|${s.employee_id}` : `${s.employee_id}|${s.work_date}`
+        if (!acc[subKey]) acc[subKey] = { job_id: s.job_id, employee: s.employees, employee_id: s.employee_id, work_date: s.work_date, items: [] }
+        acc[subKey].items.push(s)
+        return acc
+      }, {})
+      const sortedSubgroups = Object.values(subgroups).sort((a, b) =>
+        suppliesGroupBy === 'date'
+          ? (jobsById[a.job_id]?.job_number || '').localeCompare(jobsById[b.job_id]?.job_number || '') || (a.employee?.name || '').localeCompare(b.employee?.name || '')
+          : b.work_date.localeCompare(a.work_date) || (a.employee?.name || '').localeCompare(b.employee?.name || '')
+      )
+      return { key: k, job: suppliesGroupBy === 'job' ? jobsById[k] : null, workDate: suppliesGroupBy === 'date' ? k : null, subgroups: sortedSubgroups }
+    })
+  })()
 
   const [supplySaveStatus, setSupplySaveStatus] = useState({}) // { [id]: 'saving' | 'saved' | 'error' }
 
@@ -296,10 +393,16 @@ export default function Reports() {
 
   // Compute reg/OT per entry for any set of entries (handles multiple employees + weeks)
   function computeAllOT(entriesToProcess) {
+    const employeeThresholds = Object.fromEntries(
+      employees
+        .filter(e => e.ot_daily_threshold != null || e.ot_friday_threshold != null)
+        .map(e => [e.id, { daily: e.ot_daily_threshold, friday: e.ot_friday_threshold }])
+    )
     return computeOTMap(entriesToProcess, {
       dailyThreshold:  payrollConfig.daily_ot_threshold  ?? 8,
       weeklyThreshold: payrollConfig.weekly_ot_threshold ?? 40,
       statHolidays,
+      employeeThresholds,
     })
   }
 
@@ -742,16 +845,14 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
-                  <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
-                ))}
+                {jobColumns.map(c => renderSortTh('jobs', c.key, c.label, c.key === 'hours' || c.key === 'status' || c.key === 'photos' ? 'center' : 'left'))}
               </tr>
             </thead>
             <tbody>
-              {filteredJobs
+              {sortRows('jobs', filteredJobs
                 .filter(j => !jobNumberFilter || j.job_number.toString().toLowerCase().includes(jobNumberFilter.toLowerCase()))
                 .filter(j => customerFilterIds.length === 0 || customerFilterIds.includes(j.customer_id))
-                .filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id))
+                .filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id)), jobColumns)
                 .map(j => (
                   <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                     <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
@@ -791,14 +892,13 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
-              ))}
+              {jobColumns.map(c => renderSortTh('customer', c.key, c.label, c.key === 'hours' || c.key === 'status' || c.key === 'photos' ? 'center' : 'left'))}
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.filter(j => customerFilterIds.length === 0 || customerFilterIds.includes(j.customer_id))
-              .sort((a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
+            {sortRows('customer', filteredJobs.filter(j => customerFilterIds.length === 0 || customerFilterIds.includes(j.customer_id)),
+              jobColumns,
+              (a, b) => (a.customers?.name || '').localeCompare(b.customers?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                   <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
@@ -838,14 +938,13 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Job #', 'Customer', 'Vessel', 'Description', 'Status', 'Hours', 'Photos', 'Crew'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Hours' || h === 'Status' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
-              ))}
+              {jobColumns.map(c => renderSortTh('vessel', c.key, c.label, c.key === 'hours' || c.key === 'status' || c.key === 'photos' ? 'center' : 'left'))}
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id))
-              .sort((a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
+            {sortRows('vessel', filteredJobs.filter(j => vesselFilterIds.length === 0 || vesselFilterIds.includes(j.vessel_id)),
+              jobColumns,
+              (a, b) => (a.vessels?.name || '').localeCompare(b.vessels?.name || '') || (a.job_number || '').localeCompare(b.job_number || ''))
               .map(j => (
                 <tr key={j.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToJob(j)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                   <td style={{ padding: '0.75rem', ...linkStyle }}>{j.job_number}</td>
@@ -888,19 +987,11 @@ export default function Reports() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {['Employee', 'Jobs Worked', 'Total Hours', 'Photos', 'Customers'].map(h => (
-                <th key={h} style={{ padding: '0.75rem', textAlign: h === 'Jobs Worked' || h === 'Total Hours' || h === 'Photos' ? 'center' : 'left' }}>{h}</th>
-              ))}
+              {employeeColumns.map(c => renderSortTh('employee', c.key, c.label, c.key === 'jobs' || c.key === 'hours' || c.key === 'photos' ? 'center' : 'left'))}
             </tr>
           </thead>
           <tbody>
-            {employees.filter(emp => employeeFilterIds.includes(emp.id)).map(emp => {
-              const empEntries = filteredEntries.filter(e => e.employee_id === emp.id)
-              if (empEntries.length === 0) return null
-              const empJobs = new Set(empEntries.map(e => e.job_id))
-              const empCustomers = new Set(empEntries.map(e => e.jobs?.customers?.name).filter(Boolean))
-              const empHours = empEntries.reduce((s, e) => s + Number(e.hours), 0)
-              return (
+            {sortRows('employee', employeeRows, employeeColumns).map(({ emp, empJobs, empCustomers, empHours }) => (
                 <tr key={emp.id} style={{ borderBottom: '1px solid #eee', ...clickRow }} onClick={() => goToEmployee(emp)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
                   <td style={{ padding: '0.75rem', ...linkStyle }}>{emp.name}</td>
                   <td style={{ padding: '0.75rem', textAlign: 'center' }}>{empJobs.size}</td>
@@ -915,8 +1006,7 @@ export default function Reports() {
                   </td>
                   <td style={{ padding: '0.75rem', color: '#555', fontSize: '0.9rem' }}>{[...empCustomers].join(', ') || '—'}</td>
                 </tr>
-              )
-            })}
+            ))}
           </tbody>
         </table>
           )}
@@ -949,6 +1039,22 @@ export default function Reports() {
             </div>
           </div>
 
+          <div className="no-print" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', fontSize: '0.85rem' }}>
+            <span style={{ color: '#888' }}>Group by:</span>
+            {[{ key: 'job', label: 'Job' }, { key: 'date', label: 'Date' }].map(o => (
+              <span key={o.key}
+                onClick={() => setSuppliesGroupBy(o.key)}
+                style={{
+                  padding: '0.2rem 0.6rem', borderRadius: '4px', cursor: 'pointer', userSelect: 'none',
+                  fontWeight: suppliesGroupBy === o.key ? 700 : 400,
+                  color: suppliesGroupBy === o.key ? '#0066cc' : '#555',
+                  background: suppliesGroupBy === o.key ? '#eaf2fc' : 'transparent',
+                }}>
+                {o.label}{suppliesGroupBy === o.key ? ' ▾' : ''}
+              </span>
+            ))}
+          </div>
+
           <div className="no-print" style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#888' }}>
             Edits save automatically when you click out of a field — watch for the "✓ Saved" note on the right of each row.
           </div>
@@ -958,37 +1064,53 @@ export default function Reports() {
             <div style={{ color: '#555', fontSize: '0.9rem' }}>Cores Worldwide — {dateLabel}{dateFrom && dateTo ? ` (${dateFrom} – ${dateTo})` : ''}</div>
           </div>
 
-          {Object.keys(suppliesByJob).length === 0 ? (
+          {suppliesTopGroups.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No supplies recorded for this period</div>
           ) : (
-            Object.entries(suppliesByJob)
-              .sort(([aId], [bId]) => (jobsById[aId]?.job_number || '').localeCompare(jobsById[bId]?.job_number || ''))
-              .map(([jobId, rows]) => {
-                const job = jobsById[jobId]
-                const subgroups = rows.reduce((acc, s) => {
-                  const key = `${s.employee_id}|${s.work_date}`
-                  if (!acc[key]) acc[key] = { employee: s.employees, employee_id: s.employee_id, work_date: s.work_date, items: [] }
-                  acc[key].items.push(s)
-                  return acc
-                }, {})
-                return (
-                  <div key={jobId} className="supplies-job-group" style={{ ...card, marginBottom: '1.5rem' }}>
+            suppliesTopGroups.map(topGroup => (
+                  <div key={topGroup.key} className="supplies-job-group" style={{ ...card, marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{job?.job_number || 'Unknown Job'}</span>
-                      <span style={{ color: '#aaa' }}>·</span>
-                      <span>{job?.customers?.name}</span>
-                      <span style={{ color: '#aaa' }}>·</span>
-                      <span style={{ color: '#555' }}>{job?.vessels?.name}</span>
+                      {suppliesGroupBy === 'date' ? (
+                        <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>
+                          {new Date(topGroup.workDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      ) : (
+                        <>
+                          <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{topGroup.job?.job_number || 'Unknown Job'}</span>
+                          <span style={{ color: '#aaa' }}>·</span>
+                          <span>{topGroup.job?.customers?.name}</span>
+                          <span style={{ color: '#aaa' }}>·</span>
+                          <span style={{ color: '#555' }}>{topGroup.job?.vessels?.name}</span>
+                        </>
+                      )}
                     </div>
-                    {Object.values(subgroups)
-                      .sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+                    {topGroup.subgroups
                       .map(group => {
-                        const photos = gearPhotos.filter(p => p.job_id === jobId && p.employee_id === group.employee_id && p.work_date === group.work_date)
+                        const photos = gearPhotos.filter(p => p.job_id === group.job_id && p.employee_id === group.employee_id && p.work_date === group.work_date)
+                        const groupKey = `${group.job_id}-${group.employee_id}-${group.work_date}`
+                        const isExpanded = expandedSupplyGroups.has(groupKey)
                         return (
-                          <div key={`${group.employee_id}-${group.work_date}`} className="supplies-subgroup" style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
-                            <div style={{ fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
-                              {group.employee?.name || 'Unknown'} — {new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                          <div key={groupKey} className="supplies-subgroup" style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+                            <div
+                              className="no-print"
+                              onClick={() => toggleSupplyGroup(groupKey)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: '#333', marginBottom: '0.5rem', cursor: 'pointer', userSelect: 'none' }}>
+                              <span style={{ color: '#888', fontSize: '0.8rem', width: '0.8rem' }}>{isExpanded ? '▾' : '▸'}</span>
+                              <span>
+                                {suppliesGroupBy === 'date'
+                                  ? `${jobsById[group.job_id]?.job_number || 'Unknown Job'} — ${group.employee?.name || 'Unknown'}`
+                                  : `${group.employee?.name || 'Unknown'} — ${new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}`}
+                              </span>
+                              <span style={{ color: '#999', fontWeight: 400, fontSize: '0.85rem' }}>
+                                {group.items.length} item{group.items.length === 1 ? '' : 's'}{photos.length > 0 ? ` · 📷 ${photos.length}` : ''}
+                              </span>
                             </div>
+                            <div className="print-only" style={{ display: 'none', fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
+                              {suppliesGroupBy === 'date'
+                                ? `${jobsById[group.job_id]?.job_number || 'Unknown Job'} — ${group.employee?.name || 'Unknown'}`
+                                : `${group.employee?.name || 'Unknown'} — ${new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}`}
+                            </div>
+                            <div className="supplies-detail" style={{ display: isExpanded ? 'block' : 'none' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
                               <thead>
                                 <tr style={{ borderBottom: '1px solid #ddd' }}>
@@ -1044,12 +1166,12 @@ export default function Reports() {
                                 ))}
                               </div>
                             )}
+                            </div>
                           </div>
                         )
                       })}
                   </div>
-                )
-              })
+            ))
           )}
         </div>
       )}
