@@ -29,6 +29,7 @@ export default function EmployeeHome({ employee }) {
   const [payrollConfig, setPayrollConfig] = useState({})
   const [statHolidays, setStatHolidays] = useState(new Set())
   const [loading, setLoading] = useState(true)
+  const [employeeThresholds, setEmployeeThresholds] = useState({})
   const [addJobFor, setAddJobFor] = useState(null)
   const [addJobFields, setAddJobFields] = useState({ job_id: '', hours: '', description: '' })
   const [savingJob, setSavingJob] = useState(false)
@@ -67,12 +68,22 @@ export default function EmployeeHome({ employee }) {
     supabase.schema('Cores').from('jobs').select('id, job_number, description, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
     supabase.schema('Cores').from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
     supabase.schema('Cores').from('stat_holidays').select('holiday_date').then(({ data }) => setStatHolidays(new Set((data || []).map(r => r.holiday_date))))
-  }, [])
+    // The login session only carries {id, name} (see employee-auth), so a
+    // custom OT schedule (e.g. office staff on a fixed weekly schedule) isn't
+    // on the `employee` prop — fetch it directly.
+    supabase.schema('Cores').from('employees').select('ot_daily_threshold, ot_friday_threshold').eq('id', employee.id).single()
+      .then(({ data }) => {
+        if (data && (data.ot_daily_threshold != null || data.ot_friday_threshold != null)) {
+          setEmployeeThresholds({ [employee.id]: { daily: data.ot_daily_threshold, friday: data.ot_friday_threshold } })
+        }
+      })
+  }, [employee.id])
 
   const otMap = computeOTMap(entries, {
     dailyThreshold: payrollConfig.daily_ot_threshold ?? 8,
     weeklyThreshold: payrollConfig.weekly_ot_threshold ?? 40,
     statHolidays,
+    employeeThresholds,
   })
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
