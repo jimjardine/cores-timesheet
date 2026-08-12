@@ -574,18 +574,25 @@ export default function Reports() {
         </div>
         <p style={{ color: '#666', marginBottom: '1.5rem' }}>{job.description}</p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-          {[
-            { label: 'Total Hours', value: fmtHours(totalJobHours) },
-            { label: 'Crew Members', value: Object.keys(crewMap).length },
-            { label: 'Days Worked', value: new Set(jobEntries.map(e => e.work_date)).size },
-          ].map(({ label, value }) => (
-            <div key={label} style={card}>
-              <div style={{ fontSize: '1.75rem', fontWeight: 700 }}>{value}</div>
-              <div style={{ color: '#888', fontSize: '0.9rem' }}>{label}</div>
-            </div>
-          ))}
-        </div>
+        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>What Was Done</h4>
+        {jobEntries.length > 0 ? (
+          <ul style={{ ...card, listStyle: 'none', margin: '0 0 2rem', padding: '1rem 1.25rem' }}>
+            {jobEntries
+              .filter(e => e.description?.trim())
+              .sort((a, b) => a.work_date > b.work_date ? 1 : a.work_date < b.work_date ? -1 : 0)
+              .map(e => (
+                <li key={e.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid #f0f0f0' }}>
+                  <span style={{ color: '#888', fontSize: '0.85rem', whiteSpace: 'nowrap', marginRight: '0.75rem' }}>
+                    {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </span>
+                  <span style={{ color: '#888', fontSize: '0.85rem', marginRight: '0.5rem' }}>— {e.employees?.name || 'Unknown'}:</span>
+                  {e.description}
+                </li>
+              ))}
+          </ul>
+        ) : (
+          <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>Nothing logged yet</div>
+        )}
 
         <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Crew</h4>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
@@ -607,7 +614,48 @@ export default function Reports() {
           </tbody>
         </table>
 
-        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Work Log</h4>
+        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Supplies Used</h4>
+        {jobSupplies.length > 0 ? (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
+            <thead>
+              <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Date</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Supply</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobSupplies.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(s => (
+                <tr key={s.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+                    {new Date(s.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </td>
+                  <td style={{ padding: '0.6rem 0.75rem' }}>{s.employees?.name || '—'}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{s.supply_name}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{Number(s.quantity)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>No supplies recorded</div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+          {[
+            { label: 'Total Hours', value: fmtHours(totalJobHours) },
+            { label: 'Crew Members', value: Object.keys(crewMap).length },
+            { label: 'Days Worked', value: new Set(jobEntries.map(e => e.work_date)).size },
+          ].map(({ label, value }) => (
+            <div key={label} style={card}>
+              <div style={{ fontSize: '1.75rem', fontWeight: 700 }}>{value}</div>
+              <div style={{ color: '#888', fontSize: '0.9rem' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Full Work Log</h4>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -647,34 +695,6 @@ export default function Reports() {
             })}
           </tbody>
         </table>
-
-        <h4 style={{ color: '#555', marginBottom: '0.75rem', marginTop: '2rem' }}>Supplies Used</h4>
-        {jobSupplies.length > 0 ? (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
-            <thead>
-              <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Date</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Supply</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobSupplies.sort((a, b) => a.work_date > b.work_date ? 1 : -1).map(s => (
-                <tr key={s.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '0.6rem 0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
-                    {new Date(s.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                  </td>
-                  <td style={{ padding: '0.6rem 0.75rem' }}>{s.employees?.name || '—'}</td>
-                  <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{s.supply_name}</td>
-                  <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{Number(s.quantity)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>No supplies recorded</div>
-        )}
       </div>
     )
   }
