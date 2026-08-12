@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 import { isWeekend } from '../utils/weeklyCompilationPdf'
 import { fmtHours } from '../utils/format'
+import MultiSelectDropdown from './MultiSelectDropdown'
 
 // Rounds a minute delta to the nearest quarter hour, as hours (e.g. -150 -> -2.5)
 const deltaMinsToHours = (mins) => Math.round(mins / 15) / 4
@@ -25,6 +26,7 @@ export default function SmsReview({ onApproved } = {}) {
   const [gearPhotos, setGearPhotos]   = useState([])
   const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
+  const [filterEmployeeIds, setFilterEmployeeIds] = useState([])
   const [sortBy, setSortBy]           = useState('recent')
   const [loading, setLoading]         = useState(true)
   const [expanded, setExpanded]       = useState({})
@@ -32,6 +34,12 @@ export default function SmsReview({ onApproved } = {}) {
   const [noteDrafts, setNoteDrafts]   = useState({})
   const [photoModal, setPhotoModal]           = useState(null) // { title, photos }
   const [photoLightbox, setPhotoLightbox]     = useState(null)
+
+  // Text-the-employee ("admin note") affordance — per-submission toggle,
+  // draft text, and send status (undefined | 'sending' | 'sent' | error string)
+  const [adminNoteOpen, setAdminNoteOpen]     = useState({})
+  const [adminNoteDrafts, setAdminNoteDrafts] = useState({})
+  const [adminNoteStatus, setAdminNoteStatus] = useState({})
 
   // Test harness
   const [testOpen, setTestOpen]   = useState(false)
@@ -68,6 +76,7 @@ export default function SmsReview({ onApproved } = {}) {
   // tech who never answers a follow-up question (lunch/PD/supplies) vanishes from view
   // entirely, since it never reaches 'submitted' on its own.
   const visible = submissions.filter(s => {
+    if (filterEmployeeIds.length > 0 && !filterEmployeeIds.includes(s.employee_id)) return false
     if (filter === 'all') return true
     if (filter === 'submitted') return s.status === 'submitted' || s.status === 'collecting'
     return s.status === filter
@@ -148,7 +157,7 @@ export default function SmsReview({ onApproved } = {}) {
       .select('id')
     if (claimError) { alert('Approve failed: ' + claimError.message); setActing(null); return }
     if (!claimed || claimed.length === 0) {
-      alert('This submission was already approved or rejected (probably in another tab) — refreshing.')
+      alert('This submission was already approved or deleted (probably in another tab) — refreshing.')
       await load(); setActing(null); return
     }
 
@@ -217,10 +226,10 @@ export default function SmsReview({ onApproved } = {}) {
 
   // ── Reject ────────────────────────────────────────────────────────────────
   async function reject(sub) {
-    if (!confirm('Mark this submission as rejected?')) return
+    if (!confirm('Mark this submission as deleted?')) return
     setActing(sub.id)
     const { error } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
-    if (error) alert(`Reject failed: ${error.message}`)
+    if (error) alert(`Delete failed: ${error.message}`)
     await load()
     setActing(null)
   }
@@ -237,6 +246,34 @@ export default function SmsReview({ onApproved } = {}) {
       setNoteDrafts(d => { const n = { ...d }; delete n[sub.id]; return n })
     }
     setActing(null)
+  }
+
+  // ── Text the employee a note ─────────────────────────────────────────────
+  // Sends an SMS referencing this submission's work date, then reopens it as
+  // 'collecting' so a reply merges back into the same submission (edge
+  // function's send_admin_note action) instead of landing as a new message.
+  async function sendAdminNote(sub) {
+    const note = (adminNoteDrafts[sub.id] || '').trim()
+    if (!note) return
+    setAdminNoteStatus(s => ({ ...s, [sub.id]: 'sending' }))
+    try {
+      const res = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ action: 'send_admin_note', submission_id: sub.id, note }),
+      })
+      const data = await res.json()
+      if (!data.ok) {
+        setAdminNoteStatus(s => ({ ...s, [sub.id]: `Failed: ${data.error}` }))
+        return
+      }
+      setAdminNoteDrafts(d => { const n = { ...d }; delete n[sub.id]; return n })
+      setAdminNoteOpen(o => ({ ...o, [sub.id]: false }))
+      setAdminNoteStatus(s => ({ ...s, [sub.id]: 'sent' }))
+      await load()
+    } catch (e) {
+      setAdminNoteStatus(s => ({ ...s, [sub.id]: `Failed: ${e.message}` }))
+    }
   }
 
   // ── Edit modal ────────────────────────────────────────────────────────────
@@ -446,9 +483,14 @@ export default function SmsReview({ onApproved } = {}) {
               padding: '0.3rem 0.8rem', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: filter === f ? 700 : 400,
               background: filter === f ? '#0066cc' : '#eee', color: filter === f ? '#fff' : '#333',
             }}>
-              {f === 'submitted' ? 'Pending' : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'submitted' ? 'Pending' : f === 'rejected' ? 'Deleted' : f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
           ))}
+          <MultiSelectDropdown
+            options={employees}
+            selectedIds={filterEmployeeIds}
+            onChange={setFilterEmployeeIds}
+            placeholder="All employees" allLabel="All employees" minWidth={160} />
           <select value={sortBy} onChange={e => setSortBy(e.target.value)}
             style={{ padding: '0.3rem 0.6rem', border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: '0.85rem', marginLeft: '0.4rem' }}>
             <option value="recent">Sort: Most recent</option>
@@ -464,7 +506,7 @@ export default function SmsReview({ onApproved } = {}) {
 
       {!loading && visible.length === 0 && (
         <div style={{ color: '#888', textAlign: 'center', padding: '3rem', border: '2px dashed #ddd', borderRadius: 8 }}>
-          No {filter === 'submitted' ? 'pending' : filter} submissions
+          No {filter === 'submitted' ? 'pending' : filter === 'rejected' ? 'deleted' : filter} submissions
         </div>
       )}
 
@@ -508,7 +550,7 @@ export default function SmsReview({ onApproved } = {}) {
                 </div>
                 <span style={{ color: '#555' }}>{fmtDate(sub.work_date)}</span>
                 <span style={{ fontSize: '0.8rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: STATUS_COLORS[sub.status] + '22', color: STATUS_COLORS[sub.status], fontWeight: 600, border: `1px solid ${STATUS_COLORS[sub.status]}44` }}>
-                  {sub.status}
+                  {sub.status === 'rejected' ? 'deleted' : sub.status}
                 </span>
                 {flags.map(f => (
                   <span key={f} style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: '#ffe0e0', color: '#c00', border: '1px solid #ffaaaa' }}>
@@ -711,8 +753,51 @@ export default function SmsReview({ onApproved } = {}) {
                       disabled={!!acting}
                       style={{ padding: '0.4rem 1rem', background: '#fff', color: '#c00', border: '1px solid #c00', borderRadius: 4, cursor: 'pointer' }}
                     >
-                      Reject
+                      Delete
                     </button>
+                  </div>
+                )}
+
+                {/* Text the employee a note — secondary action, kept small/unobtrusive */}
+                {(sub.status === 'submitted' || sub.status === 'collecting') && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <button
+                      onClick={() => setAdminNoteOpen(o => ({ ...o, [sub.id]: !o[sub.id] }))}
+                      disabled={!sub.employee_id}
+                      title={!sub.employee_id ? 'No employee identified for this submission' : undefined}
+                      style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: sub.employee_id ? 'pointer' : 'default', fontSize: '0.78rem', color: sub.employee_id ? '#555' : '#bbb' }}
+                    >
+                      ✉️ Note
+                    </button>
+                    {adminNoteOpen[sub.id] && (
+                      <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+                        <textarea
+                          value={adminNoteDrafts[sub.id] || ''}
+                          onChange={e => setAdminNoteDrafts(d => ({ ...d, [sub.id]: e.target.value }))}
+                          placeholder={`Text ${employeeName(sub.employee_id)} about this submission...`}
+                          rows={2}
+                          style={{ flex: 1, padding: '0.4rem 0.6rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem', resize: 'vertical', fontFamily: 'inherit' }}
+                        />
+                        <button
+                          onClick={() => sendAdminNote(sub)}
+                          disabled={!(adminNoteDrafts[sub.id] || '').trim() || adminNoteStatus[sub.id] === 'sending'}
+                          style={{
+                            padding: '0.4rem 0.8rem',
+                            background: (adminNoteDrafts[sub.id] || '').trim() ? '#0066cc' : '#ccc',
+                            color: '#fff', border: 'none', borderRadius: 4,
+                            cursor: (adminNoteDrafts[sub.id] || '').trim() ? 'pointer' : 'default',
+                            fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {adminNoteStatus[sub.id] === 'sending' ? 'Sending…' : 'Send'}
+                        </button>
+                      </div>
+                    )}
+                    {adminNoteStatus[sub.id] && adminNoteStatus[sub.id] !== 'sending' && (
+                      <div style={{ fontSize: '0.78rem', marginTop: '0.25rem', color: adminNoteStatus[sub.id] === 'sent' ? '#2a7a2a' : '#c00' }}>
+                        {adminNoteStatus[sub.id] === 'sent' ? '✓ Note texted' : adminNoteStatus[sub.id]}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -720,7 +805,7 @@ export default function SmsReview({ onApproved } = {}) {
                   <div style={{ color: '#2a7a2a', fontSize: '0.85rem', fontWeight: 600 }}>✓ Approved — entries written to timesheet</div>
                 )}
                 {sub.status === 'rejected' && (
-                  <div style={{ color: '#c00', fontSize: '0.85rem', fontWeight: 600 }}>✗ Rejected</div>
+                  <div style={{ color: '#c00', fontSize: '0.85rem', fontWeight: 600 }}>✗ Deleted</div>
                 )}
               </div>
             )}
