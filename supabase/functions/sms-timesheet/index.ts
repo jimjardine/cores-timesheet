@@ -648,8 +648,10 @@ function daySummaryReply(
   const deltaLine = deltaMinutes != null && Math.abs(deltaMinutes) > 15
     ? `Heads up — your times and job hours are off by ${Math.abs(deltaMinutes)}min. Text a fix, or the office will check.`
     : ''
-  // Only worth the extra line when this reply doesn't already show the whole day.
-  const tsHintLine = dayJobCount > jobLines.length ? `Text TS to see the day's progress.` : ''
+  // Only worth the extra line when this reply has nothing of its own to show —
+  // once it already lists real job entries, repeating "text TS" on every single
+  // message throughout the day is just noise on top of info the tech already has.
+  const tsHintLine = jobLines.length === 0 && dayJobCount > jobLines.length ? `Text TS to see the day's progress.` : ''
 
   if (jobLines.length === 0) {
     return [`${greeting}.`, totalLine, unknownJobLine, deltaLine, flagLine, tsHintLine].filter(Boolean).join('\n')

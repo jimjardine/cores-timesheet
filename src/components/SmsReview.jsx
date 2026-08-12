@@ -734,7 +734,7 @@ export default function SmsReview({ onApproved } = {}) {
 
                 {/* Actions */}
                 {(sub.status === 'submitted' || sub.status === 'collecting') && (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <button
                       onClick={() => approve(sub)}
                       disabled={!!acting || !sub.employee_id || !sub.entries?.length}
@@ -755,20 +755,20 @@ export default function SmsReview({ onApproved } = {}) {
                     >
                       Delete
                     </button>
-                  </div>
-                )}
-
-                {/* Text the employee a note — secondary action, kept small/unobtrusive */}
-                {(sub.status === 'submitted' || sub.status === 'collecting') && (
-                  <div style={{ marginTop: '0.5rem' }}>
                     <button
                       onClick={() => setAdminNoteOpen(o => ({ ...o, [sub.id]: !o[sub.id] }))}
                       disabled={!sub.employee_id}
                       title={!sub.employee_id ? 'No employee identified for this submission' : undefined}
-                      style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: sub.employee_id ? 'pointer' : 'default', fontSize: '0.78rem', color: sub.employee_id ? '#555' : '#bbb' }}
+                      style={{ padding: '0.4rem 0.8rem', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: sub.employee_id ? 'pointer' : 'default', fontSize: '0.85rem', color: sub.employee_id ? '#555' : '#bbb' }}
                     >
                       ✉️ Send Note to: {sub.employee_id ? employeeName(sub.employee_id) : '—'}
                     </button>
+                  </div>
+                )}
+
+                {/* Text the employee a note — expanded compose box, kept below the action row */}
+                {(sub.status === 'submitted' || sub.status === 'collecting') && (
+                  <div style={{ marginTop: '0.5rem' }}>
                     {adminNoteOpen[sub.id] && (
                       <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
                         <textarea
