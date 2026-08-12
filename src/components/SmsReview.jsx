@@ -767,7 +767,7 @@ export default function SmsReview({ onApproved } = {}) {
                       title={!sub.employee_id ? 'No employee identified for this submission' : undefined}
                       style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: sub.employee_id ? 'pointer' : 'default', fontSize: '0.78rem', color: sub.employee_id ? '#555' : '#bbb' }}
                     >
-                      ✉️ Note
+                      ✉️ Send Note to: {sub.employee_id ? employeeName(sub.employee_id) : '—'}
                     </button>
                     {adminNoteOpen[sub.id] && (
                       <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
