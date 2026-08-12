@@ -636,6 +636,30 @@ export default function AdminDashboard() {
     setManualFields(f => ({ ...f, ...next }))
   }
 
+  // Opposite direction from applyManualFieldChange's Hours→Time Out derivation:
+  // once Time In/Out/Lunch are directly edited for a fixed-schedule employee,
+  // those actual times are the source of truth, so Hours recomputes from them
+  // instead of staying frozen at the schedule default — same math as the
+  // mismatch warning in the Edit modal (calculateExpectedHours), just written
+  // into the field instead of only flagged. Unconditional (no untouched-field
+  // guard): a deliberately entered time always wins over whatever Hours held.
+  function applyManualTimeChange(patch) {
+    const next = { ...patch }
+    const emp = employees.find(e => e.id === manualFields.employee_id)
+    const hasCustomSchedule = emp && (emp.ot_daily_threshold != null || emp.ot_friday_threshold != null)
+    const timeIn  = patch.time_in ?? manualFields.time_in
+    const timeOut = patch.stated_time_out ?? manualFields.stated_time_out
+    const lunch    = patch.lunch_minutes ?? manualFields.lunch_minutes
+
+    if (hasCustomSchedule && manualFields.entries.length === 1 && timeIn && timeOut) {
+      const hrs = calculateExpectedHours(timeIn, timeOut, lunch)
+      if (hrs != null && hrs >= 0) {
+        next.entries = [{ ...manualFields.entries[0], hours: String(Math.round(hrs * 100) / 100) }]
+      }
+    }
+    setManualFields(f => ({ ...f, ...next }))
+  }
+
   function handleExport() {
     const toExport = selectedDate
       ? filteredEntries.filter(e => e.work_date === selectedDate)
@@ -1070,15 +1094,15 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time In</label>
-                <input type="time" style={inputStyle} value={manualFields.time_in} onChange={e => setManualFields(f => ({ ...f, time_in: e.target.value }))} />
+                <input type="time" style={inputStyle} value={manualFields.time_in} onChange={e => applyManualTimeChange({ time_in: e.target.value })} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Time Out</label>
-                <input type="time" style={inputStyle} value={manualFields.stated_time_out} onChange={e => setManualFields(f => ({ ...f, stated_time_out: e.target.value }))} />
+                <input type="time" style={inputStyle} value={manualFields.stated_time_out} onChange={e => applyManualTimeChange({ stated_time_out: e.target.value })} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Lunch (min)</label>
-                <input type="number" min="0" style={inputStyle} value={manualFields.lunch_minutes} onChange={e => setManualFields(f => ({ ...f, lunch_minutes: Number(e.target.value) }))} />
+                <input type="number" min="0" style={inputStyle} value={manualFields.lunch_minutes} onChange={e => applyManualTimeChange({ lunch_minutes: Number(e.target.value) })} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Per Diem</label>
