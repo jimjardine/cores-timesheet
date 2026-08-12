@@ -280,7 +280,7 @@ export default function EmployeeHome({ employee }) {
               <div style={{ marginTop: '0.5rem' }}>
                 <div className="emp-field">
                   <label>Note (not tied to a job)</label>
-                  <input type="text" value={noteDraft} placeholder="e.g. took the truck home tonight"
+                  <input type="text" value={noteDraft} placeholder="Fill in your note here"
                     onChange={e => setNoteDraft(e.target.value)} />
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>

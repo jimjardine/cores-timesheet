@@ -855,7 +855,7 @@ export default function AdminPanel() {
           <Field label="Company Name"><input style={inputStyle} {...f('name')} /></Field>
           <Field label="Contact Name"><input style={inputStyle} {...f('contact_name')} /></Field>
           <Field label="Contact Email"><input type="email" style={inputStyle} {...f('contact_email')} /></Field>
-          <Field label="Phone"><input type="tel" style={inputStyle} {...f('phone')} placeholder="e.g. 902-555-1234" /></Field>
+          <Field label="Phone"><input type="tel" style={inputStyle} {...f('phone')} placeholder="Fill in phone number" /></Field>
           <Field label="Status">
             <select style={inputStyle} {...f('status')}>
               <option value="active">Active</option>
@@ -1014,7 +1014,7 @@ export default function AdminPanel() {
       {modal?.type === 'employee' && (
         <Modal title={modal.record ? 'Edit Employee' : 'New Employee'} onClose={() => setModal(null)}>
           <Field label="Name"><input style={inputStyle} {...f('name')} placeholder="First Last" /></Field>
-          <Field label="Cell Number"><input type="tel" style={inputStyle} {...f('phone')} placeholder="e.g. 902-555-1234" /></Field>
+          <Field label="Cell Number"><input type="tel" style={inputStyle} {...f('phone')} placeholder="Fill in phone number" /></Field>
           <Field label="WhatsApp Number (if different)"><input type="tel" style={inputStyle} {...f('whatsapp_phone')} placeholder="Only needed if different from Cell Number" /></Field>
           <Field label="Email"><input type="email" style={inputStyle} {...f('email')} placeholder="name@example.com" /></Field>
           <Field label="Role">
@@ -1078,7 +1078,7 @@ export default function AdminPanel() {
               value={statusNote}
               onChange={e => setStatusNote(e.target.value)}
               rows={4}
-              placeholder={statusModal.action === 'close' ? 'e.g. Work complete, signed off by captain' : 'e.g. Additional repairs required'}
+              placeholder={statusModal.action === 'close' ? 'Fill in closing comments here' : 'Fill in reopening comments here'}
               style={{ ...inputStyle, resize: 'vertical' }}
               autoFocus
             />

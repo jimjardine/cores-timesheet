@@ -444,7 +444,7 @@ export default function SmsReview({ onApproved } = {}) {
             <textarea
               value={testMsg}
               onChange={e => setTestMsg(e.target.value)}
-              placeholder={'e.g. In 7:30, 4760 6hrs port engine bearings, 4862 2hrs fuel lines, lunch 30, no PD'}
+              placeholder={'Fill in a test message here (format: In 7:30, 4760 6hrs description, lunch 30, no PD)'}
               rows={3}
               style={{ padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontFamily: 'monospace', resize: 'vertical' }}
             />
