@@ -14,6 +14,7 @@ import { generateWeeklyCompilationPDF, fmtShortDate, fmtHeaderDate, dayName, isW
 const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
@@ -64,6 +65,9 @@ export default function AdminDashboard() {
   const [jobs, setJobs] = useState([])
   const [supplies, setSupplies] = useState([])
   const [postedWeeks, setPostedWeeks] = useState({})
+  const [gearPhotos, setGearPhotos] = useState([])
+  const [photoGroup, setPhotoGroup] = useState(null)
+  const [photoLightbox, setPhotoLightbox] = useState(null)
   const [sortCol, setSortCol] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -131,6 +135,7 @@ export default function AdminDashboard() {
     supabase.schema('Cores').from('stat_holidays').select('holiday_date').then(({ data }) => setStatHolidays(new Set((data || []).map(r => r.holiday_date))))
     supabase.schema('Cores').from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
     supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }).then(({ data }) => setSupplies(data || []))
+    supabase.schema('Cores').from('gear_photos').select('*').then(({ data }) => setGearPhotos(data || []))
     supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at').then(({ data }) => setPostedWeeks(Object.fromEntries((data || []).map(r => [`${r.employee_id}|${r.week_start}`, r.posted_at]))))
   }, [])
 
@@ -672,6 +677,10 @@ export default function AdminDashboard() {
       }
     }
     setManualFields(f => ({ ...f, ...next }))
+  }
+
+  function openPhotoGroup(title, photos) {
+    setPhotoGroup({ title, photos: [...photos].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
   }
 
   function handleExport() {
@@ -1296,7 +1305,7 @@ export default function AdminDashboard() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
                         <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                          {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left'],['','left']].map(([h, align]) => (
+                          {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left'],['Photos','center'],['','left']].map(([h, align]) => (
                             <th key={h} style={{ padding: '0.75rem', textAlign: align, fontWeight: 600, color: h === 'OT' ? '#c0392b' : h === 'PD' ? '#8B4513' : '#555' }}>{h}</th>
                           ))}
                         </tr>
@@ -1325,6 +1334,18 @@ export default function AdminDashboard() {
                                 {e.entry_source === 'manual' && e.confirmation_status === 'confirmed' && (
                                   <span title={`Confirmed${e.confirmed_at ? ' ' + new Date(e.confirmed_at).toLocaleString() : ''}${e.confirmation_reply_text ? ` — replied "${e.confirmation_reply_text}"` : ''}`} style={{ marginLeft: '0.5rem', padding: '0.1rem 0.45rem', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#e3f3e3', color: '#2d6a38', whiteSpace: 'nowrap' }}>✓ Confirmed</span>
                                 )}
+                              </td>
+                              <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                                {(() => {
+                                  const entryPhotos = gearPhotos.filter(p =>
+                                    p.job_id === e.job_id && p.employee_id === e.employee_id && p.work_date === e.work_date)
+                                  return entryPhotos.length > 0 ? (
+                                    <span style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                                      onClick={() => openPhotoGroup(`${e.jobs?.job_number ?? '?'} — ${selectedEmp.name} — ${fmtDate(e.work_date)}`, entryPhotos)}>
+                                      📷 {entryPhotos.length}
+                                    </span>
+                                  ) : <span style={{ color: '#ccc' }}>—</span>
+                                })()}
                               </td>
                               <td style={{ padding: '0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
                                 {isConfirmingDelete ? (
@@ -1387,9 +1408,10 @@ export default function AdminDashboard() {
                         { key: 'reg', label: 'Reg', align: 'center' },
                         { key: 'ot', label: 'OT', align: 'center' },
                         { key: 'pd', label: 'PD', align: 'center' },
+                        { key: null, label: 'Photos', align: 'center' },
                         { key: null, label: '', align: 'right' },
                       ].map((h) => (
-                        <th key={h.key || 'actions'}
+                        <th key={h.key || h.label || 'actions'}
                           onClick={h.key ? () => {
                             if (sortCol === h.key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
                             else { setSortCol(h.key); setSortDir('asc') }
@@ -1401,7 +1423,9 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {timesheetRows.map(row => (
+                    {timesheetRows.map(row => {
+                      const rowPhotos = gearPhotos.filter(p => p.employee_id === row.employee?.id && p.work_date === row.date)
+                      return (
                       <tr key={row.key} style={{ borderBottom: '1px solid #eee', cursor: 'pointer' }}
                         onClick={() => {
                           setFilterEmployeeIds(row.employee ? [row.employee.id] : [])
@@ -1416,9 +1440,18 @@ export default function AdminDashboard() {
                         <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: 600, color: '#2d6a38' }}>{fmtHours(row.reg)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: row.ot > 0 ? 600 : 400, color: row.ot > 0 ? '#c0392b' : '#ccc' }}>{fmtHours(row.ot)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', color: row.pd > 0 ? '#7a5c00' : '#ccc' }}>{row.pd > 0 ? row.pd : '—'}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                          {rowPhotos.length > 0 ? (
+                            <span style={{ ...linkStyle, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                              onClick={e => { e.stopPropagation(); openPhotoGroup(`${row.employee?.name} — ${fmtDate(row.date)}`, rowPhotos) }}>
+                              📷 {rowPhotos.length}
+                            </span>
+                          ) : <span style={{ color: '#ccc' }}>—</span>}
+                        </td>
                         <td style={{ padding: '0.75rem', color: '#aaa', fontSize: '0.85rem', textAlign: 'right' }}>view →</td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                   <tfoot>
                     <tr style={{ borderTop: '2px solid #ddd', background: '#fafafa', fontWeight: 700 }}>
@@ -1427,6 +1460,7 @@ export default function AdminDashboard() {
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: totalOT > 0 ? '#c0392b' : '#ccc' }}>{fmtHours(totalOT)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: totalPD > 0 ? '#7a5c00' : '#ccc' }}>{totalPD > 0 ? totalPD : '—'}</td>
+                      <td />
                       <td />
                     </tr>
                   </tfoot>
@@ -1861,6 +1895,48 @@ export default function AdminDashboard() {
       {/* ── SMS Review tab ── */}
       {activeTab === 'sms' && <SmsReview onApproved={loadTimesheets} />}
       {activeTab === 'photos' && <GearPhotos />}
+
+      {photoGroup && (() => {
+        const groupPhotos = photoGroup.photos
+        return (
+          <div
+            onClick={() => setPhotoGroup(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ ...card, width: '100%', maxWidth: 700, maxHeight: '80vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>{photoGroup.title} — {groupPhotos.length} photo{groupPhotos.length === 1 ? '' : 's'}</h3>
+                <button onClick={() => setPhotoGroup(null)} style={{ border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: '#888' }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
+                {groupPhotos.map(p => (
+                  <div key={p.id} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #eee' }}>
+                    <div
+                      onClick={() => setPhotoLightbox(p)}
+                      style={{ aspectRatio: '4 / 3', background: '#f0f0f0', cursor: 'pointer', overflow: 'hidden' }}
+                    >
+                      <img src={gearPhotoUrl(p.storage_path)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    </div>
+                    <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>
+                      {jobs.find(j => j.id === p.job_id)?.job_number ? `${jobs.find(j => j.id === p.job_id).job_number} · ` : ''}
+                      {employees.find(e => e.id === p.employee_id)?.name || 'Unknown'} · {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {photoLightbox && (
+        <div
+          onClick={() => setPhotoLightbox(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', cursor: 'zoom-out' }}
+        >
+          <img src={gearPhotoUrl(photoLightbox.storage_path)} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }} />
+        </div>
+      )}
 
     </div>
   )
