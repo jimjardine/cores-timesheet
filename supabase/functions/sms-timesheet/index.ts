@@ -750,6 +750,50 @@ CONTEXT: Earlier in this conversation we asked the worker what consumables/suppl
   return JSON.parse(jsonMatch[0])
 }
 
+// Condenses a job's raw timesheet-entry descriptions (which repeat themselves
+// constantly — "clean liners" logged by three different people across three
+// days) into a deduplicated bullet list for the Job Reports "What Was Done"
+// summary. Dates are given to Claude for its own ordering/context only — the
+// instruction is explicit that the OUTPUT must not include dates or names,
+// since the report already shows those separately.
+async function summarizeJobWork(descriptions: { date: string; text: string }[]): Promise<string> {
+  const system = `You summarize marine engineering shop work logs for an internal job report.
+
+You'll be given a list of dated, raw text entries — informal notes texted in by different crew members about work done on one job, in chronological order. Multiple entries often describe the same ongoing task (e.g. "clean liners" logged three separate times as different people worked on it).
+
+Produce a concise bullet list of the DISTINCT things that were done on this job, merging duplicate/overlapping entries into one line each, in the rough order the work progressed. Each bullet starts with "- ". Do NOT include dates, times, or who did the work — just what was done. Keep each bullet short (one line). Do not add commentary, headers, or anything besides the bullet list itself.`
+
+  const userContent = descriptions.map(d => `[${d.date}] ${d.text}`).join('\n')
+
+  const payload = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    system,
+    messages: [{ role: 'user', content: userContent }]
+  })
+  const headers = {
+    'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!,
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json',
+  }
+
+  let res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  for (const waitMs of [4000, 10000]) {
+    if (res.status !== 429 && res.status !== 529) break
+    await new Promise(r => setTimeout(r, waitMs))
+    res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Claude summarize failed (${res.status}): ${detail.slice(0, 200)}`)
+  }
+
+  const data = await res.json()
+  const text = (data.content?.[0]?.text || '').trim()
+  if (!text) throw new Error('Empty response from Claude')
+  return text
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -908,6 +952,42 @@ Deno.serve(async (req: Request) => {
         }
 
         return jsonReply({ ok: true })
+      }
+
+      // App-triggered action — Job Reports' "What Was Done" section asks for a
+      // fresh Claude-condensed summary of a job's timesheet_entries descriptions.
+      // Caches the result on the job row (work_summary + the entry count it was
+      // generated from) so the caller can skip regenerating when nothing's
+      // changed; this action always generates fresh when called.
+      if (json.action === 'summarize_job') {
+        const { data: entryRows, error: entriesError } = await supabase
+          .from('timesheet_entries')
+          .select('work_date, description')
+          .eq('job_id', json.job_id)
+          .order('work_date', { ascending: true })
+        if (entriesError) return jsonReply({ ok: false, error: entriesError.message })
+
+        const descriptions = (entryRows || [])
+          .filter((e: any) => e.description?.trim())
+          .map((e: any) => ({ date: String(e.work_date).substring(0, 10), text: e.description.trim() }))
+        if (descriptions.length === 0) {
+          return jsonReply({ ok: false, error: 'No work descriptions logged for this job yet' })
+        }
+
+        let summary: string
+        try {
+          summary = await summarizeJobWork(descriptions)
+        } catch (err: any) {
+          return jsonReply({ ok: false, error: err.message })
+        }
+
+        const { error: updateError } = await supabase
+          .from('jobs')
+          .update({ work_summary: summary, work_summary_entry_count: entryRows.length })
+          .eq('id', json.job_id)
+        if (updateError) return jsonReply({ ok: false, error: updateError.message })
+
+        return jsonReply({ ok: true, summary, entry_count: entryRows.length })
       }
 
       fromPhone = normalizePhone(json.from_phone || '')

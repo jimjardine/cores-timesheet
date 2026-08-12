@@ -10,6 +10,8 @@ const clickRow = { cursor: 'pointer' }
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
+const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 function getPayWeekStart(date) {
   const d = new Date(date)
@@ -32,6 +34,8 @@ export default function Reports() {
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
+  const [summarizing, setSummarizing] = useState(false)
+  const [summarizeError, setSummarizeError] = useState('')
 
   // Navigation
   const [activeTab, setActiveTab] = useState('jobs')
@@ -307,6 +311,28 @@ export default function Reports() {
     setPhotoGroup({ title, photos: [...photos].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
   }
 
+  // Cached on the job (work_summary + the entry count it was generated from) —
+  // called on demand rather than automatically so opening a job's report never
+  // surprises with an API-call delay unless the summary is actually missing/stale.
+  async function summarizeJob(jobId) {
+    setSummarizing(true); setSummarizeError('')
+    try {
+      const res = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ action: 'summarize_job', job_id: jobId }),
+      })
+      const data = await res.json()
+      if (!data.ok) { setSummarizeError(data.error || 'Summarize failed'); return }
+      setJobs(prev => prev.map(j => j.id === jobId ? { ...j, work_summary: data.summary, work_summary_entry_count: data.entry_count } : j))
+      if (selectedJob?.id === jobId) setSelectedJob(j => ({ ...j, work_summary: data.summary, work_summary_entry_count: data.entry_count }))
+    } catch (e) {
+      setSummarizeError(e.message)
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
   // ── Navigation helpers ──
   function goToJob(job) {
     setNavHistory(h => [...h, { selectedJob, selectedEmployee, activeTab }])
@@ -574,25 +600,46 @@ export default function Reports() {
         </div>
         <p style={{ color: '#666', marginBottom: '1.5rem' }}>{job.description}</p>
 
-        <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>What Was Done</h4>
-        {jobEntries.length > 0 ? (
-          <ul style={{ ...card, listStyle: 'none', margin: '0 0 2rem', padding: '1rem 1.25rem' }}>
-            {jobEntries
-              .filter(e => e.description?.trim())
-              .sort((a, b) => a.work_date > b.work_date ? 1 : a.work_date < b.work_date ? -1 : 0)
-              .map(e => (
-                <li key={e.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid #f0f0f0' }}>
-                  <span style={{ color: '#888', fontSize: '0.85rem', whiteSpace: 'nowrap', marginRight: '0.75rem' }}>
-                    {new Date(e.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                  </span>
-                  <span style={{ color: '#888', fontSize: '0.85rem', marginRight: '0.5rem' }}>— {e.employees?.name || 'Unknown'}:</span>
-                  {e.description}
-                </li>
-              ))}
-          </ul>
-        ) : (
-          <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>Nothing logged yet</div>
-        )}
+        {(() => {
+          // Compares against ALL of the job's entries (unfiltered by the page's
+          // date/status filters), matching what the backend actually counts when
+          // generating the summary — jobEntries itself is filtered, so comparing
+          // against it here would show "stale" for any job with entries outside
+          // the currently selected date range.
+          const jobTotalEntryCount = entries.filter(e => e.job_id === job.id).length
+          const isStale = jobTotalEntryCount > 0 && job.work_summary_entry_count !== jobTotalEntryCount
+          const summaryLines = (job.work_summary || '').split('\n').map(l => l.replace(/^-\s*/, '').trim()).filter(Boolean)
+          return (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h4 style={{ color: '#555', margin: 0 }}>What Was Done</h4>
+                {jobTotalEntryCount > 0 && (
+                  <button onClick={() => summarizeJob(job.id)} disabled={summarizing}
+                    style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: summarizing ? 'default' : 'pointer', fontSize: '0.8rem', color: '#555' }}>
+                    {summarizing ? 'Summarizing…' : summaryLines.length > 0 ? '🔄 Refresh summary' : '✨ Generate summary'}
+                  </button>
+                )}
+              </div>
+              {summarizeError && <div style={{ color: '#c00', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{summarizeError}</div>}
+              {summaryLines.length > 0 ? (
+                <ul style={{ ...card, margin: '0 0 2rem', padding: '1rem 1.25rem 1rem 2.25rem' }}>
+                  {isStale && (
+                    <div style={{ fontSize: '0.78rem', color: '#a06b00', marginBottom: '0.5rem', marginLeft: '-1rem' }}>
+                      ⚠️ New work logged since this summary — click Refresh to update.
+                    </div>
+                  )}
+                  {summaryLines.map((line, i) => (
+                    <li key={i} style={{ padding: '0.2rem 0' }}>{line}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>
+                  {jobTotalEntryCount > 0 ? 'No summary yet — click "Generate summary" above.' : 'Nothing logged yet'}
+                </div>
+              )}
+            </>
+          )
+        })()}
 
         <h4 style={{ color: '#555', marginBottom: '0.75rem' }}>Crew</h4>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
