@@ -214,7 +214,8 @@ async function savePhotoToStorage(
   workDate: string,
   shipOrJob: string | null = null,
   jobId: string | null = null,
-  note: string | null = null
+  note: string | null = null,
+  photoType: string | null = null
 ): Promise<{ path: string; size: number; id: string } | null> {
   const t0 = Date.now()
   try {
@@ -271,6 +272,7 @@ async function savePhotoToStorage(
       ship_or_job: shipOrJob,
       job_id: jobId,
       note: note,
+      photo_type: photoType,
       // No longer a "we'll ask" marker — just flags the photo as untagged so it
       // shows under "Needs ship/job" in the Gear Photos tab for the office. Also
       // flags a job-number-shaped tag that didn't resolve (e.g. a typo'd job #)
@@ -1215,16 +1217,21 @@ Deno.serve(async (req: Request) => {
     // The full caption is worth keeping either way — "old card clips, looking for
     // a spare" is exactly the note the office needs next to the photo.
     const note = msgBody.trim() || null
+    // Deterministic low-stock check — same "never ask, just flag" approach as
+    // everything else here; no Claude call for photos, same as job detection above.
+    // Computed before the save so a matching photo can be auto-tagged photo_type
+    // 'supply' at insert time — the clearest, cheapest signal available without
+    // adding a Claude call to this high-volume path. Anything else stays
+    // unclassified for a manual sweep in the Gear Photos tab.
+    const LOW_STOCK_RE = /\b(last (one|can|box|roll|tube|bottle|pair|bag|couple)|running low|almost out|getting low|down to (the )?last)\b/i
+    const isLowStockCaption = LOW_STOCK_RE.test(msgBody)
     const saved = await Promise.all(
-      mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId, note))
+      mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId, note, isLowStockCaption ? 'supply' : null))
     )
 
     const firstName = (employeeName || '').split(' ')[0] || ''
 
-    // Deterministic low-stock check — same "never ask, just flag" approach as
-    // everything else here; no Claude call for photos, same as job detection above.
-    const LOW_STOCK_RE = /\b(last (one|can|box|roll|tube|bottle|pair|bag|couple)|running low|almost out|getting low|down to (the )?last)\b/i
-    if (LOW_STOCK_RE.test(msgBody)) {
+    if (isLowStockCaption) {
       const firstSaved = saved.find(r => r !== null)
       const photoUrl = firstSaved
         ? `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/gear-photos/${firstSaved.path}`
