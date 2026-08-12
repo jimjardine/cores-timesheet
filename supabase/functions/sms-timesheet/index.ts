@@ -16,6 +16,7 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • PHOTO — gear photos
 • TIMESHEET — what's logged for a day
 • REJECT — delete today's entry
+• NOTE — leave a note not tied to a job
 • SUPPLIES — log parts used
 • MOBILE — link to your mobile timesheet
 • MAIN — link to the main site
@@ -97,6 +98,13 @@ Totally botched a day's text? Reply REJECT and it wipes today's entry so
 you can start over. Add a day for another date: "REJECT yesterday".
 Only works before the office approves it — after that, they'll need to fix
 or delete it on their end.`,
+
+  note: `NOTE — leave a note not tied to a job
+
+For anything the office should know that isn't work on a job:
+"NOTE: took the truck home tonight"
+
+Always attaches to today. Doesn't affect your hours or job entries.`,
 
   supplies: `SUPPLIES — log parts used
 
@@ -316,6 +324,29 @@ async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boole
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({ To: `whatsapp:${to}`, From: from, Body: body }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    return { ok: false, error: `Twilio send failed (${res.status}): ${detail.slice(0, 200)}` }
+  }
+  return { ok: true }
+}
+
+// Sends via the main SMS line (not the WhatsApp Sandbox) — plain SMS, so
+// neither To nor From gets the whatsapp: prefix.
+async function sendTwilioSMS(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
+  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!sid || !token) return { ok: false, error: 'Twilio credentials not configured' }
+
+  const from = '+15064046969' // main Cores Timesheets SMS line
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + btoa(`${sid}:${token}`),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ To: to, From: from, Body: body }),
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
@@ -818,6 +849,60 @@ Deno.serve(async (req: Request) => {
         return jsonReply(sendResult)
       }
 
+      // App-triggered action (not a Twilio webhook) — the office texts an employee
+      // a note about one of their SMS submissions (e.g. missing detail) straight
+      // from the SMS Review page. Reopens the submission as 'collecting' with a
+      // pending question, so the employee's reply merges back into this same
+      // submission via the existing follow-up mechanism (see openQuestionDate
+      // below) instead of landing as a disconnected new message. The hourly
+      // auto_close_stale_sms_conversations() cron job auto-closes it back to
+      // 'submitted' if the employee never replies.
+      if (json.action === 'send_admin_note') {
+        const { data: submissionRow, error: subError } = await supabase
+          .from('sms_submissions')
+          .select('*, employees(name, phone, whatsapp_phone)')
+          .eq('id', json.submission_id)
+          .single()
+        if (subError || !submissionRow) {
+          return jsonReply({ ok: false, error: 'Submission not found' })
+        }
+        const empPhone = submissionRow.employees?.whatsapp_phone || submissionRow.employees?.phone
+        if (!submissionRow.employee_id || !empPhone) {
+          return jsonReply({ ok: false, error: 'No phone number on file for this employee' })
+        }
+
+        const workDateStr = String(submissionRow.work_date).substring(0, 10)
+        const noteBody = `Office note re: your ${friendlyDate(workDateStr)} timesheet — ${json.note}`
+        // Prefer WhatsApp when the employee has a whatsapp_phone on file — some
+        // employees' regular `phone` isn't reliably theirs for SMS (e.g. no
+        // Canadian SIM), so whatsapp_phone being set is a deliberate signal to
+        // route outbound messages there instead.
+        const sendResult = submissionRow.employees?.whatsapp_phone
+          ? await sendTwilioWhatsApp(`+1${normalizePhone(submissionRow.employees.whatsapp_phone)}`, noteBody)
+          : await sendTwilioSMS(`+1${normalizePhone(submissionRow.employees.phone)}`, noteBody)
+        if (!sendResult.ok) {
+          return jsonReply({ ok: false, error: sendResult.error })
+        }
+
+        const prevMsgs: any[] = submissionRow.raw_messages || []
+        const { error: updateError } = await supabase
+          .from('sms_submissions')
+          .update({
+            status:             'collecting',
+            pending_questions:  ['Office note reply'],
+            asked_questions:    Array.from(new Set([...(submissionRow.asked_questions || []), 'Office note reply'])),
+            admin_note:         json.note,
+            raw_messages:       [...prevMsgs, { text: noteBody, direction: 'out', ts: new Date().toISOString() }],
+            updated_at:         new Date().toISOString(),
+          })
+          .eq('id', submissionRow.id)
+        if (updateError) {
+          return jsonReply({ ok: false, error: updateError.message })
+        }
+
+        return jsonReply({ ok: true })
+      }
+
       fromPhone = normalizePhone(json.from_phone || '')
       msgBody = (json.body || '').trim()
       mediaUrls = json.media_urls || []
@@ -959,7 +1044,7 @@ Deno.serve(async (req: Request) => {
         }
       }
       const r = wasRejected
-        ? `Your ${friendlyDate(tsDate)} submission was rejected. Please resubmit or contact the office.`
+        ? `Your ${friendlyDate(tsDate)} submission was deleted. Please resubmit or contact the office.`
         : `Nothing submitted for ${friendlyDate(tsDate)} yet.`
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
     }
@@ -1052,6 +1137,49 @@ Deno.serve(async (req: Request) => {
     const r = deleteError
       ? `Something went wrong deleting that — contact the office directly.`
       : `Deleted your ${friendlyDate(rejectDate)} entry. Text your hours again whenever you're ready.`
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── General day note (not tied to any job) ──
+  // "NOTE: <text>" is a deterministic command like REJECT/JOBS — skips Claude
+  // parsing entirely, always attaches to today. Appended with a timestamp
+  // (not overwritten) to admin_note, the same field the office's own notes and
+  // the send_admin_note feature use, so a tech's note and an office note never
+  // silently clobber each other. Reuses today's in-progress/submitted row if
+  // one already exists rather than creating a phantom duplicate; creates one
+  // (with no job entries) if this is the first text of the day.
+  const noteMatch = msgBody.match(/^note:?\s+(.+)$/i)
+  if (noteMatch && mediaUrls.length === 0 && employeeId) {
+    const noteText = noteMatch[1].trim()
+    const firstName = (employeeName || '').split(' ')[0] || ''
+    const stamp = `[${friendlyDate(today)}${firstName ? ' ' + firstName : ''}]`
+    const newNoteLine = `${stamp} ${noteText}`
+
+    let noteSubmission: any = null
+    {
+      const { data } = await supabase.from('sms_submissions').select('*')
+        .eq('employee_id', employeeId).eq('work_date', today)
+        .in('status', ['collecting', 'submitted'])
+        .order('updated_at', { ascending: false }).limit(1)
+      if (data?.length) noteSubmission = data[0]
+    }
+
+    const combinedNote = noteSubmission?.admin_note ? `${noteSubmission.admin_note}\n${newNoteLine}` : newNoteLine
+    const prevMsgs: any[] = noteSubmission?.raw_messages || []
+    const allMsgs = [...prevMsgs, { text: msgBody, direction: 'in', ts: new Date().toISOString() }]
+
+    if (noteSubmission) {
+      await supabase.from('sms_submissions').update({
+        admin_note: combinedNote, raw_messages: allMsgs, updated_at: new Date().toISOString(),
+      }).eq('id', noteSubmission.id)
+    } else {
+      await supabase.from('sms_submissions').insert({
+        from_phone: fromPhone, employee_id: employeeId, work_date: today,
+        entries: [], status: 'submitted', admin_note: combinedNote, raw_messages: allMsgs,
+      })
+    }
+
+    const r = `Got it${firstName ? ' ' + firstName : ''} — noted for ${friendlyDate(today)}.`
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
