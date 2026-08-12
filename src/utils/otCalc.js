@@ -40,6 +40,10 @@ function payWeekStartYMD(ymd) {
  *   override for a fixed weekly schedule (e.g. office staff on 8.75/day + 5 Fri), used
  *   instead of the global dailyThreshold. Either field can be null to fall back to
  *   dailyThreshold for that day type. weeklyThreshold still applies globally on top.
+ *   The override only covers a normal-length day: if the day's total hours exceed
+ *   it, that whole day reverts to dailyThreshold instead — the special schedule
+ *   isn't a floor added on top of the standard OT rule, it replaces it only for
+ *   an ordinary day.
  * @returns {Object} map of entry id → { reg, ot, manual? }
  */
 export function computeOTMap(entries, { dailyThreshold = 8, weeklyThreshold = 40, statHolidays = new Set(), employeeThresholds = {} } = {}) {
@@ -58,6 +62,15 @@ export function computeOTMap(entries, { dailyThreshold = 8, weeklyThreshold = 40
       const inOrder = [...weekEnts].sort((a, b) =>
         a.work_date.localeCompare(b.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
       )
+      // Day totals up front — whether the override still applies to a given day
+      // depends on the WHOLE day's hours, not just whichever entry is being
+      // processed at the moment (a day can be split across several job entries).
+      const dayTotals = {}
+      if (empOverride) {
+        inOrder.forEach(e => {
+          if (!e.is_stat_pay) dayTotals[e.work_date] = (dayTotals[e.work_date] || 0) + Number(e.hours)
+        })
+      }
       let weeklyRegSoFar = 0, dayHoursSoFar = 0, currentDate = null
       inOrder.forEach(e => {
         if (e.work_date !== currentDate) { dayHoursSoFar = 0; currentDate = e.work_date }
@@ -72,9 +85,13 @@ export function computeOTMap(entries, { dailyThreshold = 8, weeklyThreshold = 40
           map[e.id] = { reg: 0, ot: hrs }
           dayHoursSoFar += hrs
         } else {
-          const effectiveDailyThreshold = empOverride
-            ? (isFriday(e.work_date) ? empOverride.friday : empOverride.daily) ?? dailyThreshold
-            : dailyThreshold
+          let effectiveDailyThreshold = dailyThreshold
+          if (empOverride) {
+            const personalThreshold = (isFriday(e.work_date) ? empOverride.friday : empOverride.daily) ?? null
+            if (personalThreshold != null && dayTotals[e.work_date] <= personalThreshold) {
+              effectiveDailyThreshold = personalThreshold
+            }
+          }
           const dailyRegRemaining  = Math.max(0, effectiveDailyThreshold - dayHoursSoFar)
           const dailyReg           = Math.min(hrs, dailyRegRemaining)
           const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
