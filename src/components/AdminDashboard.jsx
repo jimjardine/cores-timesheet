@@ -92,8 +92,8 @@ export default function AdminDashboard() {
   // untouched default" apart from "admin actually typed something" — a field
   // counts as safe to overwrite only if it still matches the form's own pristine
   // default OR the last thing we auto-filled; a real edit is never touched.
-  const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null })
-  const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30' }
+  const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null, description: null })
+  const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30', description: '' }
   const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
@@ -374,7 +374,7 @@ export default function AdminDashboard() {
       await ensureStatPay(manualFields.employee_id, manualFields.work_date)
       await loadTimesheets()
       setManualEntry(null)
-      setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null })
+      setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null })
       setManualFields({
         employee_id: '', work_date: toYMD(new Date()),
         time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
@@ -595,7 +595,7 @@ export default function AdminDashboard() {
     const lunchMinutes = isFriday ? 0 : 15
     const outTotalMinutes = 7 * 60 + Math.round(hours * 60) + lunchMinutes
     const stated_time_out = `${String(Math.floor(outTotalMinutes / 60) % 24).padStart(2, '0')}:${String(outTotalMinutes % 60).padStart(2, '0')}`
-    return { hours, lunch_minutes: lunchMinutes, stated_time_out }
+    return { hours, lunch_minutes: lunchMinutes, stated_time_out, description: 'Paperwork' }
   }
 
   // Shared by the Employee and Date fields in the manual-entry modal — either one
@@ -608,12 +608,18 @@ export default function AdminDashboard() {
     const next = { ...patch }
     const nextAuto = { ...autoFilled }
     let autoChanged = false
+    let entryPatch = null
 
     if (sched) {
-      if (manualFields.entries.length === 1 &&
-          (manualFields.entries[0].hours === PRISTINE_MANUAL_DEFAULTS.hours || manualFields.entries[0].hours === autoFilled.hours)) {
-        next.entries = [{ ...manualFields.entries[0], hours: String(sched.hours) }]
-        nextAuto.hours = String(sched.hours); autoChanged = true
+      if (manualFields.entries.length === 1) {
+        if (manualFields.entries[0].hours === PRISTINE_MANUAL_DEFAULTS.hours || manualFields.entries[0].hours === autoFilled.hours) {
+          entryPatch = { ...entryPatch, hours: String(sched.hours) }
+          nextAuto.hours = String(sched.hours); autoChanged = true
+        }
+        if (manualFields.entries[0].description === PRISTINE_MANUAL_DEFAULTS.description || manualFields.entries[0].description === autoFilled.description) {
+          entryPatch = { ...entryPatch, description: sched.description }
+          nextAuto.description = sched.description; autoChanged = true
+        }
       }
       if (manualFields.lunch_minutes === PRISTINE_MANUAL_DEFAULTS.lunch_minutes || manualFields.lunch_minutes === autoFilled.lunch_minutes) {
         next.lunch_minutes = sched.lunch_minutes
@@ -624,6 +630,7 @@ export default function AdminDashboard() {
         nextAuto.stated_time_out = sched.stated_time_out; autoChanged = true
       }
     }
+    if (entryPatch) next.entries = [{ ...manualFields.entries[0], ...entryPatch }]
 
     if (autoChanged) setAutoFilled(nextAuto)
     setManualFields(f => ({ ...f, ...next }))
@@ -1004,12 +1011,12 @@ export default function AdminDashboard() {
                     <option value="">— select job —</option>
                     {jobs.filter(j => timesheetJobs.includes(j.id) || j.id === editEntry.job_id).map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
                   </select>
-                  <input type="text" placeholder="supply" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
+                  <input type="text" placeholder="Fill in supply name" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
                     const newSupplies = [...editSupplies]
                     newSupplies[i] = { ...supply, supply_name: e.target.value }
                     setEditSupplies(newSupplies)
                   }} />
-                  <input type="number" step="0.5" min="0" placeholder="qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
+                  <input type="number" step="0.5" min="0" placeholder="Fill in qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
                     const newSupplies = [...editSupplies]
                     newSupplies[i] = { ...supply, quantity: e.target.value }
                     setEditSupplies(newSupplies)
@@ -1029,8 +1036,8 @@ export default function AdminDashboard() {
                   <option value="">— select job —</option>
                   {jobs.filter(j => j.status === 'open').map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
                 </select>
-                <input type="number" step="0.5" min="0" placeholder="hours" style={{ ...inputStyle, marginTop: '0.5rem' }} value={newJobFields.hours} onChange={e => setNewJobFields(f => ({ ...f, hours: e.target.value }))} />
-                <textarea placeholder="description" style={{ ...inputStyle, marginTop: '0.5rem', minHeight: '60px' }} value={newJobFields.description} onChange={e => setNewJobFields(f => ({ ...f, description: e.target.value }))} />
+                <input type="number" step="0.5" min="0" placeholder="Fill in hours" style={{ ...inputStyle, marginTop: '0.5rem' }} value={newJobFields.hours} onChange={e => setNewJobFields(f => ({ ...f, hours: e.target.value }))} />
+                <textarea placeholder="Fill in description" style={{ ...inputStyle, marginTop: '0.5rem', minHeight: '60px' }} value={newJobFields.description} onChange={e => setNewJobFields(f => ({ ...f, description: e.target.value }))} />
               </div>
             )}
 
@@ -1097,12 +1104,12 @@ export default function AdminDashboard() {
                     <option value="">— select job —</option>
                     {jobs.filter(j => j.status === 'open').map(j => <option key={j.id} value={j.id}>{j.job_number} ({j.vessels?.name || 'Unknown'})</option>)}
                   </select>
-                  <input type="number" step="0.5" min="0" placeholder="hrs" style={inputStyle} value={entry.hours || ''} onChange={e => {
+                  <input type="number" step="0.5" min="0" placeholder="Fill in hours" style={inputStyle} value={entry.hours || ''} onChange={e => {
                     const newEntries = [...manualFields.entries]
                     newEntries[i] = { ...entry, hours: e.target.value }
                     setManualFields(f => ({ ...f, entries: newEntries }))
                   }} />
-                  <input type="text" placeholder="description" style={inputStyle} value={entry.description || ''} onChange={e => {
+                  <input type="text" placeholder="Fill in description" style={inputStyle} value={entry.description || ''} onChange={e => {
                     const newEntries = [...manualFields.entries]
                     newEntries[i] = { ...entry, description: e.target.value }
                     setManualFields(f => ({ ...f, entries: newEntries }))
@@ -1128,12 +1135,12 @@ export default function AdminDashboard() {
                       return job ? <option key={job.id} value={job.id}>{job.job_number}</option> : null
                     })}
                   </select>
-                  <input type="text" placeholder="supply" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
+                  <input type="text" placeholder="Fill in supply name" style={inputStyle} value={supply.supply_name || ''} onChange={e => {
                     const newSupplies = [...manualFields.supplies]
                     newSupplies[i] = { ...supply, supply_name: e.target.value }
                     setManualFields(f => ({ ...f, supplies: newSupplies }))
                   }} />
-                  <input type="number" step="0.5" min="0" placeholder="qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
+                  <input type="number" step="0.5" min="0" placeholder="Fill in qty" style={inputStyle} value={supply.quantity || ''} onChange={e => {
                     const newSupplies = [...manualFields.supplies]
                     newSupplies[i] = { ...supply, quantity: e.target.value }
                     setManualFields(f => ({ ...f, supplies: newSupplies }))
@@ -1145,7 +1152,7 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button onClick={() => { setManualEntry(null); setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null }) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => { setManualEntry(null); setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null }) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveManualEntry} disabled={savingManual} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
                 {savingManual ? 'Saving…' : 'Save Entry'}
               </button>

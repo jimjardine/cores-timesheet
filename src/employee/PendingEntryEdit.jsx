@@ -219,7 +219,7 @@ export default function PendingEntryEdit({ employee }) {
                     {entryJobNumbers.map(jn => <option key={jn} value={jn}>{jn}</option>)}
                   </select>
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
-                    <input type="text" placeholder="brake cleaner PN4521" value={line.supply_name}
+                    <input type="text" placeholder="Fill in supply name" value={line.supply_name}
                       onChange={e => setSupplyField(i, 'supply_name', e.target.value)} style={{ flex: 1 }} />
                     <input type="number" min="0" step="0.5" value={line.quantity}
                       onChange={e => setSupplyField(i, 'quantity', e.target.value)} style={{ width: '4.5rem' }} />

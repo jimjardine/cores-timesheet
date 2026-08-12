@@ -821,7 +821,7 @@ export default function SmsReview({ onApproved } = {}) {
                         <input
                           value={e.job_number}
                           onChange={ev => setEntryField(i, 'job_number', ev.target.value)}
-                          placeholder="4760"
+                          placeholder="Fill in job number"
                           style={{ ...inp, borderColor: e.job_number.trim() && !matched ? '#e08080' : '#ccc' }}
                         />
                       </td>
@@ -838,7 +838,7 @@ export default function SmsReview({ onApproved } = {}) {
                           rows={2}
                           value={e.description}
                           onChange={ev => setEntryField(i, 'description', ev.target.value)}
-                          placeholder="what was done"
+                          placeholder="Fill in description"
                           style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}
                         />
                       </td>
@@ -889,7 +889,7 @@ export default function SmsReview({ onApproved } = {}) {
                         <input
                           value={s.supply_name}
                           onChange={ev => setSupplyField(i, 'supply_name', ev.target.value)}
-                          placeholder="brake cleaner"
+                          placeholder="Fill in supply name"
                           style={inp}
                         />
                       </td>

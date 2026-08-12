@@ -243,7 +243,7 @@ export default function EntryForm({ employee, mode }) {
                   <option value="">Job…</option>
                   {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
                 </select>
-                <input type="text" placeholder="Supply + qty" value={line.supply_name}
+                <input type="text" placeholder="Fill in supply name and qty" value={line.supply_name}
                   onChange={e => updateSupplyLine(i, { supply_name: e.target.value })} />
               </div>
               <button className="emp-remove-line" style={{ position: 'static' }}
