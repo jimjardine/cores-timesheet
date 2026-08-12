@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import GearPhotos from './GearPhotos'
@@ -32,7 +33,15 @@ const calculateExpectedHours = (timeIn, timeOut, lunchMinutes) => {
 }
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('sms')
+  // Real URL per sub-tab (mounted at /dashboard/*) instead of local state, so
+  // back/forward steps through Timesheets/Payroll/SMS Review/etc instead of
+  // leaving the app on the first back press. setActiveTab keeps its old name
+  // and call signature so every existing setActiveTab('x') call site below
+  // works unchanged.
+  const navigate = useNavigate()
+  const location = useLocation()
+  const activeTab = location.pathname.replace(/^\/dashboard\/?/, '') || 'sms'
+  const setActiveTab = (tab) => navigate(`/dashboard/${tab}`)
 
   // ── Timesheets tab ──
   const [entries, setEntries] = useState([])
