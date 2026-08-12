@@ -33,6 +33,9 @@ export default function EmployeeHome({ employee }) {
   const [addJobFor, setAddJobFor] = useState(null)
   const [addJobFields, setAddJobFields] = useState({ job_id: '', hours: '', description: '' })
   const [savingJob, setSavingJob] = useState(false)
+  const [noteFor, setNoteFor] = useState(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
   const [error, setError] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
@@ -103,6 +106,35 @@ export default function EmployeeHome({ employee }) {
     setSavingJob(false)
     setAddJobFor(null)
     setAddJobFields({ job_id: '', hours: '', description: '' })
+  }
+
+  // General note for the day, not tied to any job (e.g. "took the truck home
+  // tonight") — same admin_note field and append-with-timestamp behavior as
+  // the SMS "NOTE:" command, so a note from either channel shows up the same
+  // way in the office's review screen. Reuses the day's existing in-progress/
+  // submitted sms_submission if there is one, otherwise creates a bare one
+  // (no job entries) just to carry the note.
+  async function saveNote(ymd) {
+    const text = noteDraft.trim()
+    if (!text) return
+    setSavingNote(true); setError('')
+    const daySub = submissions.find(s => s.work_date === ymd)
+    const firstName = (employee.name || '').split(' ')[0] || ''
+    const stamp = `[${shortDate(ymd)}${firstName ? ' ' + firstName : ''}]`
+    const combined = daySub?.admin_note ? `${daySub.admin_note}\n${stamp} ${text}` : `${stamp} ${text}`
+
+    const { error: err } = daySub
+      ? await supabase.schema('Cores').from('sms_submissions')
+          .update({ admin_note: combined, updated_at: new Date().toISOString() }).eq('id', daySub.id)
+      : await supabase.schema('Cores').from('sms_submissions').insert({
+          from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
+          entries: [], status: 'submitted', admin_note: combined,
+        })
+    if (err) { setError(err.message); setSavingNote(false); return }
+    await load()
+    setSavingNote(false)
+    setNoteFor(null)
+    setNoteDraft('')
   }
 
   async function deleteEntry(entry) {
@@ -201,8 +233,15 @@ export default function EmployeeHome({ employee }) {
                     Supplies: {daySub.supplies.map(s => `${s.supply_name} ×${s.quantity}`).join(', ')}
                   </div>
                 )}
-                <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
-                  onClick={() => navigate(`pending/${daySub.id}/edit`)}>Edit</button>
+                {daySub.admin_note && (
+                  <div className="emp-hint" style={{ whiteSpace: 'pre-line' }}>
+                    Note: {daySub.admin_note}
+                  </div>
+                )}
+                {(daySub.entries || []).length > 0 && (
+                  <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
+                    onClick={() => navigate(`pending/${daySub.id}/edit`)}>Edit</button>
+                )}
               </div>
             )}
 
@@ -235,6 +274,25 @@ export default function EmployeeHome({ employee }) {
             ) : (
               <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.6rem' }}
                 onClick={() => { setAddJobFor(ymd); setError('') }}>+ Add job</button>
+            )}
+
+            {noteFor === ymd ? (
+              <div style={{ marginTop: '0.5rem' }}>
+                <div className="emp-field">
+                  <label>Note (not tied to a job)</label>
+                  <input type="text" value={noteDraft} placeholder="e.g. took the truck home tonight"
+                    onChange={e => setNoteDraft(e.target.value)} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="emp-btn" disabled={savingNote || !noteDraft.trim()} onClick={() => saveNote(ymd)}>
+                    {savingNote ? 'Saving…' : 'Save note'}
+                  </button>
+                  <button className="emp-btn emp-btn-secondary" onClick={() => { setNoteFor(null); setNoteDraft('') }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
+                onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>+ Note</button>
             )}
 
             {dayEntries.some(e => e.entry_source === 'self') && (
