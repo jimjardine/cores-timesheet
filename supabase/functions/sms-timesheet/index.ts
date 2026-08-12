@@ -893,7 +893,10 @@ Deno.serve(async (req: Request) => {
             status:             'collecting',
             pending_questions:  ['Office note reply'],
             asked_questions:    Array.from(new Set([...(submissionRow.asked_questions || []), 'Office note reply'])),
-            admin_note:         json.note,
+            // admin_note is reserved for what the employee texts in via the NOTE:
+            // command / mobile note field — the office's own outbound question
+            // stays in raw_messages (the Conversation thread) only, so the two
+            // never get mixed together in the Notes box.
             raw_messages:       [...prevMsgs, { text: noteBody, direction: 'out', ts: new Date().toISOString() }],
             updated_at:         new Date().toISOString(),
           })
@@ -1145,10 +1148,11 @@ Deno.serve(async (req: Request) => {
   // ── General day note (not tied to any job) ──
   // "NOTE: <text>" is a deterministic command like REJECT/JOBS — skips Claude
   // parsing entirely, always attaches to today. Appended with a timestamp
-  // (not overwritten) to admin_note, the same field the office's own notes and
-  // the send_admin_note feature use, so a tech's note and an office note never
-  // silently clobber each other. Reuses today's in-progress/submitted row if
-  // one already exists rather than creating a phantom duplicate; creates one
+  // (not overwritten) to admin_note — reserved exclusively for what the
+  // employee texts/enters this way (see send_admin_note above, which
+  // deliberately does NOT write here, so the office's own outbound questions
+  // never mix into it). Reuses today's in-progress/submitted row if one
+  // already exists rather than creating a phantom duplicate; creates one
   // (with no job entries) if this is the first text of the day.
   const noteMatch = msgBody.match(/^note:?\s+(.+)$/i)
   if (noteMatch && mediaUrls.length === 0 && employeeId) {
