@@ -608,7 +608,13 @@ export default function Reports() {
           // the currently selected date range.
           const jobTotalEntryCount = entries.filter(e => e.job_id === job.id).length
           const isStale = jobTotalEntryCount > 0 && job.work_summary_entry_count !== jobTotalEntryCount
-          const summaryLines = (job.work_summary || '').split('\n').map(l => l.replace(/^-\s*/, '').trim()).filter(Boolean)
+          // Normalize whatever line-break style Claude used: blank lines separate
+          // paragraphs, any single newline within a paragraph collapses to a space
+          // (prose shouldn't have hard breaks mid-paragraph).
+          const summaryParagraphs = (job.work_summary || '')
+            .split(/\n\s*\n/)
+            .map(p => p.replace(/\s+/g, ' ').trim())
+            .filter(Boolean)
           return (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -616,22 +622,22 @@ export default function Reports() {
                 {jobTotalEntryCount > 0 && (
                   <button onClick={() => summarizeJob(job.id)} disabled={summarizing}
                     style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: summarizing ? 'default' : 'pointer', fontSize: '0.8rem', color: '#555' }}>
-                    {summarizing ? 'Summarizing…' : summaryLines.length > 0 ? '🔄 Refresh summary' : '✨ Generate summary'}
+                    {summarizing ? 'Summarizing…' : summaryParagraphs.length > 0 ? '🔄 Refresh summary' : '✨ Generate summary'}
                   </button>
                 )}
               </div>
               {summarizeError && <div style={{ color: '#c00', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{summarizeError}</div>}
-              {summaryLines.length > 0 ? (
-                <ul style={{ ...card, margin: '0 0 2rem', padding: '1rem 1.25rem 1rem 2.25rem' }}>
+              {summaryParagraphs.length > 0 ? (
+                <div style={{ ...card, margin: '0 0 2rem' }}>
                   {isStale && (
-                    <div style={{ fontSize: '0.78rem', color: '#a06b00', marginBottom: '0.5rem', marginLeft: '-1rem' }}>
+                    <div style={{ fontSize: '0.78rem', color: '#a06b00', marginBottom: '0.75rem' }}>
                       ⚠️ New work logged since this summary — click Refresh to update.
                     </div>
                   )}
-                  {summaryLines.map((line, i) => (
-                    <li key={i} style={{ padding: '0.2rem 0' }}>{line}</li>
+                  {summaryParagraphs.map((p, i) => (
+                    <p key={i} style={{ margin: i === 0 ? '0 0 0.75rem' : '0.75rem 0 0', lineHeight: 1.6, color: '#333' }}>{p}</p>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <div style={{ color: '#999', fontSize: '0.9rem', marginBottom: '2rem' }}>
                   {jobTotalEntryCount > 0 ? 'No summary yet — click "Generate summary" above.' : 'Nothing logged yet'}

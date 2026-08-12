@@ -761,7 +761,7 @@ async function summarizeJobWork(descriptions: { date: string; text: string }[]):
 
 You'll be given a list of dated, raw text entries — informal notes texted in by different crew members about work done on one job, in chronological order. Multiple entries often describe the same ongoing task (e.g. "clean liners" logged three separate times as different people worked on it).
 
-Produce a concise bullet list of the DISTINCT things that were done on this job, merging duplicate/overlapping entries into one line each, in the rough order the work progressed. Each bullet starts with "- ". Do NOT include dates, times, or who did the work — just what was done. Keep each bullet short (one line). Do not add commentary, headers, or anything besides the bullet list itself.`
+Write one or two short paragraphs of flowing prose describing the work performed on this job, in the voice of a professional technician writing a job report — factual, technical, matter-of-fact, no fluff or marketing language. Merge duplicate/overlapping entries so each distinct task is described once, in the rough order the work progressed. Do NOT include dates, times, or who did the work — just what was done, written as continuous prose (not a bullet list, not a numbered list). Do not add commentary, headers, or a preamble — return only the paragraph(s) themselves.`
 
   const userContent = descriptions.map(d => `[${d.date}] ${d.text}`).join('\n')
 
