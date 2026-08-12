@@ -98,13 +98,18 @@ export default function EmployeeLogin({ onLogin }) {
           </div>
           <div className="emp-field">
             <label>PIN</label>
-            <input type="password" inputMode="numeric" maxLength={4}
+            <input type="password" inputMode="numeric" maxLength={4} placeholder="Leave blank if this is your first time"
               value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} />
           </div>
           <button className="emp-btn" type="submit" disabled={busy || !phone}>{busy ? 'Checking…' : 'Log in'}</button>
-          <button type="button" className="emp-inline-link" style={{ marginTop: '0.9rem' }}
-            disabled={!phone || busy}
-            onClick={() => startOtp(false)}>Forgot your PIN?</button>
+          <div style={{ marginTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <button type="button" className="emp-inline-link"
+              disabled={!phone || busy}
+              onClick={() => startOtp(true)}>First time here? Tap to get set up</button>
+            <button type="button" className="emp-inline-link"
+              disabled={!phone || busy}
+              onClick={() => startOtp(false)}>Forgot your PIN?</button>
+          </div>
         </form>
       </div>
     </div>
