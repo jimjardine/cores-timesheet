@@ -92,8 +92,8 @@ export default function AdminDashboard() {
   // untouched default" apart from "admin actually typed something" — a field
   // counts as safe to overwrite only if it still matches the form's own pristine
   // default OR the last thing we auto-filled; a real edit is never touched.
-  const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null, description: null })
-  const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30', description: '' }
+  const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null, description: null, job_id: null })
+  const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30', description: '', job_id: '' }
   const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
@@ -374,7 +374,7 @@ export default function AdminDashboard() {
       await ensureStatPay(manualFields.employee_id, manualFields.work_date)
       await loadTimesheets()
       setManualEntry(null)
-      setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null })
+      setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null, job_id: null })
       setManualFields({
         employee_id: '', work_date: toYMD(new Date()),
         time_in: '07:00', stated_time_out: '15:30', lunch_minutes: 30,
@@ -595,7 +595,8 @@ export default function AdminDashboard() {
     const lunchMinutes = isFriday ? 0 : 15
     const outTotalMinutes = 7 * 60 + Math.round(hours * 60) + lunchMinutes
     const stated_time_out = `${String(Math.floor(outTotalMinutes / 60) % 24).padStart(2, '0')}:${String(outTotalMinutes % 60).padStart(2, '0')}`
-    return { hours, lunch_minutes: lunchMinutes, stated_time_out, description: 'Paperwork' }
+    const job_id = jobs.find(j => j.job_number === 'SHOP')?.id ?? null
+    return { hours, lunch_minutes: lunchMinutes, stated_time_out, description: 'Paperwork', job_id }
   }
 
   // Shared by the Employee and Date fields in the manual-entry modal — either one
@@ -619,6 +620,10 @@ export default function AdminDashboard() {
         if (manualFields.entries[0].description === PRISTINE_MANUAL_DEFAULTS.description || manualFields.entries[0].description === autoFilled.description) {
           entryPatch = { ...entryPatch, description: sched.description }
           nextAuto.description = sched.description; autoChanged = true
+        }
+        if (sched.job_id != null && (manualFields.entries[0].job_id === PRISTINE_MANUAL_DEFAULTS.job_id || manualFields.entries[0].job_id === autoFilled.job_id)) {
+          entryPatch = { ...entryPatch, job_id: sched.job_id }
+          nextAuto.job_id = sched.job_id; autoChanged = true
         }
       }
       if (manualFields.lunch_minutes === PRISTINE_MANUAL_DEFAULTS.lunch_minutes || manualFields.lunch_minutes === autoFilled.lunch_minutes) {
@@ -1176,7 +1181,7 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button onClick={() => { setManualEntry(null); setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null }) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => { setManualEntry(null); setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null, job_id: null }) }} style={{ padding: '0.5rem 1.1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveManualEntry} disabled={savingManual} style={{ padding: '0.5rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
                 {savingManual ? 'Saving…' : 'Save Entry'}
               </button>
