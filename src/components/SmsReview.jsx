@@ -487,7 +487,7 @@ export default function SmsReview({ onApproved } = {}) {
             </button>
           ))}
           <MultiSelectDropdown
-            options={employees}
+            options={employees.filter(e => submissions.some(s => s.employee_id === e.id))}
             selectedIds={filterEmployeeIds}
             onChange={setFilterEmployeeIds}
             placeholder="All employees" allLabel="All employees" minWidth={160} />
