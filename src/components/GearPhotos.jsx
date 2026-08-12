@@ -43,6 +43,8 @@ export default function GearPhotos() {
   const visible = photos.filter(p => {
     if (filter === 'needs_context' && !p.pending_context) return false
     if (filter === 'has_context' && p.pending_context)    return false
+    if (filter === 'supply' && p.photo_type !== 'supply') return false
+    if (filter === 'reference' && p.photo_type !== 'reference') return false
     if (jobFilter.trim() && !(p.ship_or_job || '').toLowerCase().includes(jobFilter.trim().toLowerCase())) return false
     if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
     if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
@@ -61,6 +63,18 @@ export default function GearPhotos() {
       setPhotos(p => p.map(x => x.id === photo.id ? { ...x, ship_or_job: value, job_id: jobId, pending_context: !value } : x))
       setEdits(e => { const n = { ...e }; delete n[photo.id]; return n })
     }
+    setSavingId(null)
+  }
+
+  // Toggle: clicking the already-selected type clears it back to unclassified.
+  async function savePhotoType(photo, value) {
+    const next = photo.photo_type === value ? null : value
+    setSavingId(photo.id)
+    const { error } = await supabase.schema('Cores').from('gear_photos')
+      .update({ photo_type: next })
+      .eq('id', photo.id)
+    if (error) alert('Error saving: ' + error.message)
+    else setPhotos(p => p.map(x => x.id === photo.id ? { ...x, photo_type: next } : x))
     setSavingId(null)
   }
 
@@ -136,6 +150,8 @@ export default function GearPhotos() {
           {filterBtn('all', 'All')}
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
           {filterBtn('has_context', 'Tagged')}
+          {filterBtn('supply', `🔧 Supplies (${photos.filter(p => p.photo_type === 'supply').length})`)}
+          {filterBtn('reference', `📋 Reference (${photos.filter(p => p.photo_type === 'reference').length})`)}
         </div>
       </div>
 
@@ -198,6 +214,21 @@ export default function GearPhotos() {
                     ✓ {matchedJob.description}
                   </div>
                 )}
+                <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
+                  {[['supply', '🔧 Supply'], ['reference', '📋 Reference']].map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => savePhotoType(photo, key)}
+                      disabled={savingId === photo.id}
+                      style={{
+                        flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.78rem', borderRadius: 4, cursor: 'pointer',
+                        border: `1px solid ${photo.photo_type === key ? '#0066cc' : '#ccc'}`,
+                        background: photo.photo_type === key ? '#0066cc' : '#fff',
+                        color: photo.photo_type === key ? '#fff' : '#555',
+                      }}
+                    >{label}</button>
+                  ))}
+                </div>
                 {(() => {
                   const noteDraft = noteDrafts[photo.id] ?? (photo.note || '')
                   const noteDirty = noteDraft !== (photo.note || '')
