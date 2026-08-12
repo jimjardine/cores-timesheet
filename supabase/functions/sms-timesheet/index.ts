@@ -685,7 +685,9 @@ Rules:
 
 Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities can be decimal (0.5).${askedQuestions.includes('Lunch?') ? `
 
-CONTEXT: Earlier in this conversation we asked the worker if they took a lunch. If this message reads as a direct answer to that — a bare number of minutes ("30", "45 min"), "half hour"/"1/2 hour" (→30), or "none"/"no"/"worked through"/"nope" (→0) — set lunch_minutes accordingly even without the word "lunch" anywhere in the message. Never invent data the message does not contain.` : ''}`
+CONTEXT: Earlier in this conversation we asked the worker if they took a lunch. If this message reads as a direct answer to that — a bare number of minutes ("30", "45 min"), "half hour"/"1/2 hour" (→30), or "none"/"no"/"worked through"/"nope" (→0) — set lunch_minutes accordingly even without the word "lunch" anywhere in the message. Never invent data the message does not contain.` : ''}${askedQuestions.includes('Consumables?') ? `
+
+CONTEXT: Earlier in this conversation we asked the worker what consumables/supplies they used today. If this message reads as a direct answer to that, treat any items listed as supplies (job_number empty string unless a job is explicitly named in this reply) even without "used"/"supplies:" phrasing — e.g. "2 rags, roll of tape" counts as supplies, not job work. If they say there weren't any ("none", "nothing", "no", "nope"), return supplies: [] and don't invent anything.` : ''}`
 
   const payload = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -1354,6 +1356,15 @@ Deno.serve(async (req: Request) => {
       }))
     const allSupplies = [...prevSupplies, ...newSupplies]
 
+    // Detect an explicit "none" reply to the end-of-day consumables question (see
+    // needsConsumablesAsk below) — Claude returns an empty supplies array both for
+    // "none" and for an unrelated message, so the distinction is made here with a
+    // deterministic check the same way CONFIRMATION_REPLY_RE is, rather than trusting
+    // an LLM-authored boolean.
+    const NEGATIVE_REPLY_RE = /^(none|no|nope|nothing|nah|n\/a|na)[.!]?$/i
+    const answeringConsumables = isFollowUp && (submission?.pending_questions || []).includes('Consumables?')
+    const consumablesAnsweredNone = answeringConsumables && newSupplies.length === 0 && NEGATIVE_REPLY_RE.test(msgBody.trim())
+
     // Latest non-null parsed value wins — "lunch 30" or "actually I finished at 6"
     // later in the day overrides whatever was stored (or defaulted) earlier.
     // Silent default, same philosophy as lunch/PD — a tech who doesn't mention a
@@ -1484,12 +1495,18 @@ Deno.serve(async (req: Request) => {
     flags = []
 
     // ── Decide ──
-    // The bot records quietly: job number, PD, and supplies are never asked about —
-    // they default (or fall back to the last-known job) at save time, and the office
-    // corrects the exceptions. The one question left is lunch, which only fires on a
-    // longer day (>8hrs) where lunch was never mentioned at all — a silent 0 there is
-    // much more likely to be a forgotten entry than a real thing.
+    // The bot records quietly: job number and PD are never asked about — they default
+    // (or fall back to the last-known job) at save time, and the office corrects the
+    // exceptions. Two questions survive: lunch, which only fires on a longer day
+    // (>8hrs) where it was never mentioned at all — a silent 0 there is much more
+    // likely to be a forgotten entry than a real thing — and consumables, asked once
+    // the day has a known end time and nothing about supplies has been said or asked
+    // yet (mergedStatedOut is the persisted "day looks done" state, not just this
+    // message, so it still fires on the message right after lunch gets resolved).
     const needsLunchAsk = totalHours > 8 && mergedLunch == null && !isFollowUp
+    const suppliesKnownForDay = allSupplies.length > 0 || submission?.supplies_note != null
+    const alreadyAskedConsumables = (submission?.asked_questions || []).includes('Consumables?')
+    const needsConsumablesAsk = !!mergedStatedOut && totalHours > 0 && !suppliesKnownForDay && !alreadyAskedConsumables && !isFollowUp && !needsLunchAsk
     reply = ''
     nextStatus = 'collecting'
     let pendingQuestions: string[] = []
@@ -1513,6 +1530,10 @@ Deno.serve(async (req: Request) => {
     } else if (needsLunchAsk) {
       reply = `Got it${firstName ? ' ' + firstName : ''} — that's over 8hrs. Did you take a lunch?\n("lunch 30" or "no lunch")`
       pendingQuestions = ['Lunch?']
+
+    } else if (needsConsumablesAsk) {
+      reply = `Got it${firstName ? ' ' + firstName : ''} — any consumables used today (rags, sealant, gloves, etc)? Reply with what, or "none".`
+      pendingQuestions = ['Consumables?']
     }
 
     if (!reply) nextStatus = 'submitted'
@@ -1546,7 +1567,7 @@ Deno.serve(async (req: Request) => {
       delta_minutes:      deltaMinutes,
       entries:            allEntriesWithOT,
       supplies:           allSupplies,
-      supplies_note:      null,
+      supplies_note:      consumablesAnsweredNone ? 'none' : (submission?.supplies_note ?? null),
       pending_questions:  pendingQuestions,
       asked_questions:    Array.from(new Set([...(submission?.asked_questions || []), ...pendingQuestions])),
       raw_messages:       allMsgs,
