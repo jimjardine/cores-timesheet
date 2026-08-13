@@ -68,6 +68,10 @@ export default function AdminDashboard() {
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
+  // Timesheets/Job Reports only ever show APPROVED entries — a text sitting
+  // in SMS Review still counts as "not logged yet" as far as those pages are
+  // concerned, which reads as missing data unless flagged.
+  const [pendingSubmissionCount, setPendingSubmissionCount] = useState(0)
   const [sortCol, setSortCol] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -155,6 +159,13 @@ export default function AdminDashboard() {
       .order('work_date', { ascending: false })
     setEntries(data || [])
     setLoadingEntries(false)
+    // Approving a submission is the one action that changes this count, so
+    // refresh it alongside entries (SmsReview's onApproved calls this) rather
+    // than only on mount — otherwise the banner could read stale right after
+    // the exact action that would resolve it.
+    const { count } = await supabase.schema('Cores').from('sms_submissions')
+      .select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting'])
+    setPendingSubmissionCount(count || 0)
   }
 
   async function openEdit(e, computedReg, computedOT) {
@@ -1222,6 +1233,12 @@ export default function AdminDashboard() {
       {/* ── Timesheets tab ── */}
       {activeTab === 'timesheets' && (
         <>
+          {pendingSubmissionCount > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', padding: '0.65rem 1rem', background: '#eaf2fc', border: '1px solid #b8d4f5', borderRadius: '6px', color: '#0a4a8a', fontSize: '0.9rem' }}>
+              <span>Only approved entries show up here — {pendingSubmissionCount} submission{pendingSubmissionCount === 1 ? ' is' : 's are'} still waiting in SMS Review.</span>
+              <button onClick={() => setActiveTab('sms')} style={{ padding: '0.3rem 0.8rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>Review now →</button>
+            </div>
+          )}
           {confirmationWarning && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', padding: '0.65rem 1rem', background: '#fdf0d5', border: '1px solid #f0d090', borderRadius: '6px', color: '#8a6100', fontSize: '0.9rem' }}>
               <span>{confirmationWarning}</span>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import { computeOTMap } from '../utils/otCalc'
@@ -24,7 +25,12 @@ function getPayWeekStart(date) {
 function toYMD(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 export default function Reports() {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
+  // This page only ever reflects APPROVED entries — a text sitting in SMS
+  // Review still counts as "not logged yet" here, which reads as missing
+  // data unless flagged.
+  const [pendingSubmissionCount, setPendingSubmissionCount] = useState(0)
   const [jobs, setJobs] = useState([])
   const [customers, setCustomers] = useState([])
   const [vessels, setVessels] = useState([])
@@ -147,7 +153,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes, pendingRes] = await Promise.all([
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*').order('name'),
@@ -157,6 +163,7 @@ export default function Reports() {
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
+      supabase.schema('Cores').from('sms_submissions').select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting']),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -167,6 +174,7 @@ export default function Reports() {
     setGearPhotos(gearPhotosRes.data || [])
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
+    setPendingSubmissionCount(pendingRes.count || 0)
     setLoading(false)
   }
 
@@ -822,6 +830,12 @@ export default function Reports() {
   // ── Normal tab views ──
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+      {pendingSubmissionCount > 0 && (
+        <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem', padding: '0.65rem 1rem', background: '#eaf2fc', border: '1px solid #b8d4f5', borderRadius: '6px', color: '#0a4a8a', fontSize: '0.9rem' }}>
+          <span>Only approved entries show up here — {pendingSubmissionCount} submission{pendingSubmissionCount === 1 ? ' is' : 's are'} still waiting in SMS Review.</span>
+          <button onClick={() => navigate('/dashboard/sms')} style={{ padding: '0.3rem 0.8rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>Review now →</button>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div className={activeTab === 'supplies' ? 'no-print' : ''}>
           <h1 style={{ margin: 0 }}>Job Reports</h1>
