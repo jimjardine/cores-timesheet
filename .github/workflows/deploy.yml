@@ -23,7 +23,24 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npm run build
+      # Test gate: a failure here fails this job, and the deploy job below
+      # (needs: build) never runs — so this blocks production deploys.
+      #
+      # `npm run build` is the fastest deterministic check available and is what
+      # we gate on. The two scripts under scripts/ were deliberately NOT wired in
+      # here:
+      #   - test:sms drives the sms-timesheet edge function through real Claude
+      #     API calls (~10 min, real per-run cost) — too slow/expensive to run on
+      #     every push. Run it manually (`npm run test:sms`) before merging
+      #     changes that touch the SMS bot.
+      #   - test:cores-schema hits live production data with hardcoded
+      #     row-count baselines, and as of this commit it's actively failing
+      #     (job_tasks/job_status_logs read back 0 rows against baselines of
+      #     19/6) — wiring it in would block every deploy right now for reasons
+      #     unrelated to the change being pushed. Worth fixing/re-baselining
+      #     separately, then reconsidering as a gate.
+      - name: Test gate (build must succeed)
+        run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}

@@ -1,11 +1,17 @@
 import { jsPDF } from 'jspdf'
 import { fmtHours } from './format'
+import { CAVEAT_REGULAR_BASE64 } from './caveatFont'
 
 // Recreates the Cores Worldwide paper "Daily Time Sheet" form, filled in with
 // whatever we have on file. Fields the app doesn't track (safety check answers,
-// signatures, extras/non-compliance) are left blank for hand sign-off.
-export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [] }) {
+// extras/non-compliance) are left blank for hand sign-off. employeeSignature/
+// supervisorSignature are optional {name, subtitle} objects — when present,
+// the name prints in a cursive font in place of the blank signature line,
+// sourced from real confirmation data (see AdminDashboard.printTimesheetFor).
+export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [], employeeSignature = null, supervisorSignature = null }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+  doc.addFileToVFS('Caveat-Regular.ttf', CAVEAT_REGULAR_BASE64)
+  doc.addFont('Caveat-Regular.ttf', 'Caveat', 'normal')
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
   const margin = 40
@@ -257,28 +263,33 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   y += 15
 
   // ── Signatures ──
-  ensureSpace(95)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-  doc.text('Employee Signature:', margin, y)
-  doc.line(margin + 110, y + 3, margin + 280, y + 3)
-  doc.text('Date:', margin + 300, y)
-  doc.line(margin + 330, y + 3, pageW - margin, y + 3)
-  y += 22
+  // A blank line means "not yet electronically confirmed" — hand sign-off
+  // still applies. A cursive name means the row below (subtitle) states
+  // exactly what confirmed it and when, so this never reads as more certain
+  // than the data backing it.
+  const drawSignatureRow = (label, sig) => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    doc.text(label, margin, y)
+    if (sig) {
+      doc.setFont('Caveat', 'normal'); doc.setFontSize(16)
+      doc.text(sig.name, margin + 115, y + 3)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5)
+      doc.text(sig.subtitle, margin + 115, y + 13, { maxWidth: 180 })
+    } else {
+      doc.line(margin + 110, y + 3, margin + 280, y + 3)
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    doc.text('Date:', margin + 300, y)
+    doc.line(margin + 330, y + 3, pageW - margin, y + 3)
+    y += 26
+  }
 
-  doc.text('Supervisor Signature:', margin, y)
-  doc.line(margin + 110, y + 3, margin + 280, y + 3)
-  doc.text('Date:', margin + 300, y)
-  doc.line(margin + 330, y + 3, pageW - margin, y + 3)
-  y += 22
+  ensureSpace(100)
+  drawSignatureRow('Employee Signature:', employeeSignature)
+  drawSignatureRow('Supervisor Signature:', supervisorSignature)
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
-  doc.text('*Company/Supervisor Name (Print) :', margin, y)
-  y += 18
-
-  doc.setFontSize(7)
-  doc.text('All time sheets must be submitted to the office and must have a supervisor’s signature.', margin, y)
-  y += 9
-  doc.text('*If Cores supervisor is not available the time sheets must have the Customer’s supervisor signature.', margin, y)
+  doc.text('Approved by:', margin, y)
 
   const filename = `${(employeeName || 'timesheet').replace(/\s+/g, '_')}_${workDate}.pdf`
   doc.save(filename)

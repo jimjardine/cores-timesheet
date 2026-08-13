@@ -12,6 +12,10 @@ const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-time
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
+// No per-admin login yet (todo.md #14) — hardcode the approver until real
+// per-user admin login ships, then source this from the logged-in admin.
+const CURRENT_APPROVER = 'Nicki'
+
 const STATUS_COLORS = {
   collecting: '#888',
   submitted:  '#cc7700',
@@ -188,6 +192,8 @@ export default function SmsReview({ onApproved } = {}) {
       // The text itself is the employee's confirmation — no follow-up needed
       entry_source:         'sms',
       confirmation_status:  'not_required',
+      approved_by_name:     CURRENT_APPROVER,
+      approved_at:          new Date().toISOString(),
     }))
 
     if (rows.length > 0) {

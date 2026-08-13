@@ -1,0 +1,20 @@
+-- whatsapp_keepalive_state (added in 20260719120000_whatsapp_keepalive.sql) was
+-- created with no RLS and no GRANT at all. That's safe today only because this
+-- schema's table-level grants are opt-in per table (see job_supplies' migration
+-- comment) — anon/authenticated get no privileges here unless a GRANT explicitly
+-- says so. That's an incidental safety, not a documented one.
+--
+-- No client code ever touches this table (grep confirms it). It's read and
+-- written only by "Cores".check_whatsapp_keepalive(), a SECURITY DEFINER
+-- function invoked by pg_cron, which runs as the function/table owner and so
+-- is unaffected by RLS either way. This mirrors employee_auth's posture
+-- exactly (see 20260727120000_create_employee_auth.sql) — an internal-only
+-- table that stays closed to anon/authenticated.
+--
+-- Make the lockdown explicit rather than incidental: enable RLS with no
+-- policies (default-deny for every non-owner role) and no GRANT to
+-- anon/authenticated.
+ALTER TABLE "Cores".whatsapp_keepalive_state ENABLE ROW LEVEL SECURITY;
+-- No GRANT to anon/authenticated and no policies — service_role / the table
+-- owner bypasses RLS, so check_whatsapp_keepalive() (SECURITY DEFINER) is the
+-- only reader/writer, same as employee_auth.

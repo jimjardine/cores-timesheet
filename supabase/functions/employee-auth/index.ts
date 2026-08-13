@@ -24,6 +24,21 @@ function normalizePhone(phone: string): string {
   return (phone || '').replace(/\D/g, '').slice(-10)
 }
 
+// normalizePhone() always truncates to the last 10 digits, which would silently
+// strip a real country code off an overseas number before we could tell it was
+// there. For WhatsApp delivery we need the *un-truncated* digit count: a stored
+// number with exactly 10 digits has no country code on file (Cores is NA-only
+// for plain `phone`, and whatsapp_phone is meant for overseas techs but nothing
+// currently stops the admin form from saving a bare 10-digit local number), so
+// +1 is the right default there. Anything longer already carries a country code
+// — send it through as-is rather than mangling it with a forced +1.
+function toWhatsAppE164(raw: string): string {
+  const trimmed = (raw || '').trim()
+  if (trimmed.startsWith('+')) return trimmed
+  const digits = trimmed.replace(/\D/g, '')
+  return digits.length === 10 ? `+1${digits}` : `+${digits}`
+}
+
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -142,7 +157,7 @@ Deno.serve(async (req: Request) => {
 
     const codeMsg = `Your Cores Timesheet login code is ${otp}. Expires in ${OTP_TTL_MINUTES} minutes.`
     const sendResult = employee.whatsapp_phone
-      ? await sendTwilioWhatsApp(`+1${normalizePhone(employee.whatsapp_phone)}`, codeMsg)
+      ? await sendTwilioWhatsApp(toWhatsAppE164(employee.whatsapp_phone), codeMsg)
       : await sendTwilioSms(employee.phone, codeMsg)
     if (!sendResult.ok) return jsonReply({ ok: false, error: `Couldn't send the code: ${sendResult.error}` })
 

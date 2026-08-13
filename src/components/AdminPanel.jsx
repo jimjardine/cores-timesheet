@@ -15,6 +15,17 @@ const pill = (active) => ({
   fontWeight: active ? 700 : 400, transition: 'all 0.15s',
 })
 
+// Unlike `phone` (NA-only, always truncated to 10 digits), whatsapp_phone is
+// meant for overseas techs, so saving it must not silently strip a real
+// country code down to a bare 10-digit local number the way `.slice(-10)`
+// does. Keep all digits when there are more than 10 (assume a country code is
+// present); otherwise fall back to the same 10-digit normalization as `phone`.
+function normalizeWhatsAppPhone(raw) {
+  const digits = (raw || '').replace(/\D/g, '')
+  if (!digits) return null
+  return digits.length > 10 ? digits : digits.slice(-10)
+}
+
 function Modal({ title, onClose, children }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -107,6 +118,17 @@ export default function AdminPanel() {
       supabase.schema('Cores').from('vessel_contacts').select('*').order('sort_order'),
       supabase.schema('Cores').from('employees').select('*').order('name'),
     ])
+    const loadErrors = [
+      ['customers', c.error],
+      ['vessels', v.error],
+      ['jobs', j.error],
+      ['job status logs', l.error],
+      ['vessel contacts', vc.error],
+      ['employees', em.error],
+    ].filter(([, err]) => err)
+    if (loadErrors.length > 0) {
+      alert(`Failed to load ${loadErrors.map(([label]) => label).join(', ')}: ${loadErrors[0][1].message}`)
+    }
     setCustomers(c.data || [])
     setVessels(v.data || [])
     setJobs(j.data || [])
@@ -166,10 +188,14 @@ export default function AdminPanel() {
       const empPayload = {
         name: payload.name.trim(),
         phone: payload.phone.replace(/\D/g, '').slice(-10) || null,
-        whatsapp_phone: (payload.whatsapp_phone || '').replace(/\D/g, '').slice(-10) || null,
+        whatsapp_phone: normalizeWhatsAppPhone(payload.whatsapp_phone),
         email: (payload.email || '').trim() || null,
         active: payload.active === 'true',
         role: payload.role,
+      }
+      // Can't deliver low-stock alerts with no email — clear the flag if the email was wiped out.
+      if (!empPayload.email && record?.low_stock_alert_recipient) {
+        empPayload.low_stock_alert_recipient = false
       }
       const { error } = record
         ? await supabase.schema('Cores').from('employees').update(empPayload).eq('id', record.id)

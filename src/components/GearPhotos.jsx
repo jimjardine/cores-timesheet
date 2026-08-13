@@ -27,7 +27,10 @@ export default function GearPhotos() {
     setLoading(true)
     const [{ data: p }, { data: j }, { data: emps }] = await Promise.all([
       supabase.schema('Cores').from('gear_photos').select('*').order('created_at', { ascending: false }),
-      supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
+      // Include closed jobs: a photo can legitimately be tagged to a job that's
+      // since closed, and excluding them silently nulled out job_id (photo vanished
+      // from every report with no error).
+      supabase.schema('Cores').from('jobs').select('id, job_number, description, status'),
       supabase.schema('Cores').from('employees').select('id, name'),
     ])
     setPhotos(p || [])
@@ -210,8 +213,8 @@ export default function GearPhotos() {
                   )
                 })()}
                 {matchedJob && (
-                  <div style={{ fontSize: '0.75rem', color: '#2a7a2a', marginBottom: '0.3rem' }}>
-                    ✓ {matchedJob.description}
+                  <div style={{ fontSize: '0.75rem', color: matchedJob.status === 'closed' ? '#888' : '#2a7a2a', marginBottom: '0.3rem' }}>
+                    ✓ {matchedJob.description}{matchedJob.status === 'closed' ? ' (closed)' : ''}
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>

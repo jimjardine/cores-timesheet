@@ -155,6 +155,19 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10)
 }
 
+// normalizePhone() always truncates to the last 10 digits, which would silently
+// strip a real country code off an overseas number before outbound send could
+// tell it was there. A stored number with exactly 10 digits has no country code
+// on file, so +1 is the right default there; anything longer already carries a
+// country code and should go out as-is. Mirrors employee-auth/index.ts's helper
+// of the same name (each edge function is self-contained, no shared module).
+function toWhatsAppE164(raw: string): string {
+  const trimmed = (raw || '').trim()
+  if (trimmed.startsWith('+')) return trimmed
+  const digits = trimmed.replace(/\D/g, '')
+  return digits.length === 10 ? `+1${digits}` : `+${digits}`
+}
+
 // Twilio's request-signing algorithm: sort POST params by key, append each
 // key+value (no delimiter) directly onto the URL string, then HMAC-SHA1 with
 // the Auth Token and base64-encode. See
@@ -858,7 +871,7 @@ Deno.serve(async (req: Request) => {
       // confirmation of a manual entry the office just typed in
       if (json.action === 'request_confirmation') {
         const { data: employee } = await supabase
-          .from('employees').select('id, name, phone, whatsapp_phone').eq('id', json.employee_id).single()
+          .from('employees').select('id, name, phone, whatsapp_phone').eq('id', json.employee_id).eq('active', true).single()
         if (!employee?.phone) {
           return jsonReply({ ok: false, error: 'No phone number on file for this employee' })
         }
@@ -926,8 +939,8 @@ Deno.serve(async (req: Request) => {
         // Canadian SIM), so whatsapp_phone being set is a deliberate signal to
         // route outbound messages there instead.
         const sendResult = submissionRow.employees?.whatsapp_phone
-          ? await sendTwilioWhatsApp(`+1${normalizePhone(submissionRow.employees.whatsapp_phone)}`, noteBody)
-          : await sendTwilioSMS(`+1${normalizePhone(submissionRow.employees.phone)}`, noteBody)
+          ? await sendTwilioWhatsApp(toWhatsAppE164(submissionRow.employees.whatsapp_phone), noteBody)
+          : await sendTwilioSMS(toWhatsAppE164(submissionRow.employees.phone), noteBody)
         if (!sendResult.ok) {
           return jsonReply({ ok: false, error: sendResult.error })
         }
@@ -1022,6 +1035,7 @@ Deno.serve(async (req: Request) => {
     const { data: byPhone } = await supabase
       .from('employees')
       .select('id, name, phone, whatsapp_phone, active')
+      .eq('active', true)
     const match = (byPhone || []).find((e: any) =>
       (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
     if (match) { employeeId = match.id; employeeName = match.name }
@@ -1400,7 +1414,7 @@ Deno.serve(async (req: Request) => {
   //      being consumed here.
   const CONFIRMATION_REPLY_RE = /^(y|ya|yea|yeah|yep|yup|yes|correct|confirm(ed)?|ok|okay|k|got it|sounds good|thanks|thank you|good|all good|sure)[.!]?$/i
   if (fromPhone && CONFIRMATION_REPLY_RE.test(msgBody.trim())) {
-    const { data: byPhone } = await supabase.from('employees').select('id, name, phone, whatsapp_phone')
+    const { data: byPhone } = await supabase.from('employees').select('id, name, phone, whatsapp_phone').eq('active', true)
     const phoneMatch = (byPhone || []).find((e: any) =>
       (e.phone && normalizePhone(e.phone) === fromPhone) || (e.whatsapp_phone && normalizePhone(e.whatsapp_phone) === fromPhone))
 

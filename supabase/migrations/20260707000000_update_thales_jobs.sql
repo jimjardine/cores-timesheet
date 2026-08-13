@@ -1,17 +1,25 @@
 -- Update Thales jobs from whiteboard
 -- Replace all existing jobs and clear timesheets
+--
+-- NEUTRALIZED 2026-08-13: these DELETEs already ran once against production
+-- and don't need to stay replayable. Left live, this migration would wipe
+-- all customer/job/vessel/timesheet data if a fresh database ever replayed
+-- migration history, so the destructive statements below are commented out.
+-- The INSERTs further down are still fine to replay (they're idempotent-ish
+-- seed data for Thales) but now run against whatever data already exists
+-- instead of a freshly-wiped schema.
 
 -- Delete all timesheet entries first
-DELETE FROM "Cores".timesheet_entries;
+-- DELETE FROM "Cores".timesheet_entries;
 
 -- Delete all existing jobs
-DELETE FROM "Cores".jobs;
+-- DELETE FROM "Cores".jobs;
 
 -- Delete all existing vessels
-DELETE FROM "Cores".vessels;
+-- DELETE FROM "Cores".vessels;
 
 -- Delete all existing customers (keep only Thales)
-DELETE FROM "Cores".customers;
+-- DELETE FROM "Cores".customers;
 
 -- Insert Thales customer
 INSERT INTO "Cores".customers (name) VALUES ('Thales');

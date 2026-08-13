@@ -15,12 +15,18 @@ const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-time
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
+
+// No per-admin login yet (todo.md #14) — hardcode the approver until real
+// per-user admin login ships, then source this from the logged-in admin.
+const CURRENT_APPROVER = 'Nicki'
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const chip = (color, bg) => ({ display: 'inline-block', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, color, background: bg })
 // Short day+month form (distinct from the component-scoped fmtDate, which includes weekday+year)
 const fmtPayDate = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+// Full date+time for signature timestamps on the printed timesheet PDF
+const fmtSignedAt = (iso) => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 
 const calculateExpectedHours = (timeIn, timeOut, lunchMinutes) => {
   if (!timeIn || !timeOut) return null
@@ -153,18 +159,27 @@ export default function AdminDashboard() {
 
   async function loadTimesheets() {
     setLoadingEntries(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .schema('Cores').from('timesheet_entries')
       .select('*, employees(id, name), jobs(id, job_number, description, customers(name), vessels(name))')
       .order('work_date', { ascending: false })
+    if (error) {
+      alert(`Failed to load timesheets: ${error.message}`)
+      setLoadingEntries(false)
+      return
+    }
     setEntries(data || [])
     setLoadingEntries(false)
     // Approving a submission is the one action that changes this count, so
     // refresh it alongside entries (SmsReview's onApproved calls this) rather
     // than only on mount — otherwise the banner could read stale right after
     // the exact action that would resolve it.
-    const { count } = await supabase.schema('Cores').from('sms_submissions')
+    const { count, error: countError } = await supabase.schema('Cores').from('sms_submissions')
       .select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting'])
+    if (countError) {
+      alert(`Failed to load pending submission count: ${countError.message}`)
+      return
+    }
     setPendingSubmissionCount(count || 0)
   }
 
@@ -376,9 +391,12 @@ export default function AdminDashboard() {
         time_in: manualFields.time_in || null,
         stated_time_out: manualFields.stated_time_out || null,
         lunch_minutes: manualFields.lunch_minutes || null,
-        // Nicki typed this in herself — the employee hasn't confirmed it yet
+        // Nicki typed this in herself — the employee hasn't confirmed it yet,
+        // but Nicki entering it herself IS the supervisor approval.
         entry_source: 'manual',
         confirmation_status: 'pending',
+        approved_by_name: CURRENT_APPROVER,
+        approved_at: new Date().toISOString(),
       }))
 
       const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(toInsert)
@@ -802,7 +820,7 @@ export default function AdminDashboard() {
     const [{ data: subRows }, { data: daySupplies }] = await Promise.all([
       supabase
         .schema('Cores').from('sms_submissions')
-        .select('time_in, stated_time_out, calculated_time_out, lunch_minutes')
+        .select('time_in, stated_time_out, calculated_time_out, lunch_minutes, from_phone, updated_at')
         .eq('employee_id', emp.id)
         .eq('work_date', workDate)
         .neq('status', 'rejected')
@@ -818,6 +836,41 @@ export default function AdminDashboard() {
     // Prefer the times saved on the timesheet entries themselves (works for both
     // manual and SMS-originated entries) — sms_submissions only exists for SMS entries.
     const entryWithTime = dayEntries.find(e => e.time_in || e.stated_time_out)
+
+    // Employee "signature" — only stamp a name when every entry for the day
+    // traces back to the employee themselves (their own SMS text, their own
+    // logged-in app session, or a reply confirming a manually-added entry).
+    // Any entry still `pending` confirmation leaves the line blank for a wet
+    // signature, same as today.
+    let employeeSignature = null
+    if (dayEntries.length > 0 && dayEntries.every(e =>
+      e.entry_source === 'sms' || e.entry_source === 'self' ||
+      (e.entry_source === 'manual' && e.confirmation_status === 'confirmed')
+    )) {
+      const sources = new Set(dayEntries.map(e => e.entry_source))
+      if (sources.size === 1 && sources.has('sms') && submission) {
+        employeeSignature = { name: emp.name, subtitle: `Submitted via SMS · ${submission.from_phone} · ${fmtSignedAt(submission.updated_at)}` }
+      } else if (sources.size === 1 && sources.has('self')) {
+        const latest = dayEntries.reduce((max, e) => (e.created_at > max ? e.created_at : max), dayEntries[0].created_at)
+        employeeSignature = { name: emp.name, subtitle: `Entered via employee app · ${fmtSignedAt(latest)}` }
+      } else if (sources.size === 1 && sources.has('manual')) {
+        const latest = dayEntries.reduce((max, e) => ((e.confirmed_at || '') > max ? e.confirmed_at : max), dayEntries[0].confirmed_at || '')
+        const reply = dayEntries.find(e => e.confirmation_reply_text)?.confirmation_reply_text
+        employeeSignature = { name: emp.name, subtitle: `Confirmed via SMS reply${reply ? ` "${reply}"` : ''} · ${fmtSignedAt(latest)}` }
+      } else {
+        // Mixed sources on the same day (e.g. an SMS day plus a self-added job)
+        // — still fully confirmed, just no single channel to name.
+        const timestamps = dayEntries.map(e => e.confirmed_at || e.created_at).filter(Boolean).sort()
+        employeeSignature = { name: emp.name, subtitle: `Confirmed by employee · ${fmtSignedAt(timestamps[timestamps.length - 1])}` }
+      }
+    }
+
+    // Supervisor "signature" — stamped at approval (SmsReview approve()) or
+    // creation (manual entries are entered directly by the office) time.
+    const approver = dayEntries.find(e => e.approved_by_name)
+    const supervisorSignature = approver
+      ? { name: approver.approved_by_name, subtitle: `Approved · ${fmtSignedAt(approver.approved_at)}` }
+      : null
 
     generateDailyTimesheetPDF({
       employeeName: emp.name,
@@ -837,6 +890,8 @@ export default function AdminDashboard() {
         quantity: s.quantity,
         supplyName: s.supply_name,
       })),
+      employeeSignature,
+      supervisorSignature,
     })
   }
 
