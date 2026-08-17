@@ -26,6 +26,6 @@ CREATE POLICY "job_supplies_insert" ON "Cores".job_supplies FOR INSERT WITH CHEC
 CREATE POLICY "job_supplies_update" ON "Cores".job_supplies FOR UPDATE USING (true);
 CREATE POLICY "job_supplies_delete" ON "Cores".job_supplies FOR DELETE USING (true);
 
--- Parsed supplies live on the submission until Nicki approves
+-- Parsed supplies live on the submission until Niki approves
 ALTER TABLE "Cores".sms_submissions
   ADD COLUMN IF NOT EXISTS supplies JSONB DEFAULT '[]'::jsonb;

@@ -371,7 +371,7 @@ export default function SmsReview({ onApproved } = {}) {
       updated_at:        new Date().toISOString(),
     }
 
-    // Nicki has fixed it up by hand — a collecting submission is now reviewable
+    // Niki has fixed it up by hand — a collecting submission is now reviewable
     if (editModal.status === 'collecting') updates.status = 'submitted'
 
     // Recalculate time_out and delta against the stated out time

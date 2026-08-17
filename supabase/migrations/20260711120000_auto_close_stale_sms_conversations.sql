@@ -1,5 +1,5 @@
 -- A tech gets asked a follow-up question (lunch/per diem/supplies) and never answers —
--- the conversation sits in status='collecting' forever and never reaches Nicki's review
+-- the conversation sits in status='collecting' forever and never reaches Niki's review
 -- queue, since 'collecting' rows only ever transition on a NEW inbound message. This adds
 -- a scheduled sweep that treats prolonged silence as "no answer" and closes it out with
 -- whatever's there, same as the existing "asked once, don't nag" give-up logic already

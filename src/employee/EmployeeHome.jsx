@@ -54,7 +54,7 @@ export default function EmployeeHome({ employee }) {
       .gte('work_date', weekStart).lte('work_date', weekEnd)
     setSupplies(sup || [])
     // Texted-in days not yet approved by the office — shown so a tech can see
-    // and fix a text before Nicki reviews it. Approved ones already show up
+    // and fix a text before Niki reviews it. Approved ones already show up
     // above via timesheet_entries, so they're excluded here.
     const { data: subs } = await supabase.schema('Cores').from('sms_submissions')
       .select('*').eq('employee_id', employee.id)
