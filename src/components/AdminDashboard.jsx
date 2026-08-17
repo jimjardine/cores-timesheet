@@ -264,17 +264,18 @@ export default function AdminDashboard() {
 
     // Save new job if being added
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
+      const exempt = isConfirmationExempt(editFields.employee_id)
       const { error: newJobError } = await addJobToDay(supabase, {
         employeeId: editFields.employee_id, workDate: editFields.work_date,
         jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
-        entrySource: 'manual', confirmationStatus: 'pending',
+        entrySource: 'manual', confirmationStatus: exempt ? 'not_required' : 'pending',
       })
       if (newJobError) {
         alert(`Failed to add job: ${newJobError.message}`)
         setSavingEdit(false)
         return
       }
-      await requestEntryConfirmation(editFields.employee_id, editFields.work_date)
+      if (!exempt) await requestEntryConfirmation(editFields.employee_id, editFields.work_date)
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     }
@@ -318,10 +319,11 @@ export default function AdminDashboard() {
     }
 
     try {
+      const exempt = isConfirmationExempt(editEntry.employee_id)
       const { error } = await addJobToDay(supabase, {
         employeeId: editEntry.employee_id, workDate: editEntry.work_date,
         jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
-        entrySource: 'manual', confirmationStatus: 'pending',
+        entrySource: 'manual', confirmationStatus: exempt ? 'not_required' : 'pending',
       })
 
       if (error) {
@@ -329,7 +331,7 @@ export default function AdminDashboard() {
         return
       }
 
-      await requestEntryConfirmation(editEntry.employee_id, editEntry.work_date)
+      if (!exempt) await requestEntryConfirmation(editEntry.employee_id, editEntry.work_date)
       await ensureStatPay(editEntry.employee_id, editEntry.work_date)
       await loadTimesheets()
       setAddingNewJob(false)
@@ -338,6 +340,8 @@ export default function AdminDashboard() {
       alert(`Error: ${err.message}`)
     }
   }
+
+  const isConfirmationExempt = (employeeId) => !!employees.find(e => e.id === employeeId)?.confirmation_exempt
 
   // Text the employee to confirm a manually-entered timesheet — best-effort,
   // surfaces a dismissible banner on failure rather than blocking with alert()
@@ -377,6 +381,7 @@ export default function AdminDashboard() {
       // ot_hours left null on every line — computeOTMap derives reg/OT
       // (stat/weekend, daily + weekly threshold) at display/export time
       // instead of locking in a same-day-only split here. See entrySave.js.
+      const exempt = isConfirmationExempt(manualFields.employee_id)
       const toInsert = validEntries.map((e, i) => ({
         employee_id: manualFields.employee_id,
         work_date: manualFields.work_date,
@@ -391,8 +396,10 @@ export default function AdminDashboard() {
         lunch_minutes: manualFields.lunch_minutes || null,
         // The office typed this in themselves — the employee hasn't confirmed
         // it yet, but the office entering it IS the supervisor approval.
+        // confirmation_exempt employees (e.g. Tracy, on a fixed office
+        // schedule) skip the text — see isConfirmationExempt.
         entry_source: 'manual',
-        confirmation_status: 'pending',
+        confirmation_status: exempt ? 'not_required' : 'pending',
         approved_by_name: getAdminName(),
         approved_at: new Date().toISOString(),
       }))
@@ -403,7 +410,7 @@ export default function AdminDashboard() {
         return
       }
 
-      await requestEntryConfirmation(manualFields.employee_id, manualFields.work_date)
+      if (!exempt) await requestEntryConfirmation(manualFields.employee_id, manualFields.work_date)
 
       // Insert supplies if any
       const { error: supplyError } = await replaceSupplies(supabase, manualFields.employee_id, manualFields.work_date, manualFields.supplies)
