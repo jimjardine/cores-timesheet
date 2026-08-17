@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
-import { replaceSupplies } from '../utils/entrySave'
+import { replaceSupplies, fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import './employee.css'
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -24,7 +24,12 @@ export default function EntryForm({ employee, mode }) {
   const [timeIn, setTimeIn] = useState('07:00')
   const [timeOut, setTimeOut] = useState('15:30')
   const [lunchMinutes, setLunchMinutes] = useState(30)
+  // Numeric multiplier — used only in edit mode, for legacy entry_source='self'
+  // rows that still carry timesheet_entries.per_diem directly (see saveEdit).
   const [perDiem, setPerDiem] = useState(0)
+  // Free text — used in new-day mode, matches sms_submissions.per_diem_location
+  // (same shape a texted-in day uses; see saveNewDay/PendingEntryEdit.jsx).
+  const [perDiemLocation, setPerDiemLocation] = useState('')
   const [jobLines, setJobLines] = useState([blankJobLine()])
   const [supplyLines, setSupplyLines] = useState([blankSupplyLine()])
 
@@ -82,24 +87,41 @@ export default function EntryForm({ employee, mode }) {
     if (validLines.some(l => !l.description.trim())) { setError('Add a note describing what was done for each job'); return }
     setSaving(true); setError('')
 
-    // ot_hours left null — computeOTMap derives reg/OT (daily + weekly
-    // threshold) at display/export time instead. See entrySave.js.
-    const rows = validLines.map((l, i) => ({
-      employee_id: employee.id, work_date: workDate, job_id: l.job_id,
-      hours: Number(l.hours), ot_hours: null, description: l.description || '',
-      per_diem: Number(perDiem) || 0, sort_order: i + 1,
+    const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
+
+    // Lands in sms_submissions — same as a texted-in day — so it shows up in
+    // the office's SMS Review for approval instead of going straight into
+    // timesheet_entries. reg_hours/ot_hours here are only a same-day preview
+    // for the review screen; computeOTMap derives the real split (incl.
+    // weekly threshold) once SmsReview's approve() writes the real entries.
+    const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(supabase, employee.id, workDate)
+    let alreadyWorked = startAlready
+    const entries = validLines.map(l => {
+      const hours = Number(l.hours)
+      const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+      alreadyWorked += hours
+      return {
+        job_number: jobNumberFor(l.job_id), hours, description: l.description.trim(),
+        reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+      }
+    })
+    const supplies = supplyLines
+      .filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
+      .map(s => ({ job_number: jobNumberFor(s.job_id), supply_name: s.supply_name, quantity: Number(s.quantity) }))
+
+    const totalHours = entries.reduce((s, e) => s + e.hours, 0)
+    const { calculated_time_out, delta_minutes } = computeSubmissionTiming(timeIn, timeOut, lunchMinutes, totalHours)
+
+    const { error: insertError } = await supabase.schema('Cores').from('sms_submissions').insert({
+      from_phone: 'mobile-app', employee_id: employee.id, work_date: workDate,
       time_in: timeIn || null, stated_time_out: timeOut || null,
       lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),
-      entry_source: 'self', confirmation_status: 'not_required',
-    }))
-
-    const { error: insertError } = await supabase.schema('Cores').from('timesheet_entries').insert(rows)
+      per_diem_location: perDiemLocation.trim() || 'none',
+      entries, supplies, status: 'submitted',
+      calculated_time_out, delta_minutes,
+    })
     if (insertError) { setError(insertError.message); setSaving(false); return }
 
-    const { error: supplyError } = await replaceSupplies(supabase, employee.id, workDate, supplyLines)
-    if (supplyError) { setError(supplyError.message); setSaving(false); return }
-
-    await ensureStatPay(employee.id, workDate)
     setSaving(false)
     navigate('..')
   }
@@ -184,11 +206,15 @@ export default function EntryForm({ employee, mode }) {
           </div>
           <div className="emp-field">
             <label>Per diem</label>
-            <select value={perDiem} onChange={e => setPerDiem(e.target.value)}>
-              <option value={0}>None</option>
-              <option value={1}>×1</option>
-              <option value={2}>×2</option>
-            </select>
+            {mode === 'new' ? (
+              <input type="text" placeholder='"none" or hotel name' value={perDiemLocation} onChange={e => setPerDiemLocation(e.target.value)} />
+            ) : (
+              <select value={perDiem} onChange={e => setPerDiem(e.target.value)}>
+                <option value={0}>None</option>
+                <option value={1}>×1</option>
+                <option value={2}>×2</option>
+              </select>
+            )}
           </div>
         </div>
 

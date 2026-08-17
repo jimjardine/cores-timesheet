@@ -59,6 +59,25 @@ export async function replaceSupplies(supabase, employeeId, workDate, supplies) 
   return { error }
 }
 
+// Derives calculated_time_out/delta_minutes for an sms_submissions row from
+// its stated shift times — same math PendingEntryEdit uses, shared here so
+// the mobile self-entry flow (EntryForm.jsx, EmployeeHome.jsx) produces the
+// same office-facing delta warning a texted-in day would.
+export function computeSubmissionTiming(timeIn, statedTimeOut, lunchMinutes, totalHours) {
+  if (!timeIn || !(totalHours > 0)) return { calculated_time_out: null, delta_minutes: null }
+  const [h, m] = timeIn.split(':').map(Number)
+  const outMins = h * 60 + m + Math.round(totalHours * 60) + (Number(lunchMinutes) || 0)
+  const oh = Math.floor(outMins / 60) % 24
+  const om = outMins % 60
+  const calculated_time_out = `${String(oh).padStart(2, '0')}:${String(om).padStart(2, '0')}`
+  let delta_minutes = null
+  if (statedTimeOut) {
+    const [sh, sm] = statedTimeOut.split(':').map(Number)
+    delta_minutes = (sh * 60 + sm) - outMins
+  }
+  return { calculated_time_out, delta_minutes }
+}
+
 // Add one more job line to a day that already has entries (or start a new
 // day with a single job). Used for "add another job" on an existing
 // timesheet. ot_hours is left null — see note above — so computeOTMap

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
-import { payWeekRange, ensureStatPay, cleanupStatPay } from '../utils/statPay'
+import { payWeekRange, cleanupStatPay } from '../utils/statPay'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
-import { addJobToDay } from '../utils/entrySave'
+import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import './employee.css'
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -91,17 +91,44 @@ export default function EmployeeHome({ employee }) {
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
+  // Lands in sms_submissions — same as a texted-in day — instead of straight
+  // into timesheet_entries, so it goes through the office's SMS Review for
+  // approval like everything else. Merges into the day's existing pending
+  // submission if there is one (same convention PendingEntryEdit uses: an
+  // edit/addition resubmits a declined day too), otherwise starts a new one.
   async function saveAddJob(ymd) {
     if (!addJobFields.job_id || !addJobFields.hours) { setError('Pick a job and enter hours'); return }
     if (!addJobFields.description.trim()) { setError('Add a note describing what was done'); return }
     setSavingJob(true); setError('')
-    const { error: err } = await addJobToDay(supabase, {
-      employeeId: employee.id, workDate: ymd,
-      jobId: addJobFields.job_id, hours: addJobFields.hours, description: addJobFields.description,
-      entrySource: 'self', confirmationStatus: 'not_required',
-    })
+
+    const jobNumber = jobs.find(j => j.id === addJobFields.job_id)?.job_number || ''
+    const hours = Number(addJobFields.hours)
+    const daySub = submissions.find(s => s.work_date === ymd)
+    const priorEntries = daySub?.entries || []
+
+    const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(supabase, employee.id, ymd)
+    const alreadyWorked = startAlready + priorEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+    const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+    const newEntry = {
+      job_number: jobNumber, hours, description: addJobFields.description.trim(),
+      reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+    }
+
+    let err
+    if (daySub) {
+      const entries = [...priorEntries, newEntry]
+      const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+      const { calculated_time_out, delta_minutes } = computeSubmissionTiming(daySub.time_in, daySub.stated_time_out, daySub.lunch_minutes, totalHours)
+      ;({ error: err } = await supabase.schema('Cores').from('sms_submissions')
+        .update({ entries, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
+        .eq('id', daySub.id))
+    } else {
+      ;({ error: err } = await supabase.schema('Cores').from('sms_submissions').insert({
+        from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
+        entries: [newEntry], status: 'submitted',
+      }))
+    }
     if (err) { setError(err.message); setSavingJob(false); return }
-    await ensureStatPay(employee.id, ymd)
     await load()
     setSavingJob(false)
     setAddJobFor(null)
