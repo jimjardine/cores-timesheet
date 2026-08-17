@@ -890,14 +890,14 @@ Deno.serve(async (req: Request) => {
         const summary = pending.map((e: any) => `${e.jobs?.job_number || 'job'} ${Number(e.hours)}hrs`).join(', ')
         const msg = `The office logged your timesheet for ${friendlyDate(json.work_date)}: ${summary}. Reply to this text to confirm.`
 
-        // Confirmation texts paused for everyone except Jim while this feature
-        // is being reworked — Jim gets his via WhatsApp instead of SMS.
-        const isJim = normalizePhone(employee.phone) === '5068667302'
-        if (!isJim) {
-          return jsonReply({ ok: true, skipped: true })
+        // Same routing as send_admin_note: prefer WhatsApp when the employee
+        // has a whatsapp_phone on file, otherwise the main SMS line.
+        const sendResult = employee.whatsapp_phone
+          ? await sendTwilioWhatsApp(toWhatsAppE164(employee.whatsapp_phone), msg)
+          : await sendTwilioSMS(toWhatsAppE164(employee.phone), msg)
+        if (!sendResult.ok) {
+          return jsonReply(sendResult)
         }
-        const whatsappTo = normalizePhone(employee.whatsapp_phone || employee.phone)
-        const sendResult = await sendTwilioWhatsApp(`+1${whatsappTo}`, msg)
 
         await supabase
           .from('timesheet_entries')
