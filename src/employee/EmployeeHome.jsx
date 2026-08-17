@@ -466,9 +466,15 @@ export default function EmployeeHome({ employee }) {
                   </select>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <label className="emp-btn" style={{ opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
+                  <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
                     {uploadingPhoto ? 'Uploading…' : 'Take / choose photo'}
-                    <input type="file" accept="image/*" capture="environment" disabled={uploadingPhoto} style={{ display: 'none' }}
+                    {/* display:none (or visibility:hidden) on a file input silently blocks the
+                        native picker from opening on iOS Safari when triggered via a wrapping
+                        label — has to stay "visible" (just invisible/off-screen) for tapping the
+                        label to work. capture="environment" is left off so the OS offers both
+                        camera and library, matching what "Take / choose photo" promises. */}
+                    <input type="file" accept="image/*" disabled={uploadingPhoto}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
                       onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
                   </label>
                   <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
