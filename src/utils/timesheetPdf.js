@@ -6,7 +6,7 @@ import { CAVEAT_REGULAR_BASE64 } from './caveatFont'
 // whatever we have on file. Fields the app doesn't track (safety check answers,
 // extras/non-compliance) are left blank for hand sign-off. employeeSignature/
 // supervisorSignature are optional {name, subtitle} objects — when present,
-// the name prints in a cursive font in place of the blank signature line,
+// the name prints in a cursive font in place of the blank "Approved by:" line,
 // sourced from real confirmation data (see AdminDashboard.printTimesheetFor).
 export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [], employeeSignature = null, supervisorSignature = null }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
@@ -286,10 +286,7 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
 
   ensureSpace(100)
   drawSignatureRow('Employee Signature:', employeeSignature)
-  drawSignatureRow('Supervisor Signature:', supervisorSignature)
-
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
-  doc.text('Approved by:', margin, y)
+  drawSignatureRow('Approved by:', supervisorSignature)
 
   const filename = `${(employeeName || 'timesheet').replace(/\s+/g, '_')}_${workDate}.pdf`
   doc.save(filename)

@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import GearPhotos from './GearPhotos'
+import { getAdminName } from './PasswordGate'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
 import { replaceSupplies, addJobToDay } from '../utils/entrySave'
@@ -16,9 +17,6 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
-// No per-admin login yet (todo.md #14) — hardcode the approver until real
-// per-user admin login ships, then source this from the logged-in admin.
-const CURRENT_APPROVER = 'Nicki'
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
@@ -391,11 +389,11 @@ export default function AdminDashboard() {
         time_in: manualFields.time_in || null,
         stated_time_out: manualFields.stated_time_out || null,
         lunch_minutes: manualFields.lunch_minutes || null,
-        // Nicki typed this in herself — the employee hasn't confirmed it yet,
-        // but Nicki entering it herself IS the supervisor approval.
+        // The office typed this in themselves — the employee hasn't confirmed
+        // it yet, but the office entering it IS the supervisor approval.
         entry_source: 'manual',
         confirmation_status: 'pending',
-        approved_by_name: CURRENT_APPROVER,
+        approved_by_name: getAdminName(),
         approved_at: new Date().toISOString(),
       }))
 
