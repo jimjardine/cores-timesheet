@@ -19,6 +19,16 @@ function addDays(ymd, n) {
 const dayName = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'long' })
 const shortDate = (ymd) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
 
+const fmtTimeShort = (t) => {
+  if (!t) return ''
+  const [h, m] = t.split(':').map(Number)
+  const period = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`
+}
+
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
+
 export default function EmployeeHome({ employee }) {
   const navigate = useNavigate()
   const [weekStart, setWeekStart] = useState(() => payWeekRange(todayYMD())[0])
@@ -36,6 +46,13 @@ export default function EmployeeHome({ employee }) {
   const [noteFor, setNoteFor] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [shiftFor, setShiftFor] = useState(null)
+  const [shiftFields, setShiftFields] = useState({ time_in: '', time_out: '', lunch_minutes: '', per_diem_location: '' })
+  const [savingShift, setSavingShift] = useState(false)
+  const [photos, setPhotos] = useState([])
+  const [photoFor, setPhotoFor] = useState(null)
+  const [photoJobId, setPhotoJobId] = useState('')
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [error, setError] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
@@ -62,6 +79,11 @@ export default function EmployeeHome({ employee }) {
       .neq('status', 'approved')
       .order('updated_at', { ascending: false })
     setSubmissions(subs || [])
+    const { data: gp } = await supabase.schema('Cores').from('gear_photos')
+      .select('*').eq('employee_id', employee.id)
+      .gte('work_date', weekStart).lte('work_date', weekEnd)
+      .order('created_at', { ascending: false })
+    setPhotos(gp || [])
     setLoading(false)
   }, [employee.id, weekStart, weekEnd])
 
@@ -135,6 +157,73 @@ export default function EmployeeHome({ employee }) {
     setAddJobFields({ job_id: '', hours: '', description: '' })
   }
 
+  function openShift(ymd) {
+    const daySub = submissions.find(s => s.work_date === ymd)
+    setShiftFields({
+      time_in: daySub?.time_in ? daySub.time_in.substring(0, 5) : '',
+      time_out: daySub?.stated_time_out ? daySub.stated_time_out.substring(0, 5) : '',
+      lunch_minutes: daySub?.lunch_minutes != null ? String(daySub.lunch_minutes) : '',
+      per_diem_location: daySub?.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : '',
+    })
+    setShiftFor(ymd)
+    setError('')
+  }
+
+  // In/Out/Lunch/PD set directly from the day card instead of only via the
+  // separate full "+ Add entry" form — same sms_submissions columns either
+  // way, so SMS Review sees identical data. Reuses the day's existing
+  // pending submission if there is one (preserving its entries), otherwise
+  // starts a bare one so a tech can log "In 7:00" before adding any jobs.
+  async function saveShift(ymd) {
+    setSavingShift(true); setError('')
+    const daySub = submissions.find(s => s.work_date === ymd)
+    const entries = daySub?.entries || []
+    const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+    const time_in = shiftFields.time_in || null
+    const stated_time_out = shiftFields.time_out || null
+    const lunch_minutes = shiftFields.lunch_minutes === '' ? null : Number(shiftFields.lunch_minutes)
+    const per_diem_location = shiftFields.per_diem_location.trim() || 'none'
+    const { calculated_time_out, delta_minutes } = computeSubmissionTiming(time_in, stated_time_out, lunch_minutes, totalHours)
+
+    const { error: err } = daySub
+      ? await supabase.schema('Cores').from('sms_submissions')
+          .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
+          .eq('id', daySub.id)
+      : await supabase.schema('Cores').from('sms_submissions').insert({
+          from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
+          time_in, stated_time_out, lunch_minutes, per_diem_location,
+          entries: [], status: 'submitted',
+        })
+    if (err) { setError(err.message); setSavingShift(false); return }
+    await load()
+    setSavingShift(false)
+    setShiftFor(null)
+  }
+
+  // Uploaded straight to the gear-photos bucket. Job is optional — same
+  // pending_context convention the SMS/MMS path uses (see sms-timesheet
+  // index.ts): picking a job sets job_id/ship_or_job and clears
+  // pending_context; leaving it blank marks pending_context true so it
+  // shows up in Gear Photos' "needs ship/job" triage queue for the office.
+  async function uploadPhoto(ymd, file) {
+    setUploadingPhoto(true); setError('')
+    const jobNumber = photoJobId ? jobs.find(j => j.id === photoJobId)?.job_number || '' : ''
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+    const path = `${ymd}/${employee.id}/${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('gear-photos').upload(path, file, { contentType: file.type || 'image/jpeg' })
+    if (upErr) { setError(upErr.message); setUploadingPhoto(false); return }
+    const { error: insErr } = await supabase.schema('Cores').from('gear_photos').insert({
+      employee_id: employee.id, work_date: ymd, from_phone: 'mobile-app',
+      storage_path: path, job_id: photoJobId || null, ship_or_job: jobNumber || null,
+      pending_context: !photoJobId, file_size_bytes: file.size,
+    })
+    if (insErr) { setError(insErr.message); setUploadingPhoto(false); return }
+    await load()
+    setUploadingPhoto(false)
+    setPhotoFor(null)
+    setPhotoJobId('')
+  }
+
   // General note for the day, not tied to any job (e.g. "took the truck home
   // tonight") — same admin_note field and append-with-timestamp behavior as
   // the SMS "NOTE:" command, so a note from either channel shows up the same
@@ -192,6 +281,7 @@ export default function EmployeeHome({ employee }) {
       ) : days.map((ymd) => {
         const dayEntries = entries.filter(e => e.work_date === ymd)
         const daySupplies = supplies.filter(s => s.work_date === ymd)
+        const dayPhotos = photos.filter(p => p.work_date === ymd)
         const totalHours = dayEntries.reduce((s, e) => s + Number(e.hours), 0)
         const perDiem = dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0)
         const isStat = dayEntries.some(e => e.is_stat_pay)
@@ -213,6 +303,41 @@ export default function EmployeeHome({ employee }) {
               </div>
               {totalHours > 0 && <div className="emp-day-total">{fmtHours(totalHours)}h</div>}
             </div>
+
+            {shiftFor === ymd ? (
+              <div style={{ marginBottom: '0.75rem', borderBottom: '1px solid #eee', paddingBottom: '0.75rem' }}>
+                <div className="emp-row-2">
+                  <div className="emp-field">
+                    <label>Time in</label>
+                    <input type="time" value={shiftFields.time_in} onChange={e => setShiftFields(f => ({ ...f, time_in: e.target.value }))} />
+                  </div>
+                  <div className="emp-field">
+                    <label>Time out</label>
+                    <input type="time" value={shiftFields.time_out} onChange={e => setShiftFields(f => ({ ...f, time_out: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="emp-row-2">
+                  <div className="emp-field">
+                    <label>Lunch (min)</label>
+                    <input type="number" min="0" step="5" value={shiftFields.lunch_minutes} onChange={e => setShiftFields(f => ({ ...f, lunch_minutes: e.target.value }))} />
+                  </div>
+                  <div className="emp-field">
+                    <label>Per diem</label>
+                    <input type="text" placeholder='"none" or hotel name' value={shiftFields.per_diem_location} onChange={e => setShiftFields(f => ({ ...f, per_diem_location: e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="emp-btn" disabled={savingShift} onClick={() => saveShift(ymd)}>{savingShift ? 'Saving…' : 'Save shift'}</button>
+                  <button className="emp-btn emp-btn-secondary" onClick={() => setShiftFor(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openShift(ymd)}>
+                {daySub?.time_in
+                  ? `Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`
+                  : 'Tap to set your shift (in / out / lunch / per diem)'}
+              </div>
+            )}
 
             {dayEntries.length === 0 && !daySub && <div className="emp-empty">No hours logged</div>}
 
@@ -239,6 +364,15 @@ export default function EmployeeHome({ employee }) {
             {daySupplies.length > 0 && (
               <div className="emp-hint">
                 Supplies: {daySupplies.map(s => `${s.supply_name} ×${s.quantity}`).join(', ')}
+              </div>
+            )}
+
+            {dayPhotos.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                {dayPhotos.map(p => (
+                  <img key={p.id} src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
+                    style={{ width: '3.2rem', height: '3.2rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }} />
+                ))}
               </div>
             )}
 
@@ -320,6 +454,29 @@ export default function EmployeeHome({ employee }) {
             ) : (
               <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
                 onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>+ Note</button>
+            )}
+
+            {photoFor === ymd ? (
+              <div style={{ marginTop: '0.5rem' }}>
+                <div className="emp-field">
+                  <label>Job this photo is for (optional)</label>
+                  <select value={photoJobId} onChange={e => setPhotoJobId(e.target.value)}>
+                    <option value="">No job — office will sort it out</option>
+                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <label className="emp-btn" style={{ opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
+                    {uploadingPhoto ? 'Uploading…' : 'Take / choose photo'}
+                    <input type="file" accept="image/*" capture="environment" disabled={uploadingPhoto} style={{ display: 'none' }}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
+                  </label>
+                  <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
+                onClick={() => { setPhotoFor(ymd); setPhotoJobId(''); setError('') }}>+ Photo</button>
             )}
 
             {dayEntries.some(e => e.entry_source === 'self') && (
