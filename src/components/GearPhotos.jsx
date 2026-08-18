@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
+import MediaThumb from './MediaThumb'
+import MediaViewer from './MediaViewer'
 
 const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
@@ -174,12 +176,11 @@ export default function GearPhotos() {
                 onClick={() => setLightbox(photo)}
                 style={{ aspectRatio: '4 / 3', background: '#f0f0f0', cursor: 'pointer', overflow: 'hidden' }}
               >
-                <img
+                <MediaThumb
                   src={publicUrl(photo.storage_path)}
                   alt={photo.ship_or_job || 'gear photo'}
                   loading="lazy"
                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  onError={e => { e.target.style.display = 'none'; e.target.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#c00;font-size:0.8rem;padding:0.5rem;text-align:center">Image failed to load</div>' }}
                 />
               </div>
               <div style={{ padding: '0.6rem 0.75rem' }}>
@@ -284,11 +285,13 @@ export default function GearPhotos() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', cursor: 'zoom-out',
           }}
         >
-          <img
-            src={publicUrl(lightbox.storage_path)}
-            alt={lightbox.ship_or_job || 'gear photo'}
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }}
-          />
+          <div onClick={e => e.stopPropagation()} style={{ maxWidth: '100%', maxHeight: '100%' }}>
+            <MediaViewer
+              src={publicUrl(lightbox.storage_path)}
+              alt={lightbox.ship_or_job || 'gear photo'}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }}
+            />
+          </div>
         </div>
       )}
     </div>

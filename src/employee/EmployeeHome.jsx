@@ -6,6 +6,7 @@ import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
 import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import JobPicker from './JobPicker'
+import MediaThumb from '../components/MediaThumb'
 import './employee.css'
 
 const blankDraftLine = () => ({ job_id: '', hours: '', description: '' })
@@ -217,11 +218,13 @@ export default function EmployeeHome({ employee }) {
     setSavingLog(false)
   }
 
-  // Uploaded straight to the gear-photos bucket. Job is optional — same
-  // pending_context convention the SMS/MMS path uses (see sms-timesheet
-  // index.ts): picking a job sets job_id/ship_or_job and clears
-  // pending_context; leaving it blank marks pending_context true so it
-  // shows up in Gear Photos' "needs ship/job" triage queue for the office.
+  // Uploaded straight to the gear-photos bucket — photo or video, the
+  // bucket/UI don't care which (see utils/media.js for how display decides
+  // which to render). Job is optional — same pending_context convention the
+  // SMS/MMS path uses (see sms-timesheet index.ts): picking a job sets
+  // job_id/ship_or_job and clears pending_context; leaving it blank marks
+  // pending_context true so it shows up in Gear Photos' "needs ship/job"
+  // triage queue for the office.
   async function uploadPhoto(ymd, file) {
     setUploadingPhoto(true); setError('')
     const jobNumber = photoJobId ? jobs.find(j => j.id === photoJobId)?.job_number || '' : ''
@@ -429,7 +432,7 @@ export default function EmployeeHome({ employee }) {
             {dayPhotos.length > 0 && (
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                 {dayPhotos.map(p => (
-                  <img key={p.id} src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
+                  <MediaThumb key={p.id} src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
                     style={{ width: '3.2rem', height: '3.2rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }} />
                 ))}
               </div>
@@ -496,13 +499,13 @@ export default function EmployeeHome({ employee }) {
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
-                    {uploadingPhoto ? 'Uploading…' : 'Take / choose photo'}
+                    {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
                     {/* display:none (or visibility:hidden) on a file input silently blocks the
                         native picker from opening on iOS Safari when triggered via a wrapping
                         label — has to stay "visible" (just invisible/off-screen) for tapping the
                         label to work. capture="environment" is left off so the OS offers both
-                        camera and library, matching what "Take / choose photo" promises. */}
-                    <input type="file" accept="image/*" disabled={uploadingPhoto}
+                        camera and library, matching what "Take / choose photo or video" promises. */}
+                    <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
                       onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
                   </label>

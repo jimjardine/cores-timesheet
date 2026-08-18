@@ -251,9 +251,17 @@ async function savePhotoToStorage(
     const photoBlob = await photoRes.arrayBuffer()
     const photoSize = photoBlob.byteLength
 
-    // Determine file extension from content-type
+    // Determine file extension from content-type — covers video/* now too
+    // (gear-photos bucket accepts mp4/quicktime/webm/3gpp as of 2026-08-18),
+    // not just the image types this used to assume everything was.
     const contentType = photoRes.headers.get('content-type') || 'image/jpeg'
-    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : 'jpg'
+    const ext = contentType.includes('png') ? 'png'
+      : contentType.includes('gif') ? 'gif'
+      : contentType.includes('webm') ? 'webm'
+      : contentType.includes('quicktime') ? 'mov'
+      : contentType.includes('3gpp') ? '3gp'
+      : contentType.includes('mp4') ? 'mp4'
+      : 'jpg'
 
     // Store in Supabase Storage: gear-photos/YYYY-MM-DD/employee_id/timestamp.ext
     // or gear-photos/YYYY-MM-DD/phone/timestamp.ext if no employee match
