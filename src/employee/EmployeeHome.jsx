@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { payWeekRange, cleanupStatPay } from '../utils/statPay'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
 import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
+import JobPicker from './JobPicker'
 import './employee.css'
+
+const blankDraftLine = () => ({ job_id: '', hours: '', description: '' })
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const todayYMD = () => toYMD(new Date())
@@ -40,15 +43,22 @@ export default function EmployeeHome({ employee }) {
   const [statHolidays, setStatHolidays] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [employeeThresholds, setEmployeeThresholds] = useState({})
-  const [addJobFor, setAddJobFor] = useState(null)
-  const [addJobFields, setAddJobFields] = useState({ job_id: '', hours: '', description: '' })
-  const [savingJob, setSavingJob] = useState(false)
+  // Combined Shift + Job(s) panel — one autosaving form instead of two
+  // separately-saved ones (see autosaveLog). Only one day's panel is open
+  // at a time, so this is flat state rather than per-day.
+  const [logFor, setLogFor] = useState(null)
+  const [draftShift, setDraftShift] = useState({ time_in: '', time_out: '', lunch_minutes: '', per_diem_location: '' })
+  const [draftLines, setDraftLines] = useState([blankDraftLine()])
+  const [savingLog, setSavingLog] = useState(false)
+  // Keyed by work_date so an in-flight autosave for a day that's no longer
+  // open (the tech already swiped to another day) can't get corrupted by
+  // openLog() resetting shared refs out from under it.
+  const daySubIdsRef = useRef({})
+  const insertLocksRef = useRef({})
+  const baseEntriesRef = useRef({})
   const [noteFor, setNoteFor] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
-  const [shiftFor, setShiftFor] = useState(null)
-  const [shiftFields, setShiftFields] = useState({ time_in: '', time_out: '', lunch_minutes: '', per_diem_location: '' })
-  const [savingShift, setSavingShift] = useState(false)
   const [photos, setPhotos] = useState([])
   const [photoFor, setPhotoFor] = useState(null)
   const [photoJobId, setPhotoJobId] = useState('')
@@ -113,91 +123,98 @@ export default function EmployeeHome({ employee }) {
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
-  // Lands in sms_submissions — same as a texted-in day — instead of straight
-  // into timesheet_entries, so it goes through the office's SMS Review for
-  // approval like everything else. Merges into the day's existing pending
-  // submission if there is one (same convention PendingEntryEdit uses: an
-  // edit/addition resubmits a declined day too), otherwise starts a new one.
-  async function saveAddJob(ymd) {
-    if (!addJobFields.job_id || !addJobFields.hours) { setError('Pick a job and enter hours'); return }
-    if (!addJobFields.description.trim()) { setError('Add a note describing what was done'); return }
-    setSavingJob(true); setError('')
-
-    const jobNumber = jobs.find(j => j.id === addJobFields.job_id)?.job_number || ''
-    const hours = Number(addJobFields.hours)
+  function openLog(ymd) {
     const daySub = submissions.find(s => s.work_date === ymd)
-    const priorEntries = daySub?.entries || []
-
-    const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(supabase, employee.id, ymd)
-    const alreadyWorked = startAlready + priorEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
-    const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
-    const newEntry = {
-      job_number: jobNumber, hours, description: addJobFields.description.trim(),
-      reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
-    }
-
-    let err
-    if (daySub) {
-      const entries = [...priorEntries, newEntry]
-      const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
-      const { calculated_time_out, delta_minutes } = computeSubmissionTiming(daySub.time_in, daySub.stated_time_out, daySub.lunch_minutes, totalHours)
-      ;({ error: err } = await supabase.schema('Cores').from('sms_submissions')
-        .update({ entries, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
-        .eq('id', daySub.id))
-    } else {
-      ;({ error: err } = await supabase.schema('Cores').from('sms_submissions').insert({
-        from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
-        entries: [newEntry], status: 'submitted',
-      }))
-    }
-    if (err) { setError(err.message); setSavingJob(false); return }
-    await load()
-    setSavingJob(false)
-    setAddJobFor(null)
-    setAddJobFields({ job_id: '', hours: '', description: '' })
-  }
-
-  function openShift(ymd) {
-    const daySub = submissions.find(s => s.work_date === ymd)
-    setShiftFields({
+    setDraftShift({
       time_in: daySub?.time_in ? daySub.time_in.substring(0, 5) : '',
       time_out: daySub?.stated_time_out ? daySub.stated_time_out.substring(0, 5) : '',
       lunch_minutes: daySub?.lunch_minutes != null ? String(daySub.lunch_minutes) : '',
       per_diem_location: daySub?.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : '',
     })
-    setShiftFor(ymd)
+    setDraftLines([blankDraftLine()])
+    daySubIdsRef.current[ymd] = daySub?.id || null
+    insertLocksRef.current[ymd] = null
+    baseEntriesRef.current[ymd] = daySub?.entries || []
+    setLogFor(ymd)
     setError('')
   }
 
-  // In/Out/Lunch/PD set directly from the day card instead of only via the
-  // separate full "+ Add entry" form — same sms_submissions columns either
-  // way, so SMS Review sees identical data. Reuses the day's existing
-  // pending submission if there is one (preserving its entries), otherwise
-  // starts a bare one so a tech can log "In 7:00" before adding any jobs.
-  async function saveShift(ymd) {
-    setSavingShift(true); setError('')
-    const daySub = submissions.find(s => s.work_date === ymd)
-    const entries = daySub?.entries || []
-    const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
-    const time_in = shiftFields.time_in || null
-    const stated_time_out = shiftFields.time_out || null
-    const lunch_minutes = shiftFields.lunch_minutes === '' ? null : Number(shiftFields.lunch_minutes)
-    const per_diem_location = shiftFields.per_diem_location.trim() || 'none'
-    const { calculated_time_out, delta_minutes } = computeSubmissionTiming(time_in, stated_time_out, lunch_minutes, totalHours)
+  function closeLog() {
+    setLogFor(null)
+    setDraftLines([blankDraftLine()])
+  }
 
-    const { error: err } = daySub
-      ? await supabase.schema('Cores').from('sms_submissions')
-          .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
-          .eq('id', daySub.id)
-      : await supabase.schema('Cores').from('sms_submissions').insert({
-          from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
-          time_in, stated_time_out, lunch_minutes, per_diem_location,
-          entries: [], status: 'submitted',
+  // Finds (or creates) this day's sms_submissions row, serialized so two
+  // near-simultaneous autosaves for the same day can never both insert —
+  // the second one waits on the first's insert and reuses its id.
+  async function ensureDaySubId(ymd) {
+    if (daySubIdsRef.current[ymd]) return daySubIdsRef.current[ymd]
+    if (insertLocksRef.current[ymd]) { await insertLocksRef.current[ymd]; return daySubIdsRef.current[ymd] }
+    let resolveLock
+    insertLocksRef.current[ymd] = new Promise(res => { resolveLock = res })
+    const { data, error } = await supabase.schema('Cores').from('sms_submissions').insert({
+      from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd, entries: [], status: 'submitted',
+    }).select('id').single()
+    if (!error) daySubIdsRef.current[ymd] = data.id
+    insertLocksRef.current[ymd] = null
+    resolveLock()
+    if (error) throw error
+    return daySubIdsRef.current[ymd]
+  }
+
+  // One autosave for the whole combined Shift + Job(s) panel — replaces the
+  // old two-button "Save shift" / "Save job" flow the boys were complaining
+  // about. Fires on blur of any field (i.e. the moment they move off it),
+  // not on an explicit Save tap, so nothing gets lost if they switch to
+  // another day or leave the page mid-entry. linesOverride lets a handler
+  // that just changed draftLines pass the freshly-computed array straight
+  // through instead of reading back the (still-stale, pre-render) state.
+  async function autosaveLog(ymd, linesOverride) {
+    const lines = linesOverride ?? draftLines
+    const validLines = lines.filter(l => l.job_id)
+    const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
+
+    setSavingLog(true); setError('')
+    try {
+      let newEntries = []
+      if (validLines.length > 0) {
+        const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(supabase, employee.id, ymd)
+        let alreadyWorked = startAlready + (baseEntriesRef.current[ymd] || []).reduce((s, e) => s + (Number(e.hours) || 0), 0)
+        newEntries = validLines.map(l => {
+          const hours = Number(l.hours) || 0
+          const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+          alreadyWorked += hours
+          return {
+            job_number: jobNumberFor(l.job_id), hours, description: (l.description || '').trim(),
+            reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+          }
         })
-    if (err) { setError(err.message); setSavingShift(false); return }
-    await load()
-    setSavingShift(false)
-    setShiftFor(null)
+      }
+
+      const entries = [...(baseEntriesRef.current[ymd] || []), ...newEntries]
+      const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+      const time_in = draftShift.time_in || null
+      const stated_time_out = draftShift.time_out || null
+      const lunch_minutes = draftShift.lunch_minutes === '' ? null : Number(draftShift.lunch_minutes)
+      const per_diem_location = draftShift.per_diem_location.trim() || 'none'
+      const { calculated_time_out, delta_minutes } = computeSubmissionTiming(time_in, stated_time_out, lunch_minutes, totalHours)
+
+      // Nothing worth persisting yet — no shift time set, no per diem note, no job picked
+      if (!time_in && !stated_time_out && lunch_minutes == null && per_diem_location === 'none' && entries.length === 0) {
+        setSavingLog(false)
+        return
+      }
+
+      const id = await ensureDaySubId(ymd)
+      const { error: err } = await supabase.schema('Cores').from('sms_submissions')
+        .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, entries, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
+        .eq('id', id)
+      if (err) { setError(err.message); setSavingLog(false); return }
+      await load()
+    } catch (e) {
+      setError(e.message)
+    }
+    setSavingLog(false)
   }
 
   // Uploaded straight to the gear-photos bucket. Job is optional — same
@@ -304,38 +321,80 @@ export default function EmployeeHome({ employee }) {
               {totalHours > 0 && <div className="emp-day-total">{fmtHours(totalHours)}h</div>}
             </div>
 
-            {shiftFor === ymd ? (
+            {logFor === ymd ? (
               <div style={{ marginBottom: '0.75rem', borderBottom: '1px solid #eee', paddingBottom: '0.75rem' }}>
                 <div className="emp-row-2">
                   <div className="emp-field">
                     <label>Time in</label>
-                    <input type="time" value={shiftFields.time_in} onChange={e => setShiftFields(f => ({ ...f, time_in: e.target.value }))} />
+                    <input type="time" value={draftShift.time_in}
+                      onChange={e => setDraftShift(f => ({ ...f, time_in: e.target.value }))}
+                      onBlur={() => autosaveLog(ymd)} />
                   </div>
                   <div className="emp-field">
                     <label>Time out</label>
-                    <input type="time" value={shiftFields.time_out} onChange={e => setShiftFields(f => ({ ...f, time_out: e.target.value }))} />
+                    <input type="time" value={draftShift.time_out}
+                      onChange={e => setDraftShift(f => ({ ...f, time_out: e.target.value }))}
+                      onBlur={() => autosaveLog(ymd)} />
                   </div>
                 </div>
                 <div className="emp-row-2">
                   <div className="emp-field">
                     <label>Lunch (min)</label>
-                    <input type="number" min="0" step="5" value={shiftFields.lunch_minutes} onChange={e => setShiftFields(f => ({ ...f, lunch_minutes: e.target.value }))} />
+                    <input type="number" min="0" step="5" value={draftShift.lunch_minutes}
+                      onChange={e => setDraftShift(f => ({ ...f, lunch_minutes: e.target.value }))}
+                      onBlur={() => autosaveLog(ymd)} />
                   </div>
                   <div className="emp-field">
                     <label>Per diem</label>
-                    <input type="text" placeholder='"none" or hotel name' value={shiftFields.per_diem_location} onChange={e => setShiftFields(f => ({ ...f, per_diem_location: e.target.value }))} />
+                    <input type="text" placeholder='"none" or hotel name' value={draftShift.per_diem_location}
+                      onChange={e => setDraftShift(f => ({ ...f, per_diem_location: e.target.value }))}
+                      onBlur={() => autosaveLog(ymd)} />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="emp-btn" disabled={savingShift} onClick={() => saveShift(ymd)}>{savingShift ? 'Saving…' : 'Save shift'}</button>
-                  <button className="emp-btn emp-btn-secondary" onClick={() => setShiftFor(null)}>Cancel</button>
+
+                {draftLines.map((line, i) => (
+                  <div className="emp-job-line" key={i}>
+                    {draftLines.length > 1 && (
+                      <button className="emp-remove-line" onClick={() => setDraftLines(lines => {
+                        const next = lines.filter((_, idx) => idx !== i)
+                        autosaveLog(ymd, next)
+                        return next
+                      })}>Remove</button>
+                    )}
+                    <div className="emp-field">
+                      <label>Job</label>
+                      <JobPicker jobs={jobs} value={line.job_id} onChange={(job) => setDraftLines(lines => {
+                        const next = lines.map((l, idx) => idx === i ? { ...l, job_id: job.id } : l)
+                        autosaveLog(ymd, next)
+                        return next
+                      })} />
+                    </div>
+                    <div className="emp-field">
+                      <label>Hours</label>
+                      <input type="number" step="0.25" min="0" value={line.hours}
+                        onChange={e => setDraftLines(lines => lines.map((l, idx) => idx === i ? { ...l, hours: e.target.value } : l))}
+                        onBlur={() => autosaveLog(ymd)} />
+                    </div>
+                    <div className="emp-field">
+                      <label>Notes</label>
+                      <input type="text" value={line.description}
+                        onChange={e => setDraftLines(lines => lines.map((l, idx) => idx === i ? { ...l, description: e.target.value } : l))}
+                        onBlur={() => autosaveLog(ymd)} />
+                    </div>
+                  </div>
+                ))}
+                <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => setDraftLines(l => [...l, blankDraftLine()])}>+ Add another job</button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem' }}>
+                  <button className="emp-btn" onClick={closeLog}>Done</button>
+                  {savingLog && <span style={{ fontSize: '0.8rem', color: '#999' }}>Saving…</span>}
                 </div>
               </div>
             ) : (
-              <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openShift(ymd)}>
+              <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
                 {daySub?.time_in
                   ? `Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`
-                  : 'Tap to set your shift (in / out / lunch / per diem)'}
+                  : 'Tap to log your shift & jobs (in / out / lunch / per diem)'}
               </div>
             )}
 
@@ -406,37 +465,6 @@ export default function EmployeeHome({ employee }) {
               </div>
             )}
 
-            {addJobFor === ymd ? (
-              <div style={{ marginTop: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
-                <div className="emp-field">
-                  <label>Job</label>
-                  <select value={addJobFields.job_id} onChange={e => setAddJobFields(f => ({ ...f, job_id: e.target.value }))}>
-                    <option value="">Select a job…</option>
-                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
-                  </select>
-                </div>
-                <div className="emp-field">
-                  <label>Hours</label>
-                  <input type="number" step="0.25" min="0" value={addJobFields.hours}
-                    onChange={e => setAddJobFields(f => ({ ...f, hours: e.target.value }))} />
-                </div>
-                <div className="emp-field">
-                  <label>Notes</label>
-                  <input type="text" value={addJobFields.description}
-                    onChange={e => setAddJobFields(f => ({ ...f, description: e.target.value }))} />
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="emp-btn" disabled={savingJob} onClick={() => saveAddJob(ymd)}>
-                    {savingJob ? 'Saving…' : 'Save job'}
-                  </button>
-                  <button className="emp-btn emp-btn-secondary" onClick={() => setAddJobFor(null)}>Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.6rem' }}
-                onClick={() => { setAddJobFor(ymd); setError('') }}>+ Add job</button>
-            )}
-
             {noteFor === ymd ? (
               <div style={{ marginTop: '0.5rem' }}>
                 <div className="emp-field">
@@ -460,10 +488,11 @@ export default function EmployeeHome({ employee }) {
               <div style={{ marginTop: '0.5rem' }}>
                 <div className="emp-field">
                   <label>Job this photo is for (optional)</label>
-                  <select value={photoJobId} onChange={e => setPhotoJobId(e.target.value)}>
-                    <option value="">No job — office will sort it out</option>
-                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
-                  </select>
+                  <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
+                  {photoJobId && (
+                    <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
+                      onClick={() => setPhotoJobId('')}>Clear job</button>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>

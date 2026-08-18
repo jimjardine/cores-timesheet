@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
 import { replaceSupplies, fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
+import JobPicker from './JobPicker'
 import './employee.css'
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -227,10 +228,7 @@ export default function EntryForm({ employee, mode }) {
                 )}
                 <div className="emp-field">
                   <label>Job</label>
-                  <select value={line.job_id} onChange={e => updateJobLine(i, { job_id: e.target.value })}>
-                    <option value="">Select a job…</option>
-                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
-                  </select>
+                  <JobPicker jobs={jobs} value={line.job_id} onChange={(job) => updateJobLine(i, { job_id: job.id })} />
                 </div>
                 <div className="emp-field">
                   <label>Hours</label>
@@ -247,10 +245,7 @@ export default function EntryForm({ employee, mode }) {
         ) : (
           <div className="emp-field">
             <label>Job</label>
-            <select value={editJobId} onChange={e => setEditJobId(e.target.value)}>
-              <option value="">Select a job…</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
-            </select>
+            <JobPicker jobs={jobs} value={editJobId} onChange={(job) => setEditJobId(job.id)} />
             <div style={{ height: '0.6rem' }} />
             <label>Hours</label>
             <input type="number" step="0.25" min="0" value={editHours} onChange={e => setEditHours(e.target.value)} />
@@ -265,10 +260,7 @@ export default function EntryForm({ employee, mode }) {
           {supplyLines.map((line, i) => (
             <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.4rem' }}>
               <div className="emp-row-2" style={{ flex: 1 }}>
-                <select value={line.job_id} onChange={e => updateSupplyLine(i, { job_id: e.target.value })}>
-                  <option value="">Job…</option>
-                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
-                </select>
+                <JobPicker jobs={jobs} value={line.job_id} onChange={(job) => updateSupplyLine(i, { job_id: job.id })} placeholder="Job…" />
                 <input type="text" placeholder="Fill in supply name and qty" value={line.supply_name}
                   onChange={e => updateSupplyLine(i, { supply_name: e.target.value })} />
               </div>

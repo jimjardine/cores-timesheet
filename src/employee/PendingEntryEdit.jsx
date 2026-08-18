@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { fetchDailyOTContext, computeDailyOTSplit } from '../utils/entrySave'
+import JobPicker from './JobPicker'
 import './employee.css'
 
 const blankEntry = () => ({ job_number: '', hours: '', description: '' })
@@ -190,10 +191,7 @@ export default function PendingEntryEdit({ employee }) {
             )}
             <div className="emp-field">
               <label>Job</label>
-              <select value={line.job_number} onChange={e => setEntryField(i, 'job_number', e.target.value)}>
-                <option value="">Select a job…</option>
-                {jobs.map(j => <option key={j.id} value={j.job_number}>{j.job_number} — {j.vessels?.name || j.description}</option>)}
-              </select>
+              <JobPicker jobs={jobs} value={line.job_number} onChange={(job) => setEntryField(i, 'job_number', job.job_number)} />
             </div>
             <div className="emp-field">
               <label>Hours</label>
