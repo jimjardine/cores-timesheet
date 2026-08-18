@@ -143,6 +143,8 @@ export default function EmployeeHome({ employee }) {
   function closeLog() {
     setLogFor(null)
     setDraftLines([blankDraftLine()])
+    setPhotoFor(null)
+    setPhotoJobId('')
   }
 
   // Finds (or creates) this day's sms_submissions row, serialized so two
@@ -386,7 +388,44 @@ export default function EmployeeHome({ employee }) {
                     </div>
                   </div>
                 ))}
-                <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => setDraftLines(l => [...l, blankDraftLine()])}>+ Add another job</button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => setDraftLines(l => [...l, blankDraftLine()])}>+ Add another job</button>
+                  {photoFor !== ymd && (
+                    <button className="emp-btn emp-btn-secondary emp-btn-small"
+                      onClick={() => { setPhotoFor(ymd); setPhotoJobId(''); setError('') }}>+ Photo</button>
+                  )}
+                </div>
+
+                {/* Most photos are of a specific job, so this lives right beside
+                    "+ Add another job" instead of down with the day-level Note —
+                    a tech is usually already looking at the job they want to
+                    attach it to. */}
+                {photoFor === ymd && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div className="emp-field">
+                      <label>Job this photo is for (optional)</label>
+                      <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
+                      {photoJobId && (
+                        <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
+                          onClick={() => setPhotoJobId('')}>Clear job</button>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
+                        {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
+                        {/* display:none (or visibility:hidden) on a file input silently blocks the
+                            native picker from opening on iOS Safari when triggered via a wrapping
+                            label — has to stay "visible" (just invisible/off-screen) for tapping the
+                            label to work. capture="environment" is left off so the OS offers both
+                            camera and library, matching what "Take / choose photo or video" promises. */}
+                        <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
+                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
+                      </label>
+                      <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem' }}>
                   <button className="emp-btn" onClick={closeLog}>Done</button>
@@ -485,36 +524,6 @@ export default function EmployeeHome({ employee }) {
             ) : (
               <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
                 onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>+ Note</button>
-            )}
-
-            {photoFor === ymd ? (
-              <div style={{ marginTop: '0.5rem' }}>
-                <div className="emp-field">
-                  <label>Job this photo is for (optional)</label>
-                  <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
-                  {photoJobId && (
-                    <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
-                      onClick={() => setPhotoJobId('')}>Clear job</button>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
-                    {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
-                    {/* display:none (or visibility:hidden) on a file input silently blocks the
-                        native picker from opening on iOS Safari when triggered via a wrapping
-                        label — has to stay "visible" (just invisible/off-screen) for tapping the
-                        label to work. capture="environment" is left off so the OS offers both
-                        camera and library, matching what "Take / choose photo or video" promises. */}
-                    <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
-                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
-                  </label>
-                  <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
-                onClick={() => { setPhotoFor(ymd); setPhotoJobId(''); setError('') }}>+ Photo</button>
             )}
 
             {dayEntries.some(e => e.entry_source === 'self') && (
