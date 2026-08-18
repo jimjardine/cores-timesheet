@@ -432,12 +432,16 @@ export default function EmployeeHome({ employee }) {
                   {savingLog && <span style={{ fontSize: '0.8rem', color: '#999' }}>Saving…</span>}
                 </div>
               </div>
-            ) : (
+            ) : daySub?.time_in ? (
               <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
-                {daySub?.time_in
-                  ? `Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`
-                  : 'Tap to log your shift & jobs (in / out / lunch / per diem)'}
+                {`Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
               </div>
+            ) : (
+              // A gray "tap to..." hint line reads as informational text, not
+              // as something to press — a real button here instead of just a
+              // clickable hint (the guys kept asking Jim how to start a day).
+              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginBottom: '0.6rem' }}
+                onClick={() => openLog(ymd)}>+ Log shift & jobs</button>
             )}
 
             {dayEntries.length === 0 && !daySub && <div className="emp-empty">No hours logged</div>}
