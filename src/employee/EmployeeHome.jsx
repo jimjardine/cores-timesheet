@@ -161,7 +161,7 @@ export default function EmployeeHome({ employee }) {
     let resolveLock
     insertLocksRef.current[ymd] = new Promise(res => { resolveLock = res })
     const { data, error } = await supabase.schema('Cores').from('sms_submissions').insert({
-      from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd, entries: [], status: 'submitted',
+      from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd, entries: [], status: 'draft',
     }).select('id').single()
     if (!error) daySubIdsRef.current[ymd] = data.id
     insertLocksRef.current[ymd] = null
@@ -214,8 +214,15 @@ export default function EmployeeHome({ employee }) {
       }
 
       const id = await ensureDaySubId(ymd)
+      // 'draft' while they're actively working the day — stop time alone was
+      // an unreliable "I'm done" signal (guys often put in a placeholder just
+      // to move past the field), so autosave no longer marks the day
+      // 'submitted' on its own. submitDay() does that explicitly. Reopening an
+      // already-submitted/rejected day to edit it drops it back to 'draft'
+      // too, on purpose — Niki shouldn't see a mid-edit day as ready to review
+      // until the tech re-submits it.
       const { error: err } = await supabase.schema('Cores').from('sms_submissions')
-        .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, entries, calculated_time_out, delta_minutes, status: 'submitted', updated_at: new Date().toISOString() })
+        .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, entries, calculated_time_out, delta_minutes, status: 'draft', updated_at: new Date().toISOString() })
         .eq('id', id)
       if (err) { setError(err.message); setSavingLog(false); return }
       await load()
@@ -223,6 +230,30 @@ export default function EmployeeHome({ employee }) {
       setError(e.message)
     }
     setSavingLog(false)
+  }
+
+  // Explicit "I'm done for the day" — the signal Niki actually needs. Flushes
+  // whatever's currently in the editor first (so a still-focused field's
+  // value isn't lost to blur-timing), then requires at least one job with
+  // hours before finalizing — an empty or half-filled day can't accidentally
+  // look "ready to review" just because a stop time got typed in.
+  async function submitDay(ymd) {
+    setError('')
+    await autosaveLog(ymd)
+    const id = daySubIdsRef.current[ymd]
+    if (!id) { setError('Add at least one job before submitting.'); return }
+    const { data: row, error: fetchErr } = await supabase.schema('Cores').from('sms_submissions')
+      .select('entries').eq('id', id).single()
+    if (fetchErr) { setError(fetchErr.message); return }
+    const totalHours = (row?.entries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0)
+    if (!(totalHours > 0)) { setError('Add at least one job with hours before submitting.'); return }
+    setSavingLog(true)
+    const { error: err } = await supabase.schema('Cores').from('sms_submissions')
+      .update({ status: 'submitted', updated_at: new Date().toISOString() }).eq('id', id)
+    setSavingLog(false)
+    if (err) { setError(err.message); return }
+    await load()
+    closeLog()
   }
 
   // Uploaded straight to the gear-photos bucket — photo or video, the
@@ -432,14 +463,15 @@ export default function EmployeeHome({ employee }) {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem' }}>
-                  <button className="emp-btn" onClick={closeLog}>Done</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+                  <button className="emp-btn" disabled={savingLog} onClick={() => submitDay(ymd)}>Submit day</button>
+                  <button className="emp-btn emp-btn-secondary" disabled={savingLog} onClick={closeLog}>Save &amp; close</button>
                   {savingLog && <span style={{ fontSize: '0.8rem', color: '#999' }}>Saving…</span>}
                 </div>
               </div>
             ) : daySub?.time_in ? (
               <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
-                {`Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
+                {`${daySub.status === 'draft' ? '📝 Draft — not submitted yet' : '⏳ Submitted'}: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
               </div>
             ) : dayEntries.length > 0 ? (
               // Already approved, no pending sub (submissions excludes
@@ -500,8 +532,14 @@ export default function EmployeeHome({ employee }) {
             {daySub && (
               <div style={{ marginTop: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                  <span className="emp-chip" style={{ marginLeft: 0, background: daySub.status === 'rejected' ? '#fdecea' : '#fff4de', color: daySub.status === 'rejected' ? '#c0392b' : '#a06b00' }}>
-                    {daySub.status === 'rejected' ? '✗ declined — edit to resend' : '⏳ texted in — awaiting approval'}
+                  <span className="emp-chip" style={{
+                    marginLeft: 0,
+                    background: daySub.status === 'rejected' ? '#fdecea' : daySub.status === 'draft' ? '#f0f0f0' : '#fff4de',
+                    color: daySub.status === 'rejected' ? '#c0392b' : daySub.status === 'draft' ? '#777' : '#a06b00',
+                  }}>
+                    {daySub.status === 'rejected' ? '✗ declined — edit to resend'
+                      : daySub.status === 'draft' ? '📝 draft — tap Submit day when finished'
+                      : '⏳ texted in — awaiting approval'}
                   </span>
                   {subTotalHours > 0 && <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{fmtHours(subTotalHours)}h</span>}
                 </div>

@@ -16,6 +16,7 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
 const STATUS_COLORS = {
+  draft:      '#aaa',
   collecting: '#888',
   submitted:  '#cc7700',
   approved:   '#2a7a2a',
