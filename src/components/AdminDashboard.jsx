@@ -149,6 +149,21 @@ export default function AdminDashboard() {
     supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at').then(({ data }) => setPostedWeeks(Object.fromEntries((data || []).map(r => [`${r.employee_id}|${r.week_start}`, r.posted_at]))))
   }, [])
 
+  // Auto-refresh so one admin's edit (e.g. Niki zeroing out a per diem) shows up
+  // on another admin's already-open screen (e.g. Tracy's) without a manual reload.
+  // Silent (no loading-spinner flash) and paused while an edit/manual-entry modal
+  // is open so a background reload can't race a save or reset in-progress typing.
+  const editingRef = useRef(false)
+  useEffect(() => {
+    editingRef.current = !!(editEntry || manualEntry || addingNewJob)
+  })
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!editingRef.current) loadTimesheets({ silent: true })
+    }, 10000)
+    return () => clearInterval(id)
+  }, [])
+
   // Default the Payroll tab's employee filter to everyone the first time employee
   // data loads — but only once, so it never overrides a user's own selection after.
   useEffect(() => {
@@ -157,19 +172,24 @@ export default function AdminDashboard() {
     setPayEmployeeIds(employees.map(e => e.id))
   }, [employees])
 
-  async function loadTimesheets() {
-    setLoadingEntries(true)
+  // silent=true skips the loading-state flash — used by the background poll so
+  // it doesn't blank out the Timesheets tab (loadingEntries===true replaces the
+  // whole results area, see render) every 30s, and doesn't alert() on a
+  // transient network hiccup the admin never asked to see.
+  async function loadTimesheets({ silent = false } = {}) {
+    if (!silent) setLoadingEntries(true)
     const { data, error } = await supabase
       .schema('Cores').from('timesheet_entries')
       .select('*, employees(id, name), jobs(id, job_number, description, customers(name), vessels(name))')
       .order('work_date', { ascending: false })
     if (error) {
-      alert(`Failed to load timesheets: ${error.message}`)
-      setLoadingEntries(false)
+      if (!silent) alert(`Failed to load timesheets: ${error.message}`)
+      else console.error('Background refresh failed:', error.message)
+      if (!silent) setLoadingEntries(false)
       return
     }
     setEntries(data || [])
-    setLoadingEntries(false)
+    if (!silent) setLoadingEntries(false)
     // Approving a submission is the one action that changes this count, so
     // refresh it alongside entries (SmsReview's onApproved calls this) rather
     // than only on mount — otherwise the banner could read stale right after
@@ -177,7 +197,8 @@ export default function AdminDashboard() {
     const { count, error: countError } = await supabase.schema('Cores').from('sms_submissions')
       .select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting'])
     if (countError) {
-      alert(`Failed to load pending submission count: ${countError.message}`)
+      if (!silent) alert(`Failed to load pending submission count: ${countError.message}`)
+      else console.error('Background refresh failed:', countError.message)
       return
     }
     setPendingSubmissionCount(count || 0)

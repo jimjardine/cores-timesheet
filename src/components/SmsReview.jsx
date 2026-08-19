@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 import { isWeekend } from '../utils/weeklyCompilationPdf'
@@ -55,8 +55,11 @@ export default function SmsReview({ onApproved } = {}) {
   const [editModal, setEditModal]   = useState(null)
   const [editFields, setEditFields] = useState({})
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  // silent=true skips the "Loading…" banner — used by the background poll so a
+  // refresh that finds nothing new doesn't flash text at the top of the list
+  // every cycle.
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
@@ -70,10 +73,26 @@ export default function SmsReview({ onApproved } = {}) {
     setGearPhotos(photos || [])
     const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
     setOtThreshold(ot ? Number(ot.value) : 8)
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Auto-refresh so one admin's action (approve, reject, edit) shows up on
+  // another admin's already-open SMS Review without a manual reload — this is
+  // exactly the screen Tracy and Niki were both looking at when Niki's per-diem
+  // change didn't show up on Tracy's side. Paused while the edit modal is open
+  // or an approve/reject/send is in flight, so a background reload can't race it.
+  const editingRef = useRef(false)
+  useEffect(() => {
+    editingRef.current = !!editModal || !!acting
+  })
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!editingRef.current) load({ silent: true })
+    }, 10000)
+    return () => clearInterval(id)
+  }, [load])
 
   // "Pending" also surfaces still-open conversations (status='collecting') — otherwise a
   // tech who never answers a follow-up question (lunch/PD/supplies) vanishes from view
