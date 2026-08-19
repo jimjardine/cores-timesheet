@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
+import PersonPicker from './PersonPicker'
 import GearPhotos from './GearPhotos'
 import { getAdminName } from './PasswordGate'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
@@ -1077,9 +1078,8 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Employee</label>
-                <select style={inputStyle} value={editFields.employee_id || ''} onChange={e => setEditFields(f => ({ ...f, employee_id: e.target.value }))}>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <PersonPicker employees={employees} value={editFields.employee_id || ''} allowClear={false}
+                  onChange={id => setEditFields(f => ({ ...f, employee_id: id }))} inputStyle={inputStyle} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Date</label>
@@ -1200,10 +1200,8 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Employee</label>
-                <select style={inputStyle} value={manualFields.employee_id || ''} onChange={e => applyManualFieldChange({ employee_id: e.target.value })}>
-                  <option value="">— select —</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <PersonPicker employees={employees} value={manualFields.employee_id || ''} allowClear={false}
+                  placeholder="— select —" onChange={id => applyManualFieldChange({ employee_id: id })} inputStyle={inputStyle} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Date</label>
