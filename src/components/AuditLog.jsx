@@ -20,6 +20,29 @@ const fmtWhen = (ts) => {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+const fmtWorkDate = (ymd) => ymd
+  ? new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  : null
+
+// Best-effort human label for the row — most audit rows are on tables tied to
+// an employee/day (timesheet_entries, sms_submissions, job_supplies), so that's
+// the common case; other tables fall back to whatever name-ish field they have
+// so the row still reads as something other than a bare UUID.
+function describeRecord(r, employeeById) {
+  const nd = r.new_data || {}
+  const od = r.old_data || {}
+  const employeeId = nd.employee_id ?? od.employee_id
+  if (employeeId) {
+    return {
+      name: employeeById[employeeId] || 'Unknown employee',
+      date: fmtWorkDate(nd.work_date ?? od.work_date),
+    }
+  }
+  const name = nd.name ?? od.name ?? nd.job_number ?? od.job_number ?? null
+  const date = fmtWorkDate(nd.work_date ?? od.work_date ?? nd.holiday_date ?? od.holiday_date)
+  return { name, date }
+}
+
 const fmtVal = (v) => {
   if (v === null || v === undefined) return '—'
   if (typeof v === 'object') return JSON.stringify(v)
@@ -43,10 +66,16 @@ export default function AuditLog() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
   const [expanded, setExpanded] = useState({})
+  const [employees, setEmployees] = useState([])
 
   const [tableFilter, setTableFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('all')
   const [recordIdSearch, setRecordIdSearch] = useState('')
+
+  useEffect(() => {
+    supabase.schema('Cores').from('employees').select('id, name').then(({ data }) => setEmployees(data || []))
+  }, [])
+  const employeeById = Object.fromEntries(employees.map(e => [e.id, e.name]))
 
   const load = useCallback(async (offset, append) => {
     if (append) setLoadingMore(true); else setLoading(true)
@@ -121,6 +150,7 @@ export default function AuditLog() {
                   <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>When</th>
                   <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Table</th>
                   <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Action</th>
+                  <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Name / Date</th>
                   <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Record</th>
                 </tr>
               </thead>
@@ -128,6 +158,7 @@ export default function AuditLog() {
                 {rows.map(r => {
                   const isExpanded = !!expanded[r.id]
                   const fields = isExpanded ? allFields(r.old_data, r.new_data) : []
+                  const { name, date } = describeRecord(r, employeeById)
                   return (
                     <React.Fragment key={r.id}>
                       <tr
@@ -147,13 +178,16 @@ export default function AuditLog() {
                             border: `1px solid ${(ACTION_COLORS[r.action] || '#888')}44`,
                           }}>{r.action}</span>
                         </td>
+                        <td style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', color: name ? '#333' : '#ccc' }}>
+                          {name || '—'}{date && <span style={{ color: '#888' }}> · {date}</span>}
+                        </td>
                         <td style={{ padding: '0.6rem 0.75rem', fontSize: '0.8rem', color: '#888', fontFamily: 'monospace' }}>
                           {r.record_id?.slice(0, 8)}… <span style={{ color: '#ccc' }}>{isExpanded ? '▲' : '▼'}</span>
                         </td>
                       </tr>
                       {isExpanded && (
                         <tr style={{ borderBottom: '1px solid #eee', background: '#fafafa' }}>
-                          <td colSpan={4} style={{ padding: '0.75rem 1.5rem' }}>
+                          <td colSpan={5} style={{ padding: '0.75rem 1.5rem' }}>
                             {fields.length === 0 ? (
                               <div style={{ color: '#888', fontSize: '0.85rem' }}>No fields recorded</div>
                             ) : (
