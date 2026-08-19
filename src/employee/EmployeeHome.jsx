@@ -475,7 +475,7 @@ export default function EmployeeHome({ employee }) {
               </div>
             ) : dayEntries.length > 0 ? (
               // Already approved, no pending sub (submissions excludes
-              // status='approved') — the "+ Log shift & jobs" button below is
+              // status='approved') — the "+ Add Job Info" button below is
               // for a day with nothing on it yet. Showing it here too is
               // exactly how an approved day got silently re-logged as a
               // duplicate: it reads as "you haven't logged today" even though
@@ -489,7 +489,7 @@ export default function EmployeeHome({ employee }) {
               // as something to press — a real button here instead of just a
               // clickable hint (the guys kept asking Jim how to start a day).
               <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginBottom: '0.6rem' }}
-                onClick={() => openLog(ymd)}>+ Log shift & jobs</button>
+                onClick={() => openLog(ymd)}>+ Add Job Info</button>
             )}
 
             {dayEntries.length === 0 && !daySub && <div className="emp-empty">No hours logged</div>}
@@ -581,7 +581,7 @@ export default function EmployeeHome({ employee }) {
               </div>
             ) : (
               // Plain text link, not a pill button — same "+X" button styling as
-              // "+ Log shift & jobs" made this read as another way to add a job,
+              // "+ Add Job Info" made this read as another way to add a job,
               // so the guys kept tapping it by mistake instead of the real button.
               <button className="emp-inline-link" style={{ display: 'block', marginTop: '0.5rem', marginLeft: '0.5rem', color: '#888', fontWeight: 400 }}
                 onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>Add a note (not a job)</button>
@@ -606,8 +606,6 @@ export default function EmployeeHome({ employee }) {
         )
       })}
 
-      <div style={{ height: '5rem' }} />
-      <button className="emp-btn emp-fab" onClick={() => navigate('entry/new')}>+ Add entry</button>
     </div>
   )
 }

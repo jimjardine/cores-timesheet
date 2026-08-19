@@ -154,16 +154,6 @@
   font-size: 0.85rem;
 }
 
-.emp-fab {
-  position: fixed;
-  bottom: calc(1.25rem + env(safe-area-inset-bottom, 0));
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 440px;
-  width: calc(100% - 2rem);
-  box-shadow: 0 4px 14px rgba(0, 102, 204, 0.35);
-}
-
 .emp-field { margin-bottom: 0.9rem; }
 
 .emp-field label {
