@@ -126,10 +126,15 @@ export default function EmployeeHome({ employee }) {
 
   function openLog(ymd) {
     const daySub = submissions.find(s => s.work_date === ymd)
+    // No pending sub but the day already has approved hours (submissions
+    // excludes status='approved', see load()) — prefill from what's already on
+    // record instead of blank fields, so reopening an already-logged day reads
+    // as "add to this" rather than inviting a full re-log of the same shift.
+    const approvedDay = !daySub ? entries.find(e => e.work_date === ymd) : null
     setDraftShift({
-      time_in: daySub?.time_in ? daySub.time_in.substring(0, 5) : '',
-      time_out: daySub?.stated_time_out ? daySub.stated_time_out.substring(0, 5) : '',
-      lunch_minutes: daySub?.lunch_minutes != null ? String(daySub.lunch_minutes) : '',
+      time_in: daySub?.time_in ? daySub.time_in.substring(0, 5) : (approvedDay?.time_in ? approvedDay.time_in.substring(0, 5) : ''),
+      time_out: daySub?.stated_time_out ? daySub.stated_time_out.substring(0, 5) : (approvedDay?.stated_time_out ? approvedDay.stated_time_out.substring(0, 5) : ''),
+      lunch_minutes: daySub?.lunch_minutes != null ? String(daySub.lunch_minutes) : (approvedDay?.lunch_minutes != null ? String(approvedDay.lunch_minutes) : ''),
       per_diem_location: daySub?.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : '',
     })
     setDraftLines([blankDraftLine()])
@@ -435,6 +440,17 @@ export default function EmployeeHome({ employee }) {
             ) : daySub?.time_in ? (
               <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
                 {`Shift: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
+              </div>
+            ) : dayEntries.length > 0 ? (
+              // Already approved, no pending sub (submissions excludes
+              // status='approved') — the "+ Log shift & jobs" button below is
+              // for a day with nothing on it yet. Showing it here too is
+              // exactly how an approved day got silently re-logged as a
+              // duplicate: it reads as "you haven't logged today" even though
+              // the locked entries right below it say otherwise. A muted hint
+              // instead, same tone as the pending-shift one above.
+              <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
+                {`Already logged${dayEntries[0]?.time_in ? ` — In ${fmtTimeShort(dayEntries[0].time_in)} · Out ${dayEntries[0].stated_time_out ? fmtTimeShort(dayEntries[0].stated_time_out) : '—'}` : ''} (tap to add another job)`}
               </div>
             ) : (
               // A gray "tap to..." hint line reads as informational text, not
