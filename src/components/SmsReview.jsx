@@ -540,7 +540,9 @@ export default function SmsReview({ onApproved } = {}) {
         if (!sub.time_in)                              flags.push('start time missing')
         if (!sub.entries || sub.entries.length === 0)  flags.push('no job entries')
         if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
-        if (sub.per_diem_location == null)             flags.push('per diem unknown')
+        // No 'per diem unknown' flag — the bot never asks about PD (silent
+        // default to 'none' at save time), so a null here just means none,
+        // not something the office needs to chase down.
         if ((!sub.supplies || sub.supplies.length === 0) && sub.supplies_note === 'photo') flags.push('📷 supplies in gear photo — itemize from Gear Photos tab')
         if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) {
           const deltaHrs = deltaMinsToHours(sub.delta_minutes)
@@ -603,7 +605,7 @@ export default function SmsReview({ onApproved } = {}) {
                       <strong>Δ:</strong> {(() => { const h = deltaMinsToHours(sub.delta_minutes); return `${h > 0 ? '+' : ''}${fmtHours(h)}hrs` })()}
                     </span>
                   )}
-                  <span><strong>Per diem:</strong> {sub.per_diem_location === 'none' ? 'No' : sub.per_diem_location || '?'}</span>
+                  <span><strong>Per diem:</strong> {sub.per_diem_location && sub.per_diem_location !== 'none' ? sub.per_diem_location : 'No'}</span>
                   <span style={{ color: '#999', marginLeft: 'auto' }}>{sub.from_phone}</span>
                 </div>
 
