@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import PersonPicker from './PersonPicker'
+import AuditFieldDiff from './AuditFieldDiff'
+import AuditTimeline from './AuditTimeline'
 
 const PAGE_SIZE = 100
 
@@ -64,23 +66,6 @@ function buildLinkedRecordFilter(employeeId, workDate) {
   return newLeaf ? `${newLeaf},${oldLeaf}` : null
 }
 
-const fmtVal = (v) => {
-  if (v === null || v === undefined) return '—'
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
-
-// Every field on the row, old value and new value side by side — not just the ones
-// that changed, so nothing is hidden behind a diff algorithm's judgment call.
-function allFields(oldData, newData) {
-  const keys = [...new Set([...Object.keys(oldData || {}), ...Object.keys(newData || {})])].sort()
-  return keys.map(k => {
-    const from = oldData ? oldData[k] : undefined
-    const to = newData ? newData[k] : undefined
-    return { key: k, from, to, changed: JSON.stringify(from) !== JSON.stringify(to) }
-  })
-}
-
 export default function AuditLog() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -88,15 +73,25 @@ export default function AuditLog() {
   const [hasMore, setHasMore] = useState(true)
   const [expanded, setExpanded] = useState({})
   const [employees, setEmployees] = useState([])
+  const [jobs, setJobs] = useState([])
 
   const [tableFilter, setTableFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('all')
   const [recordIdSearch, setRecordIdSearch] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [workDateFilter, setWorkDateFilter] = useState('')
+  // Only meaningful once both filters narrow to one person's one day — "all of
+  // Robin's history" or "everyone on Tuesday" isn't a linear story. Gated at
+  // render time rather than reset on filter change, so it doesn't need its own
+  // effect — it just quietly falls back to the table if the filters loosen.
+  const [viewMode, setViewMode] = useState('table')
+  const timelineEligible = !!(employeeFilter && workDateFilter)
 
   useEffect(() => {
     supabase.schema('Cores').from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
+    // timesheet_entries audit snapshots only carry job_id (a uuid) — this is
+    // just to render a real job number in the timeline's detail lines.
+    supabase.schema('Cores').from('jobs').select('id, job_number').then(({ data }) => setJobs(data || []))
   }, [])
   const employeeById = Object.fromEntries(employees.map(e => [e.id, e.name]))
 
@@ -162,6 +157,16 @@ export default function AuditLog() {
             style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: '0.85rem', color: '#666' }}
           >Clear</button>
         )}
+        {timelineEligible && (
+          <button
+            onClick={() => setViewMode(m => m === 'timeline' ? 'table' : 'timeline')}
+            title="A chronological story for this person's day — texted in, approved, edited, etc."
+            style={{
+              padding: '0.4rem 0.7rem', border: '1px solid #0066cc', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+              background: viewMode === 'timeline' ? '#0066cc' : '#fff', color: viewMode === 'timeline' ? '#fff' : '#0066cc',
+            }}
+          >{viewMode === 'timeline' ? '☰ Table view' : '🕓 Timeline view'}</button>
+        )}
         <input
           value={recordIdSearch}
           onChange={e => setRecordIdSearch(e.target.value)}
@@ -176,7 +181,9 @@ export default function AuditLog() {
         </div>
       </div>
 
-      {loading ? (
+      {viewMode === 'timeline' && timelineEligible ? (
+        <AuditTimeline rows={rows} employees={employees} jobs={jobs} loading={loading} hasMore={hasMore} />
+      ) : loading ? (
         <div style={{ color: '#888', textAlign: 'center', padding: '3rem' }}>Loading…</div>
       ) : rows.length === 0 ? (
         <div style={{ color: '#888', textAlign: 'center', padding: '3rem', border: '2px dashed #ddd', borderRadius: 8 }}>
@@ -198,7 +205,6 @@ export default function AuditLog() {
               <tbody>
                 {rows.map(r => {
                   const isExpanded = !!expanded[r.id]
-                  const fields = isExpanded ? allFields(r.old_data, r.new_data) : []
                   const { name, date } = describeRecord(r, employeeById)
                   return (
                     <React.Fragment key={r.id}>
@@ -229,28 +235,7 @@ export default function AuditLog() {
                       {isExpanded && (
                         <tr style={{ borderBottom: '1px solid #eee', background: '#fafafa' }}>
                           <td colSpan={5} style={{ padding: '0.75rem 1.5rem' }}>
-                            {fields.length === 0 ? (
-                              <div style={{ color: '#888', fontSize: '0.85rem' }}>No fields recorded</div>
-                            ) : (
-                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', fontFamily: 'monospace' }}>
-                                <thead>
-                                  <tr>
-                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem 0.2rem 0', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>Field</th>
-                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>Old Value</th>
-                                    <th style={{ textAlign: 'left', padding: '0.2rem 0.6rem', color: '#aaa', fontWeight: 600, fontFamily: 'ui-sans-serif, sans-serif', fontSize: '0.72rem', textTransform: 'uppercase' }}>New Value</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {fields.map(f => (
-                                    <tr key={f.key} style={{ background: f.changed ? '#fff8e1' : 'transparent' }}>
-                                      <td style={{ padding: '0.25rem 0.6rem 0.25rem 0', color: f.changed ? '#333' : '#aaa', fontWeight: f.changed ? 600 : 400, whiteSpace: 'nowrap' }}>{f.key}</td>
-                                      <td style={{ padding: '0.25rem 0.6rem', color: f.changed ? '#c00' : '#aaa' }}>{fmtVal(f.from)}</td>
-                                      <td style={{ padding: '0.25rem 0.6rem', color: f.changed ? '#2a7a2a' : '#aaa', fontWeight: f.changed ? 600 : 400 }}>{fmtVal(f.to)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
+                            <AuditFieldDiff oldData={r.old_data} newData={r.new_data} />
                             <div style={{ fontSize: '0.75rem', color: '#aaa', marginTop: '0.75rem', fontFamily: 'monospace' }}>
                               record_id: {r.record_id}
                             </div>
