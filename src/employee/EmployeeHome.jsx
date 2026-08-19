@@ -463,9 +463,9 @@ export default function EmployeeHome({ employee }) {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.6rem', marginTop: '0.9rem' }}>
+                  <button className="emp-btn emp-btn-secondary" disabled={savingLog} onClick={closeLog}>Save Entry</button>
                   <button className="emp-btn" disabled={savingLog} onClick={() => submitDay(ymd)}>Submit day</button>
-                  <button className="emp-btn emp-btn-secondary" disabled={savingLog} onClick={closeLog}>Save &amp; close</button>
                   {savingLog && <span style={{ fontSize: '0.8rem', color: '#999' }}>Saving…</span>}
                 </div>
               </div>
