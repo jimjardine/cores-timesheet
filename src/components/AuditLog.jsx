@@ -43,6 +43,26 @@ function describeRecord(r, employeeById) {
   return { name, date }
 }
 
+// employee_id/work_date live inside the jsonb old_data/new_data, not as real
+// columns, and a row can have either one populated (an INSERT has no old_data,
+// a DELETE has no new_data) — so match "changed on this employee" as new_data
+// OR old_data carrying that employee_id (same for work_date), combined with AND
+// when both filters are set. Built as a single .or() string since supabase-js
+// ANDs separate .or()/.eq() calls together but a second .or() call would
+// overwrite the first rather than combine with it.
+function buildLinkedRecordFilter(employeeId, workDate) {
+  const leaf = (prefix) => {
+    const parts = []
+    if (employeeId) parts.push(`${prefix}->>employee_id.eq.${employeeId}`)
+    if (workDate)   parts.push(`${prefix}->>work_date.eq.${workDate}`)
+    if (parts.length === 0) return null
+    return parts.length === 1 ? parts[0] : `and(${parts.join(',')})`
+  }
+  const newLeaf = leaf('new_data')
+  const oldLeaf = leaf('old_data')
+  return newLeaf ? `${newLeaf},${oldLeaf}` : null
+}
+
 const fmtVal = (v) => {
   if (v === null || v === undefined) return '—'
   if (typeof v === 'object') return JSON.stringify(v)
@@ -71,9 +91,11 @@ export default function AuditLog() {
   const [tableFilter, setTableFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('all')
   const [recordIdSearch, setRecordIdSearch] = useState('')
+  const [employeeFilter, setEmployeeFilter] = useState('')
+  const [workDateFilter, setWorkDateFilter] = useState('')
 
   useEffect(() => {
-    supabase.schema('Cores').from('employees').select('id, name').then(({ data }) => setEmployees(data || []))
+    supabase.schema('Cores').from('employees').select('id, name').order('name').then(({ data }) => setEmployees(data || []))
   }, [])
   const employeeById = Object.fromEntries(employees.map(e => [e.id, e.name]))
 
@@ -83,6 +105,10 @@ export default function AuditLog() {
     if (tableFilter) query = query.eq('table_name', tableFilter)
     if (actionFilter !== 'all') query = query.eq('action', actionFilter.toUpperCase())
     if (recordIdSearch.trim()) query = query.eq('record_id', recordIdSearch.trim())
+    // Filters the date the change was ABOUT (a timesheet_entries/sms_submissions/
+    // job_supplies row's work_date), not changed_at (when the edit was made).
+    const linkedFilter = buildLinkedRecordFilter(employeeFilter, workDateFilter)
+    if (linkedFilter) query = query.or(linkedFilter)
     const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1)
     if (error) { alert('Error loading audit log: ' + error.message) }
     else {
@@ -91,7 +117,7 @@ export default function AuditLog() {
     }
     setLoading(false)
     setLoadingMore(false)
-  }, [tableFilter, actionFilter, recordIdSearch])
+  }, [tableFilter, actionFilter, recordIdSearch, employeeFilter, workDateFilter])
 
   useEffect(() => { load(0, false) }, [load])
 
@@ -121,6 +147,27 @@ export default function AuditLog() {
           <option value="">All tables</option>
           {TABLES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        <select
+          value={employeeFilter}
+          onChange={e => setEmployeeFilter(e.target.value)}
+          style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
+        >
+          <option value="">All people</option>
+          {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+        <input
+          type="date"
+          value={workDateFilter}
+          onChange={e => setWorkDateFilter(e.target.value)}
+          title="Filters by the date the change was about (e.g. a timesheet's work date) — not when the edit was made"
+          style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
+        />
+        {(employeeFilter || workDateFilter) && (
+          <button
+            onClick={() => { setEmployeeFilter(''); setWorkDateFilter('') }}
+            style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: '0.85rem', color: '#666' }}
+          >Clear</button>
+        )}
         <input
           value={recordIdSearch}
           onChange={e => setRecordIdSearch(e.target.value)}
