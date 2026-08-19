@@ -1591,31 +1591,32 @@ export default function AdminDashboard() {
           cur.setDate(cur.getDate() - 7)
         }
 
-        const rows = employees.map(emp => {
-          const ee = entries.filter(e => e.employee_id === emp.id && weekDates.has(e.work_date))
-          const submitted = ee.length > 0
-          const otMap = submitted ? (() => {
-            const empAll = entries.filter(e => e.employee_id === emp.id)
-            return computeEntryOT(empAll)
-          })() : {}
-          // Days this employee has texted/logged in but an admin hasn't approved
-          // yet — "Status" above only reflects approved entries, so someone
-          // mid-review reads as "Missing" with nothing to explain why.
-          const pendingDays = new Set(
-            pendingSubs.filter(s => s.employee_id === emp.id && weekDates.has(s.work_date)).map(s => s.work_date)
-          ).size
-          return {
-            emp, submitted, pendingDays,
-            days:  new Set(ee.map(e => e.work_date)).size,
-            hours: ee.reduce((s, e) => s + Number(e.hours), 0),
-            reg:   ee.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
-            ot:    ee.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0),
-            pd:    ee.reduce((s, e) => s + Number(e.per_diem || 0), 0),
-          }
-        }).sort((a, b) => b.submitted - a.submitted || a.emp.name.localeCompare(b.emp.name))
+        // Weekdays only — nobody expects a Sat/Sun entry by default, so
+        // counting weekends as "missing" would make every employee look
+        // short every single week regardless of actual attendance.
+        const weekdayDates = [...weekDates].filter(d => {
+          const dow = new Date(d + 'T12:00:00').getDay()
+          return dow !== 0 && dow !== 6
+        })
 
-        const missing = rows.filter(r => !r.submitted && r.pendingDays === 0)
-        const pendingReview = rows.filter(r => !r.submitted && r.pendingDays > 0)
+        const rows = employees.map(emp => {
+          const approvedDates = new Set(entries.filter(e => e.employee_id === emp.id && weekDates.has(e.work_date)).map(e => e.work_date))
+          const pendingDates = new Set(
+            pendingSubs.filter(s => s.employee_id === emp.id && weekDates.has(s.work_date) && !approvedDates.has(s.work_date)).map(s => s.work_date)
+          )
+          const missingDates = weekdayDates.filter(d => !approvedDates.has(d) && !pendingDates.has(d))
+          const submitted = approvedDates.size > 0
+          return {
+            emp, submitted,
+            approvedCount: approvedDates.size,
+            pendingCount: pendingDates.size,
+            missingCount: missingDates.length,
+          }
+        }).sort((a, b) => b.missingCount - a.missingCount || a.emp.name.localeCompare(b.emp.name))
+
+        const totalApproved = rows.reduce((s, r) => s + r.approvedCount, 0)
+        const totalPending = rows.reduce((s, r) => s + r.pendingCount, 0)
+        const totalMissing = rows.reduce((s, r) => s + r.missingCount, 0)
         const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 
         return (
@@ -1634,11 +1635,11 @@ export default function AdminDashboard() {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                <span style={{ color: '#2d6a38', fontWeight: 600 }}>{rows.filter(r => r.submitted).length} submitted</span>
+                <span style={{ color: '#2d6a38', fontWeight: 600 }}>{totalApproved} approved</span>
                 <span style={{ color: '#aaa' }}>·</span>
-                <span style={{ color: pendingReview.length > 0 ? '#a06b00' : '#aaa', fontWeight: pendingReview.length > 0 ? 700 : 400 }}>{pendingReview.length} pending review</span>
+                <span style={{ color: totalPending > 0 ? '#a06b00' : '#aaa', fontWeight: totalPending > 0 ? 700 : 400 }}>{totalPending} pending</span>
                 <span style={{ color: '#aaa' }}>·</span>
-                <span style={{ color: missing.length > 0 ? '#c0392b' : '#aaa', fontWeight: missing.length > 0 ? 700 : 400 }}>{missing.length} missing</span>
+                <span style={{ color: totalMissing > 0 ? '#c0392b' : '#aaa', fontWeight: totalMissing > 0 ? 700 : 400 }}>{totalMissing} missing</span>
               </div>
             </div>
             {subPreset === 'custom' && (
@@ -1660,15 +1661,15 @@ export default function AdminDashboard() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  {['Employee', 'Status', 'Pending', 'Days', 'Total Hrs', 'Reg', 'OT', 'PD'].map((h, i) => (
-                    <th key={i} style={{ padding: '0.75rem', textAlign: i > 1 ? 'center' : 'left', fontWeight: 600, color: '#555' }}>{h}</th>
+                  {['Employee', 'Approved', 'Pending', 'Missing'].map((h, i) => (
+                    <th key={i} style={{ padding: '0.75rem', textAlign: i > 0 ? 'center' : 'left', fontWeight: 600, color: '#555' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ emp, submitted, pendingDays, days, hours, reg, ot, pd }) => (
+                {rows.map(({ emp, submitted, approvedCount, pendingCount, missingCount }) => (
                   <tr key={emp.id}
-                    style={{ borderBottom: '1px solid #eee', background: submitted ? '' : '#fff9f9', cursor: submitted ? 'pointer' : 'default' }}
+                    style={{ borderBottom: '1px solid #eee', background: missingCount > 0 ? '#fff9f9' : '', cursor: submitted ? 'pointer' : 'default' }}
                     onClick={() => {
                       if (!submitted) return
                       const we = new Date(ws); we.setDate(we.getDate() + 6)
@@ -1683,23 +1684,21 @@ export default function AdminDashboard() {
                     onMouseEnter={e => { if (submitted) hoverRow(e, true) }}
                     onMouseLeave={e => hoverRow(e, false)}>
                     <td style={{ padding: '0.75rem', fontWeight: 600, ...(submitted ? linkStyle : {}) }}>{emp.name}</td>
-                    <td style={{ padding: '0.75rem' }}>
-                      {submitted
-                        ? <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#e6f4ea', color: '#2d6a38', fontWeight: 700, fontSize: '0.85rem' }}>✓ Submitted</span>
-                        : pendingDays > 0
-                          ? <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fff4de', color: '#a06b00', fontWeight: 700, fontSize: '0.85rem' }}>⏳ Pending review</span>
-                          : <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fde8e8', color: '#c0392b', fontWeight: 700, fontSize: '0.85rem' }}>✗ Missing</span>}
-                    </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      {pendingDays > 0
-                        ? <span style={{ color: '#a06b00', fontWeight: 600 }}>{pendingDays} day{pendingDays === 1 ? '' : 's'}</span>
+                      {approvedCount > 0
+                        ? <span style={{ color: '#2d6a38', fontWeight: 600 }}>{approvedCount}</span>
                         : <span style={{ color: '#ccc' }}>—</span>}
                     </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: '#555' }}>{submitted ? days : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: submitted ? 600 : 400, color: submitted ? '#333' : '#ccc' }}>{submitted ? fmtHours(hours) : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: submitted ? '#2d6a38' : '#ccc' }}>{submitted ? fmtHours(reg) : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: ot > 0 ? '#c0392b' : '#ccc' }}>{submitted ? fmtHours(ot) : '—'}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center', color: pd > 0 ? '#7a5c00' : '#ccc' }}>{submitted ? (pd > 0 ? pd : '—') : '—'}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {pendingCount > 0
+                        ? <span style={{ color: '#a06b00', fontWeight: 600 }}>{pendingCount}</span>
+                        : <span style={{ color: '#ccc' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {missingCount > 0
+                        ? <span style={{ color: '#c0392b', fontWeight: 700 }}>{missingCount}</span>
+                        : <span style={{ color: '#ccc' }}>—</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
