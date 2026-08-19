@@ -4,6 +4,7 @@ import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 import { isWeekend } from '../utils/weeklyCompilationPdf'
 import { fmtHours } from '../utils/format'
 import MultiSelectDropdown from './MultiSelectDropdown'
+import PersonPicker from './PersonPicker'
 import { getAdminName } from './PasswordGate'
 import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
@@ -942,10 +943,8 @@ export default function SmsReview({ onApproved } = {}) {
             <h3 style={{ marginTop: 0 }}>Edit Submission</h3>
 
             <label style={lbl}>Employee</label>
-            <select value={editFields.employee_id} onChange={e => setEditFields(p => ({ ...p, employee_id: e.target.value }))} style={inp}>
-              <option value="">— Unknown —</option>
-              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
+            <PersonPicker employees={employees} value={editFields.employee_id || ''} clearLabel="— Unknown —"
+              onChange={id => setEditFields(p => ({ ...p, employee_id: id }))} inputStyle={inp} />
 
             <label style={lbl}>Work Date</label>
             <input type="date" value={editFields.work_date} onChange={e => setEditFields(p => ({ ...p, work_date: e.target.value }))} style={inp} />

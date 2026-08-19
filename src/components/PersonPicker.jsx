@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef } from 'react'
 // allowClear=true adds a pinned "All people" option that picks '' (used for
 // filter dropdowns); allowClear=false is for a required field like "which
 // employee is this entry for" — no all/none option, must pick someone.
-export default function PersonPicker({ employees, value, onChange, allowClear = true, placeholder, inputStyle }) {
+export default function PersonPicker({ employees, value, onChange, allowClear = true, placeholder, inputStyle, clearLabel = 'All people' }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const containerRef = useRef(null)
@@ -53,7 +53,7 @@ export default function PersonPicker({ employees, value, onChange, allowClear = 
             <div
               onClick={() => pick('')}
               style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', color: value ? '#333' : '#0066cc', fontWeight: value ? 400 : 600 }}
-            >All people</div>
+            >{clearLabel}</div>
           )}
           {matches.length === 0 && (
             <div style={{ padding: '0.6rem 0.75rem', color: '#999' }}>No matching names</div>
