@@ -366,16 +366,21 @@ export default function SmsReview({ onApproved } = {}) {
     if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
     if (cleaned.some(e => !e.description)) { alert('Every entry needs a note describing what was done'); return }
 
-    // This modal is the one write path to entries that doesn't go through the
+    // Two entries for the same job in one day is a legitimate, common case
+    // (e.g. one task on it in the morning, a different task in the
+    // afternoon) — so this warns rather than blocks. It exists because this
+    // modal is the one write path to entries that doesn't go through the
     // edge function's mergeEntries() — which enforces "one entry per job per
-    // day" on every save. Without this check here, "+ Add entry" twice for
-    // the same job silently persists two rows for it (real incident: Nicolae
-    // Ileshov, 2026-08-19 — see Reports/Payroll if hours look doubled).
+    // day" on every save it makes — so nothing else here would catch an
+    // *actually* accidental duplicate (real incident: Nicolae Ileshov,
+    // 2026-08-19, two auto-filled entries for the same job from two
+    // different writes landing on top of each other).
     const dupJobs = [...new Set(cleaned.map(e => e.job_number.toLowerCase())
       .filter((jn, i, arr) => arr.indexOf(jn) !== i))]
     if (dupJobs.length > 0) {
-      alert(`Job ${cleaned.find(e => e.job_number.toLowerCase() === dupJobs[0]).job_number} appears more than once — merge them into a single entry (add the hours together) instead of saving two rows for the same job.`)
-      return
+      const jobLabel = cleaned.find(e => e.job_number.toLowerCase() === dupJobs[0]).job_number
+      const ok = confirm(`Job ${jobLabel} appears more than once. If that's two different tasks on the same job, that's fine — Save anyway. If it's the same work listed twice, Cancel and merge them into one entry first.`)
+      if (!ok) return
     }
 
     // Seed the split with hours already in timesheet_entries for this employee/date,
