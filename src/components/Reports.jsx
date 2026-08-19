@@ -1249,7 +1249,7 @@ export default function Reports() {
                             {photos.length > 0 && (
                               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 {photos.map(p => (
-                                  <div key={p.id} style={{ width: '120px' }}>
+                                  <div key={p.id} style={{ width: '120px', cursor: 'pointer' }} onClick={() => setPhotoLightbox(p)}>
                                     <MediaThumb src={gearPhotoUrl(p.storage_path)} alt="" style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: '4px', border: '1px solid #eee', display: 'block' }} />
                                   </div>
                                 ))}
