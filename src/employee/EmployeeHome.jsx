@@ -471,7 +471,7 @@ export default function EmployeeHome({ employee }) {
               </div>
             ) : daySub?.time_in ? (
               <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
-                {`${daySub.status === 'draft' ? '📝 Draft — not submitted yet' : '⏳ Submitted'}: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
+                {`${daySub.status === 'draft' ? '📝 Draft — not submitted yet' : daySub.status === 'rejected' ? '✗ Sent back' : '⏳ Submitted'}: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
               </div>
             ) : dayEntries.length > 0 ? (
               // Already approved, no pending sub (submissions excludes
@@ -537,12 +537,17 @@ export default function EmployeeHome({ employee }) {
                     background: daySub.status === 'rejected' ? '#fdecea' : daySub.status === 'draft' ? '#f0f0f0' : '#fff4de',
                     color: daySub.status === 'rejected' ? '#c0392b' : daySub.status === 'draft' ? '#777' : '#a06b00',
                   }}>
-                    {daySub.status === 'rejected' ? '✗ declined — edit to resend'
+                    {daySub.status === 'rejected' ? '✗ Office sent this back — fix and resend'
                       : daySub.status === 'draft' ? '📝 draft — tap Submit day when finished'
                       : '⏳ texted in — awaiting approval'}
                   </span>
                   {subTotalHours > 0 && <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{fmtHours(subTotalHours)}h</span>}
                 </div>
+                {daySub.status === 'rejected' && daySub.rejection_reason && (
+                  <div style={{ background: '#fdecea', border: '1px solid #f3b3ab', borderRadius: 6, padding: '0.5rem 0.7rem', marginBottom: '0.5rem', fontSize: '0.85rem', color: '#7a2a2a' }}>
+                    <strong>Why:</strong> {daySub.rejection_reason}
+                  </div>
+                )}
                 {(daySub.entries || []).map((e, i) => (
                   <div key={i} style={{ fontSize: '0.85rem', color: '#555', padding: '0.15rem 0' }}>
                     {e.job_number || '?'}: {e.hours != null ? `${fmtHours(e.hours)}h` : 'hrs TBD'}{e.description ? ` — ${e.description}` : ''}

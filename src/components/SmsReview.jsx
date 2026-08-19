@@ -36,6 +36,11 @@ export default function SmsReview({ onApproved } = {}) {
   const [expanded, setExpanded]       = useState({})
   const [acting, setActing]           = useState(null)
   const [noteDrafts, setNoteDrafts]   = useState({})
+  // Reject ("Delete") now requires a reason so the tech isn't just left with a
+  // bare "declined" chip — open/draft state per submission, same shape as the
+  // admin-note compose box below.
+  const [rejectOpen, setRejectOpen]     = useState({})
+  const [rejectDrafts, setRejectDrafts] = useState({})
   const [photoModal, setPhotoModal]           = useState(null) // { title, photos }
   const [photoLightbox, setPhotoLightbox]     = useState(null)
   // employee_id|work_date pairs that already have an approved timesheet_entries
@@ -260,10 +265,13 @@ export default function SmsReview({ onApproved } = {}) {
 
   // ── Reject ────────────────────────────────────────────────────────────────
   async function reject(sub) {
-    if (!confirm('Mark this submission as deleted?')) return
+    const reason = (rejectDrafts[sub.id] || '').trim()
+    if (!reason) return
     setActing(sub.id)
-    const { error } = await supabase.schema('Cores').from('sms_submissions').update({ status: 'rejected', updated_at: new Date().toISOString() }).eq('id', sub.id)
+    const { error } = await supabase.schema('Cores').from('sms_submissions')
+      .update({ status: 'rejected', rejection_reason: reason, updated_at: new Date().toISOString() }).eq('id', sub.id)
     if (error) alert(`Delete failed: ${error.message}`)
+    setRejectOpen(o => ({ ...o, [sub.id]: false }))
     await load()
     setActing(null)
   }
@@ -788,7 +796,7 @@ export default function SmsReview({ onApproved } = {}) {
                       Edit
                     </button>
                     <button
-                      onClick={() => reject(sub)}
+                      onClick={() => setRejectOpen(o => ({ ...o, [sub.id]: !o[sub.id] }))}
                       disabled={!!acting}
                       style={{ padding: '0.4rem 1rem', background: '#fff', color: '#c00', border: '1px solid #c00', borderRadius: 4, cursor: 'pointer' }}
                     >
@@ -801,6 +809,34 @@ export default function SmsReview({ onApproved } = {}) {
                       style={{ padding: '0.4rem 0.8rem', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: sub.employee_id ? 'pointer' : 'default', fontSize: '0.85rem', color: sub.employee_id ? '#555' : '#bbb' }}
                     >
                       ✉️ Send Note to: {sub.employee_id ? employeeName(sub.employee_id) : '—'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Reason for declining — required before Delete actually rejects it,
+                    so the tech sees more than a bare "declined" chip */}
+                {rejectOpen[sub.id] && (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+                    <textarea
+                      value={rejectDrafts[sub.id] || ''}
+                      onChange={e => setRejectDrafts(d => ({ ...d, [sub.id]: e.target.value }))}
+                      placeholder="Reason for declining — the tech will see this"
+                      rows={2}
+                      autoFocus
+                      style={{ flex: 1, padding: '0.4rem 0.6rem', border: '1px solid #c00', borderRadius: 4, fontSize: '0.85rem', resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                    <button
+                      onClick={() => reject(sub)}
+                      disabled={!(rejectDrafts[sub.id] || '').trim() || acting === sub.id}
+                      style={{
+                        padding: '0.4rem 0.8rem',
+                        background: (rejectDrafts[sub.id] || '').trim() ? '#c00' : '#ccc',
+                        color: '#fff', border: 'none', borderRadius: 4,
+                        cursor: (rejectDrafts[sub.id] || '').trim() ? 'pointer' : 'default',
+                        fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {acting === sub.id ? 'Declining…' : 'Confirm decline'}
                     </button>
                   </div>
                 )}
@@ -844,7 +880,10 @@ export default function SmsReview({ onApproved } = {}) {
                   <div style={{ color: '#2a7a2a', fontSize: '0.85rem', fontWeight: 600 }}>✓ Approved — entries written to timesheet</div>
                 )}
                 {sub.status === 'rejected' && (
-                  <div style={{ color: '#c00', fontSize: '0.85rem', fontWeight: 600 }}>✗ Deleted</div>
+                  <div style={{ color: '#c00', fontSize: '0.85rem' }}>
+                    <div style={{ fontWeight: 600 }}>✗ Deleted</div>
+                    {sub.rejection_reason && <div style={{ marginTop: '0.15rem', color: '#888' }}>Reason: {sub.rejection_reason}</div>}
+                  </div>
                 )}
               </div>
             )}
