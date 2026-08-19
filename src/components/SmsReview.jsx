@@ -37,6 +37,12 @@ export default function SmsReview({ onApproved } = {}) {
   const [noteDrafts, setNoteDrafts]   = useState({})
   const [photoModal, setPhotoModal]           = useState(null) // { title, photos }
   const [photoLightbox, setPhotoLightbox]     = useState(null)
+  // employee_id|work_date pairs that already have an approved timesheet_entries
+  // row — cross-referenced against pending submissions so a duplicate (e.g. a
+  // stray mobile-app entry for a day already texted in and approved) gets
+  // flagged before an admin approves it a second time, instead of only being
+  // caught after the fact.
+  const [approvedDaySet, setApprovedDaySet]   = useState(new Set())
 
   // Text-the-employee ("admin note") affordance — per-submission toggle,
   // draft text, and send status (undefined | 'sending' | 'sent' | error string)
@@ -60,17 +66,20 @@ export default function SmsReview({ onApproved } = {}) {
   // every cycle.
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
-    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }] = await Promise.all([
+    const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }, { data: approvedDays }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
+      supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date').gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
     setEmployees(emps || [])
     setGearPhotos(photos || [])
+    setApprovedDaySet(new Set((approvedDays || []).map(e => `${e.employee_id}|${e.work_date}`)))
     const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
     setOtThreshold(ot ? Number(ot.value) : 8)
     if (!silent) setLoading(false)
@@ -543,6 +552,9 @@ export default function SmsReview({ onApproved } = {}) {
         // No 'per diem unknown' flag — the bot never asks about PD (silent
         // default to 'none' at save time), so a null here just means none,
         // not something the office needs to chase down.
+        if (sub.status !== 'approved' && sub.status !== 'rejected' && approvedDaySet.has(`${sub.employee_id}|${sub.work_date}`)) {
+          flags.push('⚠️ already has an approved timesheet for this day — check for a duplicate before approving')
+        }
         if ((!sub.supplies || sub.supplies.length === 0) && sub.supplies_note === 'photo') flags.push('📷 supplies in gear photo — itemize from Gear Photos tab')
         if (sub.delta_minutes && Math.abs(sub.delta_minutes) > 15) {
           const deltaHrs = deltaMinsToHours(sub.delta_minutes)
