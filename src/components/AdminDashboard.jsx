@@ -126,6 +126,7 @@ export default function AdminDashboard() {
   // someone who texted in but is still waiting on an admin to approve it.
   // Fetched once here, same broad-then-filter-client-side pattern as entries.
   const [pendingSubs, setPendingSubs] = useState([])
+  const [subEmployeeFilter, setSubEmployeeFilter] = useState('')
   const [subPreset, setSubPreset] = useState('this-week')
   const [subWeekStart, setSubWeekStart] = useState(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0)
@@ -1599,7 +1600,7 @@ export default function AdminDashboard() {
           return dow !== 0 && dow !== 6
         })
 
-        const rows = employees.map(emp => {
+        const rows = employees.filter(emp => !subEmployeeFilter || emp.id === subEmployeeFilter).map(emp => {
           const approvedDates = new Set(entries.filter(e => e.employee_id === emp.id && weekDates.has(e.work_date)).map(e => e.work_date))
           const pendingDates = new Set(
             pendingSubs.filter(s => s.employee_id === emp.id && weekDates.has(s.work_date) && !approvedDates.has(s.work_date)).map(s => s.work_date)
@@ -1633,6 +1634,7 @@ export default function AdminDashboard() {
                     transition: 'all 0.15s',
                   }}>{label}</button>
                 ))}
+                <PersonPicker employees={employees} value={subEmployeeFilter} onChange={setSubEmployeeFilter} />
               </div>
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                 <span style={{ color: '#2d6a38', fontWeight: 600 }}>{totalApproved} approved</span>
