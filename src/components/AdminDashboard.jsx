@@ -121,6 +121,11 @@ export default function AdminDashboard() {
   const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
+  // Separate from `entries` (approved timesheet_entries only) — this tab's
+  // "Status" column has always meant "approved", which reads as "Missing" for
+  // someone who texted in but is still waiting on an admin to approve it.
+  // Fetched once here, same broad-then-filter-client-side pattern as entries.
+  const [pendingSubs, setPendingSubs] = useState([])
   const [subPreset, setSubPreset] = useState('this-week')
   const [subWeekStart, setSubWeekStart] = useState(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0)
@@ -191,18 +196,19 @@ export default function AdminDashboard() {
     }
     setEntries(data || [])
     if (!silent) setLoadingEntries(false)
-    // Approving a submission is the one action that changes this count, so
-    // refresh it alongside entries (SmsReview's onApproved calls this) rather
-    // than only on mount — otherwise the banner could read stale right after
-    // the exact action that would resolve it.
-    const { count, error: countError } = await supabase.schema('Cores').from('sms_submissions')
-      .select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting'])
-    if (countError) {
-      if (!silent) alert(`Failed to load pending submission count: ${countError.message}`)
-      else console.error('Background refresh failed:', countError.message)
+    // Approving/submitting/etc changes this, so refresh it alongside entries
+    // (SmsReview's onApproved calls this) rather than only on mount —
+    // otherwise the banner, and the Submission Status tab's Pending column,
+    // could read stale right after the exact action that would resolve them.
+    const { data: pending, error: pendingError } = await supabase.schema('Cores').from('sms_submissions')
+      .select('employee_id, work_date, status').in('status', ['submitted', 'collecting'])
+    if (pendingError) {
+      if (!silent) alert(`Failed to load pending submission count: ${pendingError.message}`)
+      else console.error('Background refresh failed:', pendingError.message)
       return
     }
-    setPendingSubmissionCount(count || 0)
+    setPendingSubmissionCount(pending?.length || 0)
+    setPendingSubs(pending || [])
   }
 
   async function openEdit(e, computedReg, computedOT) {
@@ -1592,8 +1598,14 @@ export default function AdminDashboard() {
             const empAll = entries.filter(e => e.employee_id === emp.id)
             return computeEntryOT(empAll)
           })() : {}
+          // Days this employee has texted/logged in but an admin hasn't approved
+          // yet — "Status" above only reflects approved entries, so someone
+          // mid-review reads as "Missing" with nothing to explain why.
+          const pendingDays = new Set(
+            pendingSubs.filter(s => s.employee_id === emp.id && weekDates.has(s.work_date)).map(s => s.work_date)
+          ).size
           return {
-            emp, submitted,
+            emp, submitted, pendingDays,
             days:  new Set(ee.map(e => e.work_date)).size,
             hours: ee.reduce((s, e) => s + Number(e.hours), 0),
             reg:   ee.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
@@ -1602,7 +1614,8 @@ export default function AdminDashboard() {
           }
         }).sort((a, b) => b.submitted - a.submitted || a.emp.name.localeCompare(b.emp.name))
 
-        const missing = rows.filter(r => !r.submitted)
+        const missing = rows.filter(r => !r.submitted && r.pendingDays === 0)
+        const pendingReview = rows.filter(r => !r.submitted && r.pendingDays > 0)
         const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 
         return (
@@ -1622,6 +1635,8 @@ export default function AdminDashboard() {
               </div>
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                 <span style={{ color: '#2d6a38', fontWeight: 600 }}>{rows.filter(r => r.submitted).length} submitted</span>
+                <span style={{ color: '#aaa' }}>·</span>
+                <span style={{ color: pendingReview.length > 0 ? '#a06b00' : '#aaa', fontWeight: pendingReview.length > 0 ? 700 : 400 }}>{pendingReview.length} pending review</span>
                 <span style={{ color: '#aaa' }}>·</span>
                 <span style={{ color: missing.length > 0 ? '#c0392b' : '#aaa', fontWeight: missing.length > 0 ? 700 : 400 }}>{missing.length} missing</span>
               </div>
@@ -1645,13 +1660,13 @@ export default function AdminDashboard() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  {['Employee', 'Status', 'Days', 'Total Hrs', 'Reg', 'OT', 'PD'].map((h, i) => (
+                  {['Employee', 'Status', 'Pending', 'Days', 'Total Hrs', 'Reg', 'OT', 'PD'].map((h, i) => (
                     <th key={i} style={{ padding: '0.75rem', textAlign: i > 1 ? 'center' : 'left', fontWeight: 600, color: '#555' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ emp, submitted, days, hours, reg, ot, pd }) => (
+                {rows.map(({ emp, submitted, pendingDays, days, hours, reg, ot, pd }) => (
                   <tr key={emp.id}
                     style={{ borderBottom: '1px solid #eee', background: submitted ? '' : '#fff9f9', cursor: submitted ? 'pointer' : 'default' }}
                     onClick={() => {
@@ -1671,7 +1686,14 @@ export default function AdminDashboard() {
                     <td style={{ padding: '0.75rem' }}>
                       {submitted
                         ? <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#e6f4ea', color: '#2d6a38', fontWeight: 700, fontSize: '0.85rem' }}>✓ Submitted</span>
-                        : <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fde8e8', color: '#c0392b', fontWeight: 700, fontSize: '0.85rem' }}>✗ Missing</span>}
+                        : pendingDays > 0
+                          ? <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fff4de', color: '#a06b00', fontWeight: 700, fontSize: '0.85rem' }}>⏳ Pending review</span>
+                          : <span style={{ padding: '0.2rem 0.7rem', borderRadius: '12px', background: '#fde8e8', color: '#c0392b', fontWeight: 700, fontSize: '0.85rem' }}>✗ Missing</span>}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {pendingDays > 0
+                        ? <span style={{ color: '#a06b00', fontWeight: 600 }}>{pendingDays} day{pendingDays === 1 ? '' : 's'}</span>
+                        : <span style={{ color: '#ccc' }}>—</span>}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center', color: '#555' }}>{submitted ? days : '—'}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center', fontWeight: submitted ? 600 : 400, color: submitted ? '#333' : '#ccc' }}>{submitted ? fmtHours(hours) : '—'}</td>
