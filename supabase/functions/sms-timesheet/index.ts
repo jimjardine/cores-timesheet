@@ -136,6 +136,7 @@ Password-gated — mostly for office use.`,
 HELP_TOPICS.format = HELP_TOPICS.hours
 HELP_TOPICS.photos = HELP_TOPICS.photo
 HELP_TOPICS.ts = HELP_TOPICS.timesheet
+HELP_TOPICS.app = HELP_TOPICS.mobile
 HELP_TOPICS.template = `TEMPLATE — fill-in-the-blank text
 
 Text TEMPLATE any time for a copy-paste starting point:
@@ -1093,7 +1094,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Mobile site link request ──
-  if (msgLower === 'mobile' && mediaUrls.length === 0) {
+  if ((msgLower === 'mobile' || msgLower === 'app') && mediaUrls.length === 0) {
     const r = `Check your week here: ${MOBILE_URL}\nLog in with your phone number.`
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }

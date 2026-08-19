@@ -144,6 +144,14 @@ await scenario('help request', phone(2), [
   ['HELP', ['Cores Timesheets', 'TIMESHEET', 'Reply HELP']],
 ])
 
+// 2b. MOBILE and APP both return the mobile site link
+await scenario('mobile link', phone(39), [
+  ['mobile', ['jimjardine.github.io/cores-timesheet']],
+])
+await scenario('app link alias', phone(40), [
+  ['app', ['jimjardine.github.io/cores-timesheet']],
+])
+
 // 3. All-in-one: jobs + times + lunch + PD in one message, one quiet ack back
 await cleanupTestTech()
 await scenario('all in one by phone', TEST_PHONE, [
