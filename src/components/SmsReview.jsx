@@ -366,6 +366,18 @@ export default function SmsReview({ onApproved } = {}) {
     if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
     if (cleaned.some(e => !e.description)) { alert('Every entry needs a note describing what was done'); return }
 
+    // This modal is the one write path to entries that doesn't go through the
+    // edge function's mergeEntries() — which enforces "one entry per job per
+    // day" on every save. Without this check here, "+ Add entry" twice for
+    // the same job silently persists two rows for it (real incident: Nicolae
+    // Ileshov, 2026-08-19 — see Reports/Payroll if hours look doubled).
+    const dupJobs = [...new Set(cleaned.map(e => e.job_number.toLowerCase())
+      .filter((jn, i, arr) => arr.indexOf(jn) !== i))]
+    if (dupJobs.length > 0) {
+      alert(`Job ${cleaned.find(e => e.job_number.toLowerCase() === dupJobs[0]).job_number} appears more than once — merge them into a single entry (add the hours together) instead of saving two rows for the same job.`)
+      return
+    }
+
     // Seed the split with hours already in timesheet_entries for this employee/date,
     // matching the edge function — otherwise a second submission that day gets reg
     // hours it shouldn't
@@ -437,8 +449,20 @@ export default function SmsReview({ onApproved } = {}) {
       if (!ok) return
     }
 
-    const { error } = await supabase.schema('Cores').from('sms_submissions').update(updates).eq('id', editModal.id)
+    // Optimistic-concurrency guard, same reasoning as the edge function's own
+    // save loop (added 2026-08-07 after a race dropped a concurrent text) —
+    // this modal is the OTHER writer of the same entries column, and had no
+    // equivalent protection: an admin editing a submission while a new text
+    // comes in for it would otherwise silently clobber the SMS bot's write
+    // (or vice versa) with no error either way.
+    const { data: saved, error } = await supabase.schema('Cores').from('sms_submissions')
+      .update(updates).eq('id', editModal.id).eq('updated_at', editModal.updated_at).select('id')
     if (error) { alert('Error saving: ' + error.message); return }
+    if (!saved || saved.length === 0) {
+      alert('This submission changed since you opened it (probably a new text came in) — reloading so you can check it before saving again.')
+      await load()
+      return
+    }
     setEditModal(null)
     await load()
   }
