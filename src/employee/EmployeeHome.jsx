@@ -526,8 +526,11 @@ export default function EmployeeHome({ employee }) {
                 </div>
               </div>
             ) : (
-              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.4rem', marginLeft: '0.5rem' }}
-                onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>+ Note</button>
+              // Plain text link, not a pill button — same "+X" button styling as
+              // "+ Log shift & jobs" made this read as another way to add a job,
+              // so the guys kept tapping it by mistake instead of the real button.
+              <button className="emp-inline-link" style={{ display: 'block', marginTop: '0.5rem', marginLeft: '0.5rem', color: '#888', fontWeight: 400 }}
+                onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>Add a note (not a job)</button>
             )}
 
             {dayEntries.some(e => e.entry_source === 'self') && (
