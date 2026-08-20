@@ -210,6 +210,10 @@ export default function SmsReview({ onApproved } = {}) {
       job_id:      jobMap[(e.job_number || '').toUpperCase()] || null,
       work_date:   sub.work_date,
       hours:       Number(e.hours),
+      // Real link back to the submission this came from — previously the only
+      // connection between the two tables was matching employee_id+work_date,
+      // nothing the database could enforce.
+      source_submission_id: sub.id,
       // ot_hours left null — the edge function's reg/ot split here is only a
       // same-day estimate for the review-screen preview; computeOTMap derives
       // the real split (incl. weekly threshold) at display/export time.
