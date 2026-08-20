@@ -326,6 +326,17 @@ function twiML(msg: string): Response {
   )
 }
 
+// No <Message> verb — tells Twilio the webhook's handled without sending anything
+// back. Used for a detected retry (see the MessageSid dedup check below): the
+// original delivery already got a real reply, so replying again here would just
+// double (or triple) text the tech with conflicting numbers.
+function emptyTwiML(): Response {
+  return new Response(
+    `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+    { headers: { 'Content-Type': 'text/xml' } }
+  )
+}
+
 function jsonReply(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -839,6 +850,7 @@ Deno.serve(async (req: Request) => {
   let fromPhone = ''
   let msgBody = ''
   let mediaUrls: string[] = []
+  let messageSid = ''
   const isTwilio = (req.headers.get('content-type') || '').includes('application/x-www-form-urlencoded')
 
   try {
@@ -851,6 +863,10 @@ Deno.serve(async (req: Request) => {
 
       fromPhone = normalizePhone(form.get('From') as string || '')
       msgBody = (form.get('Body') as string || '').trim()
+      // Twilio's own id for this exact delivery attempt — SmsMessageSid is the
+      // older field name for the same value, kept as a fallback for whichever
+      // webhook format sends which. Used below to detect a retried delivery.
+      messageSid = (form.get('MessageSid') as string || form.get('SmsMessageSid') as string || '')
       // Collect media URLs from MMS (MediaUrl0, MediaUrl1, etc)
       const numMedia = Number(form.get('NumMedia') || 0)
       for (let i = 0; i < numMedia; i++) {
@@ -1019,6 +1035,29 @@ Deno.serve(async (req: Request) => {
   } catch {
     const r = 'Error reading message.'
     return isTwilio ? twiML(r) : jsonReply({ error: r }, 400)
+  }
+
+  // ── Twilio retry dedup ──
+  // Twilio resends the identical webhook (same MessageSid) if it doesn't get a
+  // fast enough response — under real load (a slow Claude parse, the save-retry
+  // loop below) our response time can exceed Twilio's timeout, and every retry
+  // was being processed as a brand-new message, silently duplicating whatever
+  // it reported. Confirmed live: Gage's Aug 20 2026 timesheet, one text landed
+  // on our side 3 times ~0.3s apart (tripling his hours on job 4866) while his
+  // own phone only ever showed it sent once — the duplication was entirely
+  // server-side. Claiming the SID via a unique-constraint insert is atomic even
+  // if two retries race each other; whichever loses the race gets the dupError
+  // and bails before doing any real work. No messageSid on the JSON test/app
+  // path (Twilio-only field), so this is a no-op there.
+  if (messageSid) {
+    const { error: dupError } = await supabase
+      .from('processed_message_sids')
+      .insert({ message_sid: messageSid })
+    if (dupError) {
+      // Already handled — ack without replying again (a second reply would
+      // double-text the tech with a now-stale hours count).
+      return isTwilio ? emptyTwiML() : jsonReply({ reply: '' })
+    }
   }
 
   if (!msgBody && mediaUrls.length === 0) {
