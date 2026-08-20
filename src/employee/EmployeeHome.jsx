@@ -69,8 +69,13 @@ export default function EmployeeHome({ employee }) {
 
   const weekEnd = addDays(weekStart, 6)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  // silent=true refreshes the data in place without flipping `loading` — used
+  // after every autosave/submit/photo/note/delete, since toggling `loading`
+  // unmounts the whole day list to a bare "Loading…" placeholder and back,
+  // which is what was throwing the page to the top of the screen on every
+  // single field blur (see EmployeeHome scroll-jump complaint, 2026-08-20).
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     const { data } = await supabase.schema('Cores').from('timesheet_entries')
       .select('*, jobs(id, job_number, description, customers(name), vessels(name))')
       .eq('employee_id', employee.id)
@@ -95,10 +100,24 @@ export default function EmployeeHome({ employee }) {
       .gte('work_date', weekStart).lte('work_date', weekEnd)
       .order('created_at', { ascending: false })
     setPhotos(gp || [])
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [employee.id, weekStart, weekEnd])
 
   useEffect(() => { load() }, [load])
+
+  // One-time scroll to today's card once the first load lands, so the tech
+  // opens straight onto today instead of Monday and having to scroll down
+  // every time (see EmployeeHome scroll-jump complaint, 2026-08-20).
+  const scrolledToTodayRef = useRef(false)
+  useEffect(() => {
+    if (loading || scrolledToTodayRef.current) return
+    scrolledToTodayRef.current = true
+    const el = document.getElementById(`day-${todayYMD()}`)
+    if (!el) return
+    const headerH = document.querySelector('.emp-header')?.offsetHeight || 0
+    const top = el.getBoundingClientRect().top + window.scrollY - headerH - 12
+    window.scrollTo({ top: Math.max(0, top) })
+  }, [loading])
 
   useEffect(() => {
     supabase.schema('Cores').from('jobs').select('id, job_number, description, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
@@ -225,7 +244,7 @@ export default function EmployeeHome({ employee }) {
         .update({ time_in, stated_time_out, lunch_minutes, per_diem_location, entries, calculated_time_out, delta_minutes, status: 'draft', updated_at: new Date().toISOString() })
         .eq('id', id)
       if (err) { setError(err.message); setSavingLog(false); return }
-      await load()
+      await load({ silent: true })
     } catch (e) {
       setError(e.message)
     }
@@ -252,7 +271,7 @@ export default function EmployeeHome({ employee }) {
       .update({ status: 'submitted', updated_at: new Date().toISOString() }).eq('id', id)
     setSavingLog(false)
     if (err) { setError(err.message); return }
-    await load()
+    await load({ silent: true })
     closeLog()
   }
 
@@ -276,7 +295,7 @@ export default function EmployeeHome({ employee }) {
       pending_context: !photoJobId, file_size_bytes: file.size,
     })
     if (insErr) { setError(insErr.message); setUploadingPhoto(false); return }
-    await load()
+    await load({ silent: true })
     setUploadingPhoto(false)
     setPhotoFor(null)
     setPhotoJobId('')
@@ -305,7 +324,7 @@ export default function EmployeeHome({ employee }) {
           entries: [], status: 'submitted', admin_note: combined,
         })
     if (err) { setError(err.message); setSavingNote(false); return }
-    await load()
+    await load({ silent: true })
     setSavingNote(false)
     setNoteFor(null)
     setNoteDraft('')
@@ -319,7 +338,7 @@ export default function EmployeeHome({ employee }) {
       .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
     await cleanupStatPay(entry.employee_id, entry.work_date)
     setConfirmDeleteId(null)
-    await load()
+    await load({ silent: true })
   }
 
   return (
@@ -349,7 +368,7 @@ export default function EmployeeHome({ employee }) {
         const subTotalHours = (daySub?.entries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0)
 
         return (
-          <div className="emp-card" key={ymd}>
+          <div className="emp-card" id={`day-${ymd}`} key={ymd}>
             <div className="emp-day-header">
               <div>
                 <div className="emp-day-name">
