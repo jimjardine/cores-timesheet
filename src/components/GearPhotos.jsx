@@ -24,20 +24,33 @@ export default function GearPhotos() {
   const [savingId, setSavingId] = useState(null)
   const [edits, setEdits]       = useState({})
   const [noteDrafts, setNoteDrafts] = useState({})
+  // Supply lines already logged from a photo (job_supplies.source_photo_id),
+  // keyed by photo id — lets a card show "already logged" instead of inviting
+  // a duplicate, and still offer "+ log another item" for a photo showing
+  // more than one supply.
+  const [loggedByPhoto, setLoggedByPhoto] = useState({})
+  const [loggingId, setLoggingId] = useState(null)
+  const [logDraft, setLogDraft]   = useState({ supply_name: '', quantity: '1' })
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: p }, { data: j }, { data: emps }] = await Promise.all([
+    const [{ data: p }, { data: j }, { data: emps }, { data: logged }] = await Promise.all([
       supabase.schema('Cores').from('gear_photos').select('*').order('created_at', { ascending: false }),
       // Include closed jobs: a photo can legitimately be tagged to a job that's
       // since closed, and excluding them silently nulled out job_id (photo vanished
       // from every report with no error).
       supabase.schema('Cores').from('jobs').select('id, job_number, description, status'),
       supabase.schema('Cores').from('employees').select('id, name'),
+      supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity').not('source_photo_id', 'is', null),
     ])
     setPhotos(p || [])
     setJobs(j || [])
     setEmployees(emps || [])
+    const byPhoto = {}
+    for (const row of logged || []) {
+      (byPhoto[row.source_photo_id] ||= []).push(row)
+    }
+    setLoggedByPhoto(byPhoto)
     setLoading(false)
   }, [])
 
@@ -80,6 +93,42 @@ export default function GearPhotos() {
       .eq('id', photo.id)
     if (error) alert('Error saving: ' + error.message)
     else setPhotos(p => p.map(x => x.id === photo.id ? { ...x, photo_type: next } : x))
+    setSavingId(null)
+  }
+
+  // Turns a photo into a real, billable job_supplies row — deliberate and
+  // explicit (she reviews the photo, confirms/edits the name and quantity),
+  // not automatic, so nothing lands on Tracy's billing checklist she didn't
+  // actually mean to log. supply_name is pre-filled from the photo's note
+  // if there is one, since that's usually already a description of what's
+  // in the shot.
+  function openLogForm(photo) {
+    setLoggingId(photo.id)
+    setLogDraft({ supply_name: photo.note || '', quantity: '1' })
+  }
+
+  function cancelLogForm() {
+    setLoggingId(null)
+  }
+
+  async function submitLog(photo) {
+    const supply_name = logDraft.supply_name.trim()
+    if (!supply_name) return
+    const quantity = Number(logDraft.quantity) > 0 ? Number(logDraft.quantity) : 1
+    setSavingId(photo.id)
+    const { data, error } = await supabase.schema('Cores').from('job_supplies').insert({
+      job_id: photo.job_id,
+      employee_id: photo.employee_id,
+      work_date: photo.work_date,
+      supply_name,
+      quantity,
+      source_photo_id: photo.id,
+    }).select('id, source_photo_id, supply_name, quantity').single()
+    if (error) alert('Error logging supply: ' + error.message)
+    else {
+      setLoggedByPhoto(m => ({ ...m, [photo.id]: [...(m[photo.id] || []), data] }))
+      setLoggingId(null)
+    }
     setSavingId(null)
   }
 
@@ -252,6 +301,55 @@ export default function GearPhotos() {
                           disabled={savingId === photo.id}
                           style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
                         >Save</button>
+                      )}
+                    </div>
+                  )
+                })()}
+                {photo.job_id && photo.photo_type === 'supply' && (() => {
+                  const logged = loggedByPhoto[photo.id] || []
+                  return (
+                    <div style={{ marginBottom: '0.4rem' }}>
+                      {logged.map(row => (
+                        <div key={row.id} style={{ fontSize: '0.75rem', color: '#2a7a2a', marginBottom: '0.15rem' }}>
+                          ✓ Logged: {row.supply_name} ×{row.quantity}
+                        </div>
+                      ))}
+                      {loggingId === photo.id ? (
+                        <div style={{ border: '1px solid #ccc', borderRadius: 4, padding: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          <input
+                            value={logDraft.supply_name}
+                            onChange={e => setLogDraft(d => ({ ...d, supply_name: e.target.value }))}
+                            placeholder="Supply name"
+                            autoFocus
+                            disabled={savingId === photo.id}
+                            style={{ padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }}
+                          />
+                          <div style={{ display: 'flex', gap: '0.3rem' }}>
+                            <input
+                              type="number" min="0" step="1"
+                              value={logDraft.quantity}
+                              onChange={e => setLogDraft(d => ({ ...d, quantity: e.target.value }))}
+                              disabled={savingId === photo.id}
+                              style={{ width: '4.5rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }}
+                            />
+                            <button
+                              onClick={() => submitLog(photo)}
+                              disabled={savingId === photo.id || !logDraft.supply_name.trim()}
+                              style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+                            >Confirm</button>
+                            <button
+                              onClick={cancelLogForm}
+                              disabled={savingId === photo.id}
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: 4, cursor: 'pointer' }}
+                            >Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => openLogForm(photo)}
+                          disabled={savingId === photo.id}
+                          style={{ width: '100%', padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px dashed #0066cc', background: '#fff', color: '#0066cc', borderRadius: 4, cursor: 'pointer' }}
+                        >{logged.length > 0 ? '+ log another item' : '+ Log as supply'}</button>
                       )}
                     </div>
                   )
