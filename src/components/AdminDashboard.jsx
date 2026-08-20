@@ -284,13 +284,25 @@ export default function AdminDashboard() {
       return
     }
 
-    // Replace old supplies (tied to whoever/whatever date this entry originally belonged
-    // to) with updated ones under the current employee/date, in case either changed
-    const { error: supplyError } = await replaceSupplies(supabase, editFields.employee_id, editFields.work_date, editSupplies)
-    if (supplyError) {
-      alert(`Supplies save failed: ${supplyError.message}`)
-      setSavingEdit(false)
-      return
+    // job_supplies is keyed by (employee_id, work_date) only — no link to a
+    // specific entry — so replaceSupplies is a blind delete-then-insert for
+    // that employee/date. Safe when employee/date are unchanged (editSupplies
+    // was seeded from that same employee/date in openEdit, so it's a faithful
+    // round-trip). If either changed, editSupplies still reflects the OLD
+    // employee/date — writing it to the NEW one would destroy whatever real
+    // supplies the destination already had logged. So: skip supplies
+    // entirely on a reassignment rather than guess at merging two unrelated
+    // lists; the admin can fix supplies for the new employee/date separately.
+    const reassigned = editFields.employee_id !== editEntry.employee_id || editFields.work_date !== editEntry.work_date
+    if (!reassigned) {
+      const { error: supplyError } = await replaceSupplies(supabase, editFields.employee_id, editFields.work_date, editSupplies)
+      if (supplyError) {
+        alert(`Supplies save failed: ${supplyError.message}`)
+        setSavingEdit(false)
+        return
+      }
+    } else if (editSupplies.some(s => s.supply_name?.trim())) {
+      alert('Entry moved to a different employee/date — supplies were left as-is rather than moved, to avoid overwriting anything already logged there. Add them separately if needed.')
     }
 
     // Save new job if being added
@@ -326,12 +338,18 @@ export default function AdminDashboard() {
   async function deleteEntry(entry) {
     const { error } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id)
     if (error) { alert(`Delete failed: ${error.message}`); return }
-    // job_supplies has no FK back to timesheet_entries — clean up supplies logged
-    // against this same employee/job/day so a deleted entry doesn't leave orphaned
-    // supply rows attributed to someone with no hours left on the job.
-    const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').delete()
-      .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
-    if (supplyError) alert(`Entry deleted, but couldn't clean up its supplies: ${supplyError.message}`)
+    // job_supplies has no FK back to timesheet_entries — matched by
+    // employee/job/day instead. Only clean it up if this was the LAST entry
+    // for that combo; if a sibling entry still shares the same employee+job+
+    // date (e.g. two separate tasks logged the same job the same day), wiping
+    // supplies here would take that surviving entry's supplies out too.
+    const { data: siblings } = await supabase.schema('Cores').from('timesheet_entries')
+      .select('id').eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+    if (!siblings || siblings.length === 0) {
+      const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').delete()
+        .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+      if (supplyError) alert(`Entry deleted, but couldn't clean up its supplies: ${supplyError.message}`)
+    }
     // If that was the employee's last real entry in the pay week, the auto
     // stat-pay entries for that week are no longer earned — remove them
     await cleanupStatPay(entry.employee_id, entry.work_date)
