@@ -882,7 +882,7 @@ export default function AdminDashboard() {
         .limit(1),
       supabase
         .schema('Cores').from('job_supplies')
-        .select('supply_name, quantity, jobs(job_number)')
+        .select('supply_name, quantity, description, jobs(job_number)')
         .eq('employee_id', emp.id)
         .eq('work_date', workDate),
     ])
@@ -943,6 +943,7 @@ export default function AdminDashboard() {
         jobNumber: s.jobs?.job_number || '',
         quantity: s.quantity,
         supplyName: s.supply_name,
+        description: s.description || '',
       })),
       employeeSignature,
       supervisorSignature,
