@@ -220,11 +220,17 @@ await scenario('hours correction replaces', phone(9), [
   ['actually that was 3hrs', ['4760: 3hrs', { absent: '5hrs' }]],
 ])
 
-// 10. No job known at all (fresh employee, zero history) → saved quietly for
-// the office to match instead of asking
+// 10. No job known at all (fresh employee, zero history) → attaches to the
+// real "Unknown" placeholder job (job_number "Unknown", an actual row in
+// jobs — "for work that there is no job# yet") instead of asking or leaving
+// job_number null. Null entries didn't show up in any job-scoped view
+// (Reports, Job Reports, billing); "Unknown" does, which is the whole point
+// of that job existing. Same mechanism covers a job_inference_exempt
+// employee's (e.g. Greg's) routine job-less texts, not just this true
+// zero-history case (see 2026-08-21 incident + fix).
 await cleanupTestTech()
 await scenario('no job history saves quietly', phone(10), [
-  ['This is Test. spent the morning fixing the head', ['office will match the job', { absent: 'Which job' }]],
+  ['This is Test. spent the morning fixing the head', ['Job# Unknown', { absent: 'Which job' }]],
 ])
 
 // 10b. No job number mentioned today, but yesterday's text named one → carries
