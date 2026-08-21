@@ -344,10 +344,20 @@ export default function EmployeeHome({ employee }) {
   // Running total for the visible week — everything reported so far, whether
   // it's already approved or still sitting as a draft/texted-in submission
   // awaiting review, since a tech checking this wants "how much have I put
-  // in this week," not just what's officially landed yet.
-  const weekApprovedHours = entries.reduce((s, e) => s + Number(e.hours || 0), 0)
-  const weekPendingHours = submissions.reduce((s, sub) => s + (sub.entries || []).reduce((s2, e) => s2 + (Number(e.hours) || 0), 0), 0)
-  const weekTotalHours = weekApprovedHours + weekPendingHours
+  // in this week," not just what's officially landed yet. Reg/OT split:
+  // approved entries use the same otMap every other reg/OT display in the
+  // app already relies on; pending submissions' entries already carry
+  // reg_hours/ot_hours computed at parse/autosave time (see sms-timesheet's
+  // calcOTBreakdown and autosaveLog's computeDailyOTSplit) — trusted as-is
+  // rather than recomputed, since a true recompute would need the whole
+  // week's approved context anyway and pending numbers are provisional.
+  const weekApprovedReg = entries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0)
+  const weekApprovedOT  = entries.reduce((s, e) => s + (otMap[e.id]?.ot  || 0), 0)
+  const weekPendingReg = submissions.reduce((s, sub) => s + (sub.entries || []).reduce((s2, e) => s2 + (Number(e.reg_hours ?? e.hours) || 0), 0), 0)
+  const weekPendingOT  = submissions.reduce((s, sub) => s + (sub.entries || []).reduce((s2, e) => s2 + (Number(e.ot_hours) || 0), 0), 0)
+  const weekRegHours = weekApprovedReg + weekPendingReg
+  const weekOTHours  = weekApprovedOT + weekPendingOT
+  const weekTotalHours = weekRegHours + weekOTHours
 
   return (
     <div className="emp-main">
@@ -355,7 +365,13 @@ export default function EmployeeHome({ employee }) {
         <button onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Previous week">‹</button>
         <div className="emp-week-label" onClick={() => setWeekStart(payWeekRange(todayYMD())[0])}>
           {shortDate(weekStart)} – {shortDate(weekEnd)}
-          {weekTotalHours > 0 && <div className="emp-week-total">{fmtHours(weekTotalHours)}h logged this week</div>}
+          {weekTotalHours > 0 && (
+            <div className="emp-week-total">
+              {weekOTHours > 0
+                ? `${fmtHours(weekRegHours)}h reg, ${fmtHours(weekOTHours)}h OT this week`
+                : `${fmtHours(weekTotalHours)}h logged this week`}
+            </div>
+          )}
         </div>
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Next week">›</button>
       </div>
