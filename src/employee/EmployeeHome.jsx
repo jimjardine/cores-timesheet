@@ -341,12 +341,21 @@ export default function EmployeeHome({ employee }) {
     await load({ silent: true })
   }
 
+  // Running total for the visible week — everything reported so far, whether
+  // it's already approved or still sitting as a draft/texted-in submission
+  // awaiting review, since a tech checking this wants "how much have I put
+  // in this week," not just what's officially landed yet.
+  const weekApprovedHours = entries.reduce((s, e) => s + Number(e.hours || 0), 0)
+  const weekPendingHours = submissions.reduce((s, sub) => s + (sub.entries || []).reduce((s2, e) => s2 + (Number(e.hours) || 0), 0), 0)
+  const weekTotalHours = weekApprovedHours + weekPendingHours
+
   return (
     <div className="emp-main">
       <div className="emp-week-switch">
         <button onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Previous week">‹</button>
         <div className="emp-week-label" onClick={() => setWeekStart(payWeekRange(todayYMD())[0])}>
           {shortDate(weekStart)} – {shortDate(weekEnd)}
+          {weekTotalHours > 0 && <div className="emp-week-total">{fmtHours(weekTotalHours)}h logged this week</div>}
         </div>
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Next week">›</button>
       </div>
