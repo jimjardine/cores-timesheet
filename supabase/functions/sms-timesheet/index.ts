@@ -506,25 +506,34 @@ function calcOTBreakdown(entries: any[], dailyThreshold: number, alreadyWorked =
 // last_mentioned_at stamp; legacy rows without stamps fall back to array order).
 // Fallback: the newest job-tagged gear photo — a photo captioned "4900" that
 // morning establishes the day's job before any hours text arrives.
-async function getLastJobForDay(supabase: any, fromPhone: string, workDate: string, submission: any = null, employeeId: string | null = null): Promise<string | null> {
+async function getLastJobForDay(supabase: any, fromPhone: string, workDate: string, submission: any = null, employeeId: string | null = null): Promise<string> {
   // Some techs (e.g. Greg) move between jobs often enough that "assume he's
   // still on the last one" guesses wrong more than it guesses right — for
   // them, no job stated means no job inferred at all, same/cross-day alike,
-  // so the day saves quietly with no job for the office to fill in instead
-  // of a silent wrong guess.
+  // so the day saves against the real "Unknown" job (job_number "Unknown",
+  // "This is for work that there is no job# yet" — an actual row in jobs,
+  // not a placeholder string) for the office to reassign, instead of a
+  // silent wrong guess.
   if (employeeId) {
     const { data: emp } = await supabase
       .from('employees').select('job_inference_exempt').eq('id', employeeId).single()
-    if (emp?.job_inference_exempt) return null
+    if (emp?.job_inference_exempt) return 'Unknown'
   }
   let sub = submission
   if (!sub) {
     const { data } = await supabase
-      .from('sms_submissions').select('entries')
+      .from('sms_submissions').select('entries, employee_id')
       .eq('from_phone', fromPhone).eq('work_date', workDate)
       .in('status', ['collecting', 'submitted'])
       .order('updated_at', { ascending: false }).limit(1)
-    if (data?.length) sub = data[0]
+    // Same guard as the caller's own submission lookup — a phone-matched row
+    // only tells us about THIS employee's last job if it's actually theirs.
+    // Without this, "for X" on a phone that already has its own open/recent
+    // conversation would carry the phone owner's job onto X's job-less report
+    // (see the 2026-08-21 incident this whole guard exists for).
+    if (data?.length && (!employeeId || !data[0].employee_id || data[0].employee_id === employeeId)) {
+      sub = data[0]
+    }
   }
   const entries: any[] = (sub?.entries || []).filter((e: any) => e.job_number)
   if (entries.length > 0) {
@@ -535,12 +544,15 @@ async function getLastJobForDay(supabase: any, fromPhone: string, workDate: stri
     }
     return entries[entries.length - 1].job_number
   }
+  // Same phone-vs-employee guard as above — a photo this phone sent for
+  // itself shouldn't hand its job to a "for X" report on the same phone.
   const { data: photos } = await supabase
-    .from('gear_photos').select('ship_or_job')
+    .from('gear_photos').select('ship_or_job, employee_id')
     .eq('from_phone', fromPhone).eq('work_date', workDate)
     .not('ship_or_job', 'is', null)
     .order('created_at', { ascending: false }).limit(5)
-  const tagged = (photos || []).find((p: any) => /^(\d{4}|SHOP)$/i.test((p.ship_or_job || '').trim()))
+  const ownPhotos = (photos || []).filter((p: any) => !employeeId || !p.employee_id || p.employee_id === employeeId)
+  const tagged = ownPhotos.find((p: any) => /^(\d{4}|SHOP)$/i.test((p.ship_or_job || '').trim()))
   if (tagged) return tagged.ship_or_job.trim()
 
   // Nothing logged today yet — techs usually stay on one job for days at a stretch,
@@ -557,7 +569,12 @@ async function getLastJobForDay(supabase: any, fromPhone: string, workDate: stri
       if (withJob.length > 0) return withJob[withJob.length - 1].job_number
     }
   }
-  return null
+  // Genuinely nothing to go on (first-ever text, no job history at all,
+  // nothing today) — same real "Unknown" job as the exemption case above,
+  // rather than leaving job_number null. Null entries don't show up in any
+  // job-scoped view (Reports, Job Reports, billing) at all; "Unknown" does,
+  // which is the whole reason that job exists.
+  return 'Unknown'
 }
 
 // Accumulate a day's texts into ONE entry per job: hours add (or replace, when
@@ -1615,8 +1632,18 @@ Deno.serve(async (req: Request) => {
         .from('sms_submissions').select('*')
         .eq('from_phone', fromPhone).eq('work_date', workDate).eq('status', 'submitted')
         .order('created_at', { ascending: false }).limit(1)
-      if (byPhone?.length) submission = byPhone[0]
-      else if (employeeId) {
+      // Only reuse a phone-matched row if it actually belongs to the person this
+      // message is for. A phone can text "for X" to log on someone else's behalf
+      // while its own conversation for the day is still sitting 'submitted' — blindly
+      // reusing whatever that phone last submitted folds the named-for report into a
+      // different employee's entry (see the 2026-08-21 incident: Jim's own 4hrs on
+      // job 4954 silently became part of what got labeled Greg's submission, because
+      // this lookup matched on phone+date alone with no check against who the
+      // message was actually naming). employeeId/byPhone[0].employee_id null is the
+      // pre-existing "don't know who yet" case and still falls through as before.
+      if (byPhone?.length && (!employeeId || !byPhone[0].employee_id || byPhone[0].employee_id === employeeId)) {
+        submission = byPhone[0]
+      } else if (employeeId) {
         const { data: byEmp } = await supabase
           .from('sms_submissions').select('*')
           .eq('employee_id', employeeId).eq('work_date', workDate).eq('status', 'submitted')
