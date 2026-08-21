@@ -493,7 +493,7 @@ export default function Reports() {
       })
       const suppliesPerJob = filteredSupplies.reduce((acc, s) => {
         if (!acc[s.job_id]) acc[s.job_id] = []
-        acc[s.job_id].push(`${s.supply_name} x${Number(s.quantity)}`)
+        acc[s.job_id].push(`${s.supply_name} x${Number(s.quantity)}${s.description ? ` — ${s.description}` : ''}`)
         return acc
       }, {})
       const rows = ['Job #,Customer,Vessel,Description,Status,Total Hours,Reg Hours,OT Hours,Per Diem,Crew,Supplies,Date From,Date To']
@@ -725,6 +725,7 @@ export default function Reports() {
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Employee</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Supply</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Qty</th>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'left' }}>Description</th>
               </tr>
             </thead>
             <tbody>
@@ -736,6 +737,7 @@ export default function Reports() {
                   <td style={{ padding: '0.6rem 0.75rem' }}>{s.employees?.name || '—'}</td>
                   <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{s.supply_name}</td>
                   <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{Number(s.quantity)}</td>
+                  <td style={{ padding: '0.6rem 0.75rem', color: s.description ? '#333' : '#bbb' }}>{s.description || '—'}</td>
                 </tr>
               ))}
             </tbody>
