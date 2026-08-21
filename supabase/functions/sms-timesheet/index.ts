@@ -507,6 +507,16 @@ function calcOTBreakdown(entries: any[], dailyThreshold: number, alreadyWorked =
 // Fallback: the newest job-tagged gear photo — a photo captioned "4900" that
 // morning establishes the day's job before any hours text arrives.
 async function getLastJobForDay(supabase: any, fromPhone: string, workDate: string, submission: any = null, employeeId: string | null = null): Promise<string | null> {
+  // Some techs (e.g. Greg) move between jobs often enough that "assume he's
+  // still on the last one" guesses wrong more than it guesses right — for
+  // them, no job stated means no job inferred at all, same/cross-day alike,
+  // so the day saves quietly with no job for the office to fill in instead
+  // of a silent wrong guess.
+  if (employeeId) {
+    const { data: emp } = await supabase
+      .from('employees').select('job_inference_exempt').eq('id', employeeId).single()
+    if (emp?.job_inference_exempt) return null
+  }
   let sub = submission
   if (!sub) {
     const { data } = await supabase
@@ -1349,7 +1359,7 @@ Deno.serve(async (req: Request) => {
     } else if (/wave|nanaimo|ship|boat/i.test(msgBody)) {
       photoContext = msgBody.trim().substring(0, 50)
     } else {
-      photoContext = await getLastJobForDay(supabase, fromPhone, today)
+      photoContext = await getLastJobForDay(supabase, fromPhone, today, null, employeeId)
     }
 
     const jobId = await lookupJobId(supabase, photoContext)
