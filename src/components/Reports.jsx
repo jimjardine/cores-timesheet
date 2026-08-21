@@ -6,6 +6,7 @@ import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
 import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
+import { getAdminName } from './PasswordGate'
 
 const card = { padding: '1.25rem', background: '#fff', borderRadius: '6px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
 const badge = (s) => ({ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: s === 'open' ? '#e6f4ea' : '#f0f0f0', color: s === 'open' ? '#2d6a38' : '#666' })
@@ -63,6 +64,7 @@ export default function Reports() {
   const employeeFilterIdsDefaulted = useRef(false)
   const [suppliesJobFilterIds, setSuppliesJobFilterIds] = useState([])
   const [suppliesEmployeeFilterIds, setSuppliesEmployeeFilterIds] = useState([])
+  const [suppliesBilledFilter, setSuppliesBilledFilter] = useState('unbilled') // 'all' | 'billed' | 'unbilled'
   const [suppliesGroupBy, setSuppliesGroupBy] = useState('date') // 'job' | 'date'
   const [expandedSupplyGroups, setExpandedSupplyGroups] = useState(new Set())
   function toggleSupplyGroup(key) {
@@ -253,6 +255,7 @@ export default function Reports() {
   const suppliesTabList = filteredSupplies
     .filter(s => suppliesJobFilterIds.length === 0 || suppliesJobFilterIds.includes(s.job_id))
     .filter(s => suppliesEmployeeFilterIds.length === 0 || suppliesEmployeeFilterIds.includes(s.employee_id))
+    .filter(s => suppliesBilledFilter === 'all' || (suppliesBilledFilter === 'billed' ? !!s.billed_at : !s.billed_at))
   const suppliesByJob = suppliesTabList.reduce((acc, s) => {
     if (!acc[s.job_id]) acc[s.job_id] = []
     acc[s.job_id].push(s)
@@ -315,6 +318,40 @@ export default function Reports() {
     const { error } = await supabase.schema('Cores').from('job_supplies').delete().eq('id', supply.id)
     if (error) { alert(`Delete failed: ${error.message}`); return }
     setSupplies(prev => prev.filter(s => s.id !== supply.id))
+  }
+
+  // Marks a supply as charged to the customer (or reverses that) — same
+  // denormalized name+timestamp convention as approved_by_name/approved_at
+  // on timesheet_entries. Fully reversible: unchecking just clears both
+  // fields back to null, no different from any other edit here.
+  async function toggleBilled(supply) {
+    const next = supply.billed_at ? { billed_at: null, billed_by: null } : { billed_at: new Date().toISOString(), billed_by: getAdminName() }
+    setSupplySaveStatus(s => ({ ...s, [supply.id]: 'saving' }))
+    const { error } = await supabase.schema('Cores').from('job_supplies').update(next).eq('id', supply.id)
+    if (error) {
+      alert(`Couldn't save change: ${error.message}`)
+      setSupplySaveStatus(s => ({ ...s, [supply.id]: 'error' }))
+      return
+    }
+    setSupplies(prev => prev.map(s => s.id === supply.id ? { ...s, ...next } : s))
+    setSupplySaveStatus(s => ({ ...s, [supply.id]: 'saved' }))
+    setTimeout(() => setSupplySaveStatus(s => (s[supply.id] === 'saved' ? { ...s, [supply.id]: undefined } : s)), 2000)
+  }
+
+  // Bulk-marks everything currently visible under the active filters — she
+  // bills a job in stages, so checking off a whole invoice run in one click
+  // beats clicking each line individually.
+  async function markAllShownBilled() {
+    const unbilled = suppliesTabList.filter(s => !s.billed_at)
+    if (unbilled.length === 0) return
+    if (!confirm(`Mark ${unbilled.length} supply line${unbilled.length === 1 ? '' : 's'} as billed?`)) return
+    const billed_at = new Date().toISOString()
+    const billed_by = getAdminName()
+    const { error } = await supabase.schema('Cores').from('job_supplies')
+      .update({ billed_at, billed_by }).in('id', unbilled.map(s => s.id))
+    if (error) { alert(`Couldn't save change: ${error.message}`); return }
+    const ids = new Set(unbilled.map(s => s.id))
+    setSupplies(prev => prev.map(s => ids.has(s.id) ? { ...s, billed_at, billed_by } : s))
   }
 
   function openPhotoGroup(title, photos) {
@@ -532,7 +569,7 @@ export default function Reports() {
       })
       downloadCSV(rows, `employees-${dateFileSuffix}.csv`)
     } else if (activeTab === 'supplies') {
-      const rows = ['Job #,Customer,Vessel,Tech,Date,Supply,Qty,Description,Date From,Date To']
+      const rows = ['Job #,Customer,Vessel,Tech,Date,Supply,Qty,Description,Billed,Billed Date,Date From,Date To']
       suppliesTabList
         .slice()
         .sort((a, b) => {
@@ -551,6 +588,8 @@ export default function Reports() {
             `"${(s.supply_name || '').replace(/"/g, '""')}"`,
             Number(s.quantity),
             `"${(s.description || '').replace(/"/g, '""')}"`,
+            s.billed_at ? 'Yes' : 'No',
+            s.billed_at ? s.billed_at.substring(0, 10) : '',
             csvDateFrom, csvDateTo,
           ].join(','))
         })
@@ -1120,7 +1159,26 @@ export default function Reports() {
                 selectedIds={suppliesEmployeeFilterIds} onChange={setSuppliesEmployeeFilterIds}
                 placeholder="All techs" allLabel="All techs" minWidth={180} />
             </div>
+            <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+              <label style={{ color: '#555' }}>Billed:</label>
+              {[{ key: 'unbilled', label: 'Not billed' }, { key: 'billed', label: 'Billed' }, { key: 'all', label: 'All' }].map(o => (
+                <button key={o.key} onClick={() => setSuppliesBilledFilter(o.key)}
+                  style={{
+                    padding: '0.3rem 0.7rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', border: '1px solid #ccc',
+                    fontWeight: suppliesBilledFilter === o.key ? 700 : 400,
+                    color: suppliesBilledFilter === o.key ? '#fff' : '#555',
+                    background: suppliesBilledFilter === o.key ? '#0066cc' : '#fff',
+                    borderColor: suppliesBilledFilter === o.key ? '#0066cc' : '#ccc',
+                  }}>{o.label}</button>
+              ))}
+            </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+              {suppliesTabList.some(s => !s.billed_at) && (
+                <button onClick={markAllShownBilled}
+                  style={{ padding: '0.35rem 0.9rem', background: '#2a7a2a', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  ✓ Mark all shown billed
+                </button>
+              )}
               {tabExportBtn}
               <button onClick={() => window.print()} style={{ padding: '0.4rem 1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>
                 🖨️ Print / Save as PDF
@@ -1206,12 +1264,15 @@ export default function Reports() {
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#888', width: '80px' }}>Qty</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Description</th>
+                                  <th className="no-print" style={{ width: '90px', textAlign: 'center', fontSize: '0.8rem', color: '#888' }}>Billed</th>
                                   <th className="no-print" style={{ width: '70px' }}></th>
                                   <th className="no-print" style={{ width: '40px' }}></th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {group.items.map(s => (
+                                {group.items.map(s => {
+                                  const sourcePhoto = s.source_photo_id ? gearPhotos.find(p => p.id === s.source_photo_id) : null
+                                  return (
                                   <tr key={s.id}>
                                     <td style={{ padding: '0.25rem 0.5rem' }}>
                                       <input value={s.supply_name || ''}
@@ -1219,6 +1280,10 @@ export default function Reports() {
                                         onBlur={() => saveSupplyField(s, 'supply_name')}
                                         className="print-input"
                                         style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                                      {sourcePhoto && (
+                                        <span onClick={() => setPhotoLightbox(sourcePhoto)} className="no-print"
+                                          style={{ fontSize: '0.75rem', color: '#0066cc', cursor: 'pointer' }}>📷 from photo</span>
+                                      )}
                                     </td>
                                     <td style={{ padding: '0.25rem 0.5rem' }}>
                                       <input type="number" step="0.01" value={s.quantity ?? ''}
@@ -1234,6 +1299,11 @@ export default function Reports() {
                                         className="print-input"
                                         style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
                                     </td>
+                                    <td className="no-print" style={{ textAlign: 'center' }}>
+                                      <input type="checkbox" checked={!!s.billed_at} onChange={() => toggleBilled(s)}
+                                        title={s.billed_at ? `Billed ${s.billed_at.substring(0, 10)}${s.billed_by ? ' by ' + s.billed_by : ''}` : 'Not billed'}
+                                        style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }} />
+                                    </td>
                                     <td className="no-print" style={{ textAlign: 'center', fontSize: '0.75rem' }}>
                                       {supplySaveStatus[s.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
                                       {supplySaveStatus[s.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
@@ -1243,7 +1313,8 @@ export default function Reports() {
                                       <button onClick={() => deleteSupply(s)} style={{ padding: '0.25rem 0.5rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontSize: '0.8rem' }}>✕</button>
                                     </td>
                                   </tr>
-                                ))}
+                                  )
+                                })}
                               </tbody>
                             </table>
                             {photos.length > 0 && (
