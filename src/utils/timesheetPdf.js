@@ -232,27 +232,43 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   blankSection("Extra's")
 
   // ── Shop Supplies (filled from job_supplies) ──
-  const supRowH = 16
-  const supRowCount = Math.max(supplyLines.length, 1)
-  ensureSpace(16 + supRowH * supRowCount)
+  // Customers may see this PDF, and supplies used are billed to them, so the
+  // description Tracy attaches to a supply line has to actually be on it —
+  // otherwise a billed item can show up on the invoice with nothing backing
+  // it up on the timesheet the customer's holding. Name and description are
+  // combined into one wrapped cell (row height grows with wrapped line
+  // count) rather than a fixed one-line row, so a real description doesn't
+  // get clipped or overlap the row below it.
+  const supDescMaxW = pageW - margin - (margin + col1W + col2W) - 8
+  const supLineH = 11
+  const supMinRowH = 16
+  const supRowData = (supplyLines.length > 0 ? supplyLines : [{ jobNumber: '', quantity: null, supplyName: '', description: '' }])
+    .map(s => {
+      const label = s.description ? `${s.supplyName || ''} — ${s.description}` : String(s.supplyName || '')
+      return { ...s, wrapped: doc.splitTextToSize(label, supDescMaxW) }
+    })
+  const supRowHeights = supRowData.map(r => Math.max(supMinRowH, r.wrapped.length * supLineH + 5))
+  const supTotalH = supRowHeights.reduce((a, b) => a + b, 0)
+  ensureSpace(16 + supTotalH)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
   doc.text('Job #', margin + 4, y + 12)
   doc.text('Qty', margin + col1W + 4, y + 12)
   doc.text('Shop Supplies', margin + col1W + col2W + 4, y + 12)
   y += 16
   const supTop = y
-  const supBottom = supTop + supRowH * supRowCount
-  supplyLines.forEach((s, i) => {
-    const rowY = supTop + i * supRowH
+  let supRowY = supTop
+  supRowData.forEach((s, i) => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
-    doc.text(String(s.jobNumber || ''), margin + 4, rowY + supRowH - 5)
-    doc.text(s.quantity != null ? String(Number(s.quantity)) : '', margin + col1W + 4, rowY + supRowH - 5)
-    doc.text(String(s.supplyName || ''), margin + col1W + col2W + 4, rowY + supRowH - 5, { maxWidth: pageW - margin - (margin + col1W + col2W) - 8 })
+    doc.text(String(s.jobNumber || ''), margin + 4, supRowY + 11)
+    doc.text(s.quantity != null ? String(Number(s.quantity)) : '', margin + col1W + 4, supRowY + 11)
+    s.wrapped.forEach((ln, li) => doc.text(ln, margin + col1W + col2W + 4, supRowY + 11 + li * supLineH))
+    supRowY += supRowHeights[i]
   })
+  const supBottom = supRowY
   doc.setLineWidth(0.5)
-  for (let i = 0; i <= supRowCount; i++) {
-    doc.line(margin, supTop + i * supRowH, pageW - margin, supTop + i * supRowH)
-  }
+  let supLineY = supTop
+  doc.line(margin, supLineY, pageW - margin, supLineY)
+  supRowHeights.forEach(h => { supLineY += h; doc.line(margin, supLineY, pageW - margin, supLineY) })
   doc.line(margin, supTop, margin, supBottom)
   doc.line(margin + col1W, supTop, margin + col1W, supBottom)
   doc.line(margin + col1W + col2W, supTop, margin + col1W + col2W, supBottom)
