@@ -116,6 +116,13 @@
 .emp-chip-ot { background: #fdecea; color: #c0392b; }
 .emp-chip-pd { background: #eaf3ff; color: #0066cc; }
 .emp-chip-stat { background: #fff4de; color: #a06b00; }
+.emp-chip-draft { background: #f0f0f0; color: #777; }
+.emp-chip-rejected { background: #fdecea; color: #c0392b; }
+.emp-chip-submitted { background: #fff4de; color: #a06b00; }
+.emp-chip-logged { background: #e6f4ea; color: #2d6a38; }
+
+.emp-day-date-row { display: flex; align-items: center; }
+.emp-day-date-row .emp-chip { margin-left: 0.5rem; }
 
 .emp-empty { color: #999; font-size: 0.9rem; padding: 0.5rem 0; }
 

@@ -366,6 +366,15 @@ export default function EmployeeHome({ employee }) {
         // but not yet reviewed, so it's still editable from here.
         const daySub = submissions.find(s => s.work_date === ymd)
         const subTotalHours = (daySub?.entries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0)
+        // Quick-glance status beside the date — the fuller "In X · Out Y ·
+        // tap to edit" hints below still carry the detail; this is just so
+        // a tech can tell a day's state without scrolling into the card.
+        const dayStatus = daySub
+          ? (daySub.status === 'rejected' ? { label: '✗ Sent back', cls: 'rejected' }
+            : daySub.status === 'draft' ? { label: '📝 Draft', cls: 'draft' }
+            : { label: '⏳ Submitted', cls: 'submitted' })
+          : dayEntries.length > 0 ? { label: '✓ Logged', cls: 'logged' }
+          : null
 
         return (
           <div className="emp-card" id={`day-${ymd}`} key={ymd}>
@@ -376,7 +385,10 @@ export default function EmployeeHome({ employee }) {
                   {isStat && <span className="emp-chip emp-chip-stat">STAT</span>}
                   {perDiem > 0 && <span className="emp-chip emp-chip-pd">PD ×{perDiem}</span>}
                 </div>
-                <div className="emp-day-date">{shortDate(ymd)}</div>
+                <div className="emp-day-date-row">
+                  <div className="emp-day-date">{shortDate(ymd)}</div>
+                  {dayStatus && <span className={`emp-chip emp-chip-${dayStatus.cls}`}>{dayStatus.label}</span>}
+                </div>
               </div>
               {totalHours > 0 && <div className="emp-day-total">{fmtHours(totalHours)}h</div>}
             </div>
