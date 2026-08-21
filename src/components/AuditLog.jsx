@@ -175,9 +175,9 @@ export default function AuditLog() {
         />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {filterBtn('all', 'All')}
-          {filterBtn('insert', 'Insert')}
-          {filterBtn('update', 'Update')}
-          {filterBtn('delete', 'Delete')}
+          {filterBtn('insert', 'Inserted')}
+          {filterBtn('update', 'Updated')}
+          {filterBtn('delete', 'Deleted')}
         </div>
       </div>
 
