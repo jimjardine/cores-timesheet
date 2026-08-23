@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react'
 // its wheel picker has no keyboard at all, so finding a job means scrolling
 // through 50+ options by hand. This is a text input + tap-list instead:
 // start typing a job number (or vessel name) and it filters down live.
-export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a job # to search…' }) {
+export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a job # to search…', inputStyle }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const containerRef = useRef(null)
@@ -48,6 +48,7 @@ export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a
         placeholder={placeholder}
         onFocus={() => { setOpen(true); setQuery('') }}
         onChange={e => setQuery(e.target.value)}
+        style={inputStyle}
       />
       {open && (
         <div style={{
