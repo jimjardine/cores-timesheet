@@ -35,19 +35,17 @@ export default function GearPhotos() {
   const [edits, setEdits]       = useState({})
   const [noteDrafts, setNoteDrafts] = useState({})
   // Supply lines tied to a photo (job_supplies.source_photo_id), keyed by
-  // photo id. applied_at null = still a draft (autosaved as she types, not
-  // yet on any report/billing/PDF); applied_at set = real, via "Apply to
-  // Timesheet". Lets a card show both without losing either on reload.
+  // photo id. applied_at null = saved but not on the timesheet; applied_at
+  // set = on the timesheet (and so on the reports/billing/PDF).
   const [suppliesByPhoto, setSuppliesByPhoto] = useState({})
-  // A not-yet-saved draft line, keyed by photo id — nothing is inserted
-  // until she actually types a description, so marking a photo "Supply"
-  // doesn't spam empty rows into job_supplies.
-  const [newDraft, setNewDraft] = useState({})
-  // Local edits to an existing (already-inserted) draft row, keyed by row id,
-  // flushed on blur — same save-on-blur convention as the mobile day-card panel.
+  // Lines she's added on this card but hasn't saved yet, keyed by photo id.
+  // Kept out of the database until Save so "+ Add line" can't spam empty rows.
+  const [newLines, setNewLines] = useState({})
+  // Local edits to an already-saved row, keyed by row id, flushed on Save.
   const [rowEdits, setRowEdits] = useState({})
-  const [supplySavingId, setSupplySavingId] = useState(null)
-  const [applyingId, setApplyingId] = useState(null)
+  // Checkbox overrides, keyed by row id — absent means "same as stored".
+  const [checkedRows, setCheckedRows] = useState({})
+  const [savingPhotoId, setSavingPhotoId] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -130,95 +128,68 @@ export default function GearPhotos() {
     setSavingId(null)
   }
 
-  // Autosave (blur) a not-yet-inserted draft line — nothing is written until
-  // there's an actual description, so opening the Supply fields doesn't by
-  // itself create a row.
-  async function saveNewDraft(photo) {
-    const draft = newDraft[photo.id]
-    const supply_name = (draft?.supply_name || '').trim()
-    if (!supply_name) return
-    const quantity = Number(draft?.quantity) > 0 ? Number(draft.quantity) : 1
-    setSupplySavingId('new-' + photo.id)
-    const { data, error } = await supabase.schema('Cores').from('job_supplies').insert({
+  // Whether a line is ticked to go on the timesheet. Persisted rows default to
+  // whatever they already are (applied = ticked), so opening a card and saving
+  // without touching anything is a no-op rather than a mass un-apply.
+  const isChecked = (row) => checkedRows[row.id] ?? !!row.applied_at
+
+  // The one write for the whole card: every ticked line ends up on the
+  // timesheet, every unticked one doesn't. Unticking an already-applied line
+  // takes it back off — same fully reversible posture as the billed checkbox.
+  async function saveToTimesheet(photo) {
+    const rows = suppliesByPhoto[photo.id] || []
+    const pending = (newLines[photo.id] || []).filter(l => l.supply_name.trim())
+    const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
+    const cleared = { applied_at: null, applied_by: null }
+    setSavingPhotoId(photo.id)
+
+    const inserts = pending.map(l => ({
       job_id: photo.job_id,
       employee_id: photo.employee_id,
       work_date: photo.work_date,
-      supply_name,
-      quantity,
+      supply_name: l.supply_name.trim(),
+      quantity: Number(l.quantity) > 0 ? Number(l.quantity) : 1,
       source_photo_id: photo.id,
-    }).select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').single()
-    if (error) alert('Error saving: ' + error.message)
-    else {
-      setSuppliesByPhoto(m => ({ ...m, [photo.id]: [...(m[photo.id] || []), data] }))
-      setNewDraft(d => { const n = { ...d }; delete n[photo.id]; return n })
+      ...(l.checked ? stamp : cleared),
+    }))
+    if (inserts.length > 0) {
+      const { error } = await supabase.schema('Cores').from('job_supplies').insert(inserts)
+      if (error) { alert('Error saving: ' + error.message); setSavingPhotoId(null); return }
     }
-    setSupplySavingId(null)
-  }
 
-  // Autosave (blur) edits to an already-inserted draft row.
-  async function saveDraftRow(photo, row) {
-    const edit = rowEdits[row.id]
-    if (!edit) return
-    const supply_name = edit.supply_name.trim()
-    if (!supply_name) return
-    const quantity = Number(edit.quantity) > 0 ? Number(edit.quantity) : 1
-    if (supply_name === row.supply_name && quantity === Number(row.quantity)) return
-    setSupplySavingId(row.id)
-    const { error } = await supabase.schema('Cores').from('job_supplies')
-      .update({ supply_name, quantity }).eq('id', row.id)
-    if (error) alert('Error saving: ' + error.message)
-    else setSuppliesByPhoto(m => ({ ...m, [photo.id]: (m[photo.id] || []).map(r => r.id === row.id ? { ...r, supply_name, quantity } : r) }))
-    setSupplySavingId(null)
-  }
-
-  // Turns a draft into a real, billable job_supplies row — deliberate and
-  // explicit (she reviews the photo, confirms the description/quantity),
-  // not automatic, so nothing lands on the timesheet/billing checklist she
-  // didn't actually mean to apply.
-  async function applyDraft(photo, row) {
-    const edit = rowEdits[row.id] ?? { supply_name: row.supply_name, quantity: String(row.quantity) }
-    const supply_name = edit.supply_name.trim()
-    if (!supply_name) return
-    const quantity = Number(edit.quantity) > 0 ? Number(edit.quantity) : 1
-    setApplyingId(row.id)
-    const applied_at = new Date().toISOString()
-    const applied_by = getAdminName()
-    const { error } = await supabase.schema('Cores').from('job_supplies')
-      .update({ supply_name, quantity, applied_at, applied_by }).eq('id', row.id)
-    if (error) alert('Error applying: ' + error.message)
-    else {
-      setSuppliesByPhoto(m => ({ ...m, [photo.id]: (m[photo.id] || []).map(r => r.id === row.id ? { ...r, supply_name, quantity, applied_at, applied_by } : r) }))
-      setRowEdits(d => { const n = { ...d }; delete n[row.id]; return n })
+    for (const row of rows) {
+      const edit = rowEdits[row.id]
+      const supply_name = (edit?.supply_name ?? row.supply_name).trim()
+      if (!supply_name) continue
+      const quantity = Number(edit?.quantity ?? row.quantity) > 0 ? Number(edit?.quantity ?? row.quantity) : 1
+      const checked = isChecked(row)
+      const wasApplied = !!row.applied_at
+      const unchanged = supply_name === row.supply_name && quantity === Number(row.quantity) && checked === wasApplied
+      if (unchanged) continue
+      const { error } = await supabase.schema('Cores').from('job_supplies')
+        .update({ supply_name, quantity, ...(checked ? (wasApplied ? {} : stamp) : cleared) })
+        .eq('id', row.id)
+      if (error) { alert('Error saving: ' + error.message); setSavingPhotoId(null); return }
     }
-    setApplyingId(null)
-  }
 
-  // Same as applyDraft, but for a line that hasn't been inserted yet —
-  // one insert, already stamped applied, rather than insert-then-update.
-  async function applyNewDraft(photo) {
-    const draft = newDraft[photo.id]
-    const supply_name = (draft?.supply_name || '').trim()
-    if (!supply_name) return
-    const quantity = Number(draft?.quantity) > 0 ? Number(draft.quantity) : 1
-    setApplyingId('new-' + photo.id)
-    const applied_at = new Date().toISOString()
-    const applied_by = getAdminName()
-    const { data, error } = await supabase.schema('Cores').from('job_supplies').insert({
-      job_id: photo.job_id,
-      employee_id: photo.employee_id,
-      work_date: photo.work_date,
-      supply_name,
-      quantity,
-      source_photo_id: photo.id,
-      applied_at,
-      applied_by,
-    }).select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').single()
-    if (error) alert('Error applying: ' + error.message)
-    else {
-      setSuppliesByPhoto(m => ({ ...m, [photo.id]: [...(m[photo.id] || []), data] }))
-      setNewDraft(d => { const n = { ...d }; delete n[photo.id]; return n })
-    }
-    setApplyingId(null)
+    // Re-read rather than patching local state by hand — several rows can
+    // change per save, and this keeps the card honest about what's stored.
+    const { data: fresh } = await supabase.schema('Cores').from('job_supplies')
+      .select('id, source_photo_id, supply_name, quantity, applied_at, applied_by')
+      .eq('source_photo_id', photo.id)
+    setSuppliesByPhoto(m => ({ ...m, [photo.id]: fresh || [] }))
+    setNewLines(d => { const n = { ...d }; delete n[photo.id]; return n })
+    setRowEdits(d => {
+      const n = { ...d }
+      for (const r of rows) delete n[r.id]
+      return n
+    })
+    setCheckedRows(c => {
+      const n = { ...c }
+      for (const r of rows) delete n[r.id]
+      return n
+    })
+    setSavingPhotoId(null)
   }
 
   async function saveNote(photo) {
@@ -427,77 +398,62 @@ export default function GearPhotos() {
                 })()}
                 {photo.job_id && photo.photo_type === 'supply' && (() => {
                   const rows = suppliesByPhoto[photo.id] || []
-                  const applied = rows.filter(r => r.applied_at)
-                  const drafts = rows.filter(r => !r.applied_at)
-                  const hasNewDraft = newDraft[photo.id] !== undefined
-                  // Show an empty draft row as soon as the photo is marked Supply —
-                  // no extra click needed — until there's a real draft or new-draft
-                  // in play, at which point "+ add another item" takes over.
-                  const showBlankDraft = drafts.length === 0 && !hasNewDraft
+                  const pending = newLines[photo.id]
+                  // Start her off with one line pre-filled from whatever the
+                  // tech texted in, so the common case is tick-and-save.
+                  const lines = pending ?? (rows.length === 0
+                    ? [{ key: 'l0', supply_name: photo.note || '', quantity: '1', checked: true }]
+                    : [])
+                  const busy = savingPhotoId === photo.id
+                  const qtyStyle = { width: '3.2rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
+                  const descStyle = { flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
 
-                  const draftRow = (row, isNew) => {
-                    const key = isNew ? `new-${photo.id}` : row.id
-                    const value = isNew
-                      ? (newDraft[photo.id] ?? { supply_name: photo.note || '', quantity: '1' })
-                      : (rowEdits[row.id] ?? { supply_name: row.supply_name, quantity: String(row.quantity) })
-                    const setValue = (patch) => {
-                      if (isNew) setNewDraft(d => ({ ...d, [photo.id]: { ...value, ...patch } }))
-                      else setRowEdits(d => ({ ...d, [row.id]: { ...value, ...patch } }))
-                    }
-                    const onBlurSave = () => (isNew ? saveNewDraft(photo) : saveDraftRow(photo, row))
-                    const onApply = () => (isNew ? applyNewDraft(photo) : applyDraft(photo, row))
-                    const busy = supplySavingId === key || applyingId === key
-                    return (
-                      <div key={key} style={{ border: '1px solid #ccc', borderRadius: 4, padding: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                        <input
-                          value={value.supply_name}
-                          onChange={e => setValue({ supply_name: e.target.value })}
-                          onBlur={onBlurSave}
-                          placeholder="Description"
-                          disabled={busy}
-                          style={{ padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }}
-                        />
-                        <div style={{ display: 'flex', gap: '0.3rem' }}>
-                          <input
-                            type="number" min="0" step="1"
-                            value={value.quantity}
-                            onChange={e => setValue({ quantity: e.target.value })}
-                            onBlur={onBlurSave}
-                            disabled={busy}
-                            style={{ width: '4.5rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }}
-                          />
-                          <button
-                            // Without this, a mouse click moves focus off the
-                            // input first, firing its onBlur autosave (an
-                            // insert, for a fresh draft) a beat before this
-                            // onClick's own insert/update — two racing writes
-                            // for the same click. Blocking the focus change
-                            // means only this handler's write happens.
-                            onMouseDown={e => e.preventDefault()}
-                            onClick={onApply}
-                            disabled={busy || !value.supply_name.trim()}
-                            style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
-                          >Apply to Timesheet</button>
-                        </div>
-                      </div>
-                    )
-                  }
+                  const setLines = (next) => setNewLines(d => ({ ...d, [photo.id]: next }))
 
                   return (
                     <div style={{ marginBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                      {applied.map(row => (
-                        <div key={row.id} style={{ fontSize: '0.75rem', color: '#2a7a2a' }}>
-                          ✓ Applied: {row.supply_name} ×{row.quantity}
+                      {rows.map(row => {
+                        const v = rowEdits[row.id] ?? { supply_name: row.supply_name, quantity: String(row.quantity) }
+                        const set = (patch) => setRowEdits(d => ({ ...d, [row.id]: { ...v, ...patch } }))
+                        return (
+                          <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <input type="checkbox" checked={isChecked(row)} disabled={busy}
+                              title={row.applied_at ? 'On the timesheet — untick and save to take it off' : 'Tick and save to put it on the timesheet'}
+                              onChange={e => setCheckedRows(c => ({ ...c, [row.id]: e.target.checked }))}
+                              style={{ width: '1rem', height: '1rem', flexShrink: 0, cursor: 'pointer' }} />
+                            <input type="number" min="0" step="1" value={v.quantity} disabled={busy}
+                              onChange={e => set({ quantity: e.target.value })} style={qtyStyle} />
+                            <input value={v.supply_name} placeholder="Description" disabled={busy}
+                              onChange={e => set({ supply_name: e.target.value })} style={descStyle} />
+                          </div>
+                        )
+                      })}
+                      {lines.map((l, i) => (
+                        <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <input type="checkbox" checked={l.checked} disabled={busy}
+                            title="Tick and save to put it on the timesheet"
+                            onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, checked: e.target.checked } : x))}
+                            style={{ width: '1rem', height: '1rem', flexShrink: 0, cursor: 'pointer' }} />
+                          <input type="number" min="0" step="1" value={l.quantity} disabled={busy}
+                            onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, quantity: e.target.value } : x))}
+                            style={qtyStyle} />
+                          <input value={l.supply_name} placeholder="Description" disabled={busy}
+                            onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, supply_name: e.target.value } : x))}
+                            style={descStyle} />
                         </div>
                       ))}
-                      {drafts.map(row => draftRow(row, false))}
-                      {(showBlankDraft || hasNewDraft) && draftRow(null, true)}
-                      {!showBlankDraft && !hasNewDraft && (
+                      <div style={{ display: 'flex', gap: '0.3rem' }}>
                         <button
-                          onClick={() => setNewDraft(d => ({ ...d, [photo.id]: { supply_name: '', quantity: '1' } }))}
-                          style={{ width: '100%', padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px dashed #0066cc', background: '#fff', color: '#0066cc', borderRadius: 4, cursor: 'pointer' }}
-                        >+ add another item</button>
-                      )}
+                          onClick={() => setLines([...lines, { key: `l${Date.now()}`, supply_name: '', quantity: '1', checked: true }])}
+                          disabled={busy}
+                          style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px dashed #0066cc', background: '#fff', color: '#0066cc', borderRadius: 4, cursor: 'pointer' }}
+                        >+ Add line</button>
+                        <button
+                          onClick={() => saveToTimesheet(photo)}
+                          disabled={busy}
+                          style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+                        >{busy ? 'Saving…' : 'Save to Timesheet'}</button>
+                      </div>
                     </div>
                   )
                 })()}
