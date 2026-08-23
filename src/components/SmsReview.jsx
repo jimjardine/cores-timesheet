@@ -255,6 +255,10 @@ export default function SmsReview({ onApproved } = {}) {
         work_date:         sub.work_date,
         supply_name:       s.supply_name.trim(),
         quantity:          Number(s.quantity) > 0 ? Number(s.quantity) : 1,
+        // Approving the submission is already the deliberate review step —
+        // unlike the gear-photo path, there's no separate draft/Apply here.
+        applied_at:        new Date().toISOString(),
+        applied_by:        getAdminName(),
       }))
       const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').insert(supplyRows)
       if (supplyError) {

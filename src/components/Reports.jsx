@@ -165,7 +165,9 @@ export default function Reports() {
       supabase.schema('Cores').from('timesheet_entries').select('*, employees(id, name), jobs(id, job_number, description, status, customers(name), vessels(name))').order('work_date', { ascending: false }),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('stat_holidays').select('holiday_date'),
-      supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }),
+      // Excludes still-drafting GearPhotos supply lines (applied_at null) —
+      // they're not real until she taps Apply to Timesheet on that photo.
+      supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').not('applied_at', 'is', null).order('work_date', { ascending: false }),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('sms_submissions').select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting']),
     ])

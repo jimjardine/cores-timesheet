@@ -64,8 +64,11 @@ export default function EntryForm({ employee, mode }) {
       setLunchMinutes(entry.lunch_minutes ?? '')
       setPerDiem(entry.per_diem ?? 0)
 
+      // Applied only — a still-drafting GearPhotos line isn't part of what this
+      // editor manages, and replaceSupplies() (on Save) never touches it anyway.
       const { data: sup } = await supabase.schema('Cores').from('job_supplies')
         .select('job_id, supply_name, quantity').eq('employee_id', employee.id).eq('work_date', entry.work_date)
+        .not('applied_at', 'is', null)
       setSupplyLines(sup && sup.length > 0 ? sup : [blankSupplyLine()])
       setLoading(false)
     }
@@ -158,8 +161,11 @@ export default function EntryForm({ employee, mode }) {
     const { error: delError } = await supabase.schema('Cores').from('timesheet_entries')
       .delete().eq('id', originalEntry.id).eq('employee_id', employee.id)
     if (delError) { setError(delError.message); setSaving(false); return }
+    // Applied only — a still-drafting GearPhotos line for this job/day isn't
+    // tied to this entry's existence and must survive the entry being deleted.
     await supabase.schema('Cores').from('job_supplies').delete()
       .eq('employee_id', employee.id).eq('job_id', originalEntry.job_id).eq('work_date', originalEntry.work_date)
+      .not('applied_at', 'is', null)
     await cleanupStatPay(employee.id, originalEntry.work_date)
     setSaving(false)
     navigate('..')

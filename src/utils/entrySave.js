@@ -47,14 +47,23 @@ export async function fetchDailyOTContext(supabase, employeeId, workDate) {
 // Replace whatever supplies are logged for an employee/day with a new set —
 // same delete-then-insert pattern used everywhere supplies are edited.
 export async function replaceSupplies(supabase, employeeId, workDate, supplies) {
-  await cores(supabase).from('job_supplies').delete().eq('employee_id', employeeId).eq('work_date', workDate)
+  // Scoped to already-applied rows only — an in-progress GearPhotos draft
+  // (applied_at still null) for this same employee/day must survive this
+  // delete-then-insert cycle untouched, since it isn't part of what this
+  // caller loaded/is editing.
+  await cores(supabase).from('job_supplies').delete()
+    .eq('employee_id', employeeId).eq('work_date', workDate).not('applied_at', 'is', null)
 
   const validSupplies = (supplies || []).filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
   if (validSupplies.length === 0) return { error: null }
 
+  // A typed-in supply row is already a deliberate, reviewed action (unlike
+  // the gear-photo path, which has its own draft step before Apply), so it's
+  // immediately applied — same as it's always behaved.
   const { error } = await cores(supabase).from('job_supplies').insert(validSupplies.map(s => ({
     job_id: s.job_id, employee_id: employeeId, work_date: workDate,
     supply_name: s.supply_name, quantity: Number(s.quantity),
+    applied_at: new Date().toISOString(),
   })))
   return { error }
 }
