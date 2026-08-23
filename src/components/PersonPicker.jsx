@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef } from 'react'
 // allowClear=true adds a pinned "All people" option that picks '' (used for
 // filter dropdowns); allowClear=false is for a required field like "which
 // employee is this entry for" — no all/none option, must pick someone.
-export default function PersonPicker({ employees, value, onChange, allowClear = true, placeholder, inputStyle, clearLabel = 'All people' }) {
+export default function PersonPicker({ employees, value, onChange, allowClear = true, placeholder, inputStyle, clearLabel = 'All people', onQueryChange }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const containerRef = useRef(null)
@@ -28,10 +28,13 @@ export default function PersonPicker({ employees, value, onChange, allowClear = 
   function pick(id) {
     onChange(id)
     setQuery('')
+    onQueryChange?.('')
     setOpen(false)
   }
 
-  const displayValue = open ? query : (selected ? selected.name : '')
+  // Closing without picking (e.g. clicking away) keeps what was typed visible —
+  // it shouldn't look cleared when a caller may still be live-filtering on it.
+  const displayValue = selected ? (open ? query : selected.name) : query
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
@@ -39,8 +42,8 @@ export default function PersonPicker({ employees, value, onChange, allowClear = 
         type="text"
         value={displayValue}
         placeholder={placeholder ?? (allowClear ? 'All people' : 'Type a name…')}
-        onFocus={() => { setOpen(true); setQuery('') }}
-        onChange={e => setQuery(e.target.value)}
+        onFocus={() => { setOpen(true); setQuery(''); onQueryChange?.('') }}
+        onChange={e => { setQuery(e.target.value); onQueryChange?.(e.target.value) }}
         style={inputStyle || { padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', width: '160px' }}
       />
       {open && (
