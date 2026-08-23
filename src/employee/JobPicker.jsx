@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react'
 // its wheel picker has no keyboard at all, so finding a job means scrolling
 // through 50+ options by hand. This is a text input + tap-list instead:
 // start typing a job number (or vessel name) and it filters down live.
-export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a job # to search…', inputStyle }) {
+export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a job # to search…', inputStyle, onQueryChange }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const containerRef = useRef(null)
@@ -34,10 +34,14 @@ export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a
   function pick(job) {
     onChange(job)
     setQuery('')
+    onQueryChange?.('')
     setOpen(false)
   }
 
-  const displayValue = open ? query : (selectedJob ? `${selectedJob.job_number} — ${selectedJob.vessels?.name || selectedJob.description || ''}` : '')
+  // Closing the dropdown without picking anything (e.g. clicking away) keeps
+  // whatever was typed visible — it shouldn't look like the search was
+  // cleared when it wasn't (a caller may still be live-filtering on it).
+  const displayValue = selectedJob ? (open ? query : `${selectedJob.job_number} — ${selectedJob.vessels?.name || selectedJob.description || ''}`) : query
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
@@ -46,8 +50,8 @@ export default function JobPicker({ jobs, value, onChange, placeholder = 'Type a
         inputMode="search"
         value={displayValue}
         placeholder={placeholder}
-        onFocus={() => { setOpen(true); setQuery('') }}
-        onChange={e => setQuery(e.target.value)}
+        onFocus={() => { setOpen(true); setQuery(''); onQueryChange?.('') }}
+        onChange={e => { setQuery(e.target.value); onQueryChange?.(e.target.value) }}
         style={inputStyle}
       />
       {open && (
