@@ -20,6 +20,10 @@ export default function GearPhotos() {
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all')
   const [jobFilterId, setJobFilterId] = useState('')
+  // Live text as it's typed into the job filter — narrows the photo grid on
+  // every keystroke, same as JobPicker's own dropdown does internally.
+  // jobFilterId (an exact pick) takes priority over this once set.
+  const [jobFilterQuery, setJobFilterQuery] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [dateFilter, setDateFilter] = useState('all')
   const [customDate, setCustomDate] = useState('')
@@ -68,17 +72,30 @@ export default function GearPhotos() {
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || null
 
+  // Same substring match JobPicker's own dropdown uses, so what the grid
+  // shows always agrees with what the dropdown suggests.
+  function jobMatchesQuery(job, q) {
+    if (!job) return false
+    return job.job_number.toLowerCase().includes(q)
+      || (job.vessels?.name || '').toLowerCase().includes(q)
+      || (job.description || '').toLowerCase().includes(q)
+  }
+
   const visible = photos.filter(p => {
     if (filter === 'needs_context' && !p.pending_context) return false
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
-    if (jobFilterId && p.job_id !== jobFilterId) return false
+    if (jobFilterId) {
+      if (p.job_id !== jobFilterId) return false
+    } else if (jobFilterQuery.trim()) {
+      if (!jobMatchesQuery(jobs.find(j => j.id === p.job_id), jobFilterQuery.trim().toLowerCase())) return false
+    }
     if (employeeFilter && p.employee_id !== employeeFilter) return false
     if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
     if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
     return true
   })
-  const hasActiveFilter = filter !== 'all' || jobFilterId || employeeFilter || dateFilter !== 'all'
+  const hasActiveFilter = filter !== 'all' || jobFilterId || jobFilterQuery.trim() || employeeFilter || dateFilter !== 'all'
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
@@ -245,13 +262,18 @@ export default function GearPhotos() {
           <JobPicker
             jobs={jobs}
             value={jobFilterId}
-            onChange={job => setJobFilterId(job.id)}
+            onChange={job => { setJobFilterId(job.id); setJobFilterQuery('') }}
+            // Typing supersedes a prior exact pick, so the grid goes back to
+            // live-filtering instead of staying locked to the old selection —
+            // but a bare focus (query still empty) shouldn't itself clear it,
+            // or just clicking into the box to look at it would reset the filter.
+            onQueryChange={q => { setJobFilterQuery(q); if (q.trim()) setJobFilterId('') }}
             placeholder="Filter by job #..."
             inputStyle={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 200 }}
           />
           {jobFilterId && (
             <button
-              onClick={() => setJobFilterId('')}
+              onClick={() => { setJobFilterId(''); setJobFilterQuery('') }}
               title="Clear job filter"
               style={{ padding: '0.3rem 0.5rem', border: '1px solid #ccc', borderRadius: 6, background: '#fff', color: '#666', cursor: 'pointer', fontSize: '0.85rem' }}
             >✕</button>
