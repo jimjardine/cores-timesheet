@@ -4,6 +4,7 @@ import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
 import { getAdminName } from './PasswordGate'
 import JobPicker from '../employee/JobPicker'
+import PersonPicker from './PersonPicker'
 
 const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
@@ -25,6 +26,8 @@ export default function GearPhotos() {
   // jobFilterId (an exact pick) takes priority over this once set.
   const [jobFilterQuery, setJobFilterQuery] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
+  // Same live-as-you-type behaviour as jobFilterQuery, for the person filter.
+  const [employeeFilterQuery, setEmployeeFilterQuery] = useState('')
   const [dateFilter, setDateFilter] = useState('all')
   const [customDate, setCustomDate] = useState('')
   const [lightbox, setLightbox] = useState(null)
@@ -90,12 +93,16 @@ export default function GearPhotos() {
     } else if (jobFilterQuery.trim()) {
       if (!jobMatchesQuery(jobs.find(j => j.id === p.job_id), jobFilterQuery.trim().toLowerCase())) return false
     }
-    if (employeeFilter && p.employee_id !== employeeFilter) return false
+    if (employeeFilter) {
+      if (p.employee_id !== employeeFilter) return false
+    } else if (employeeFilterQuery.trim()) {
+      if (!(employeeName(p.employee_id) || '').toLowerCase().includes(employeeFilterQuery.trim().toLowerCase())) return false
+    }
     if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
     if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
     return true
   })
-  const hasActiveFilter = filter !== 'all' || jobFilterId || jobFilterQuery.trim() || employeeFilter || dateFilter !== 'all'
+  const hasActiveFilter = filter !== 'all' || jobFilterId || jobFilterQuery.trim() || employeeFilter || employeeFilterQuery.trim() || dateFilter !== 'all'
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
@@ -279,16 +286,23 @@ export default function GearPhotos() {
             >✕</button>
           )}
         </div>
-        <select
-          value={employeeFilter}
-          onChange={e => setEmployeeFilter(e.target.value)}
-          style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
-        >
-          <option value="">All people</option>
-          {employees.slice().sort((a, b) => a.name.localeCompare(b.name)).map(e => (
-            <option key={e.id} value={e.id}>{e.name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          <PersonPicker
+            employees={employees.slice().sort((a, b) => a.name.localeCompare(b.name))}
+            value={employeeFilter}
+            onChange={id => { setEmployeeFilter(id); setEmployeeFilterQuery('') }}
+            onQueryChange={q => { setEmployeeFilterQuery(q); if (q.trim()) setEmployeeFilter('') }}
+            placeholder="Filter by person..."
+            inputStyle={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', width: 170 }}
+          />
+          {employeeFilter && (
+            <button
+              onClick={() => { setEmployeeFilter(''); setEmployeeFilterQuery('') }}
+              title="Clear person filter"
+              style={{ padding: '0.3rem 0.5rem', border: '1px solid #ccc', borderRadius: 6, background: '#fff', color: '#666', cursor: 'pointer', fontSize: '0.85rem' }}
+            >✕</button>
+          )}
+        </div>
         <button
           onClick={() => {
             if (dateFilter === 'all') { setDateFilter('today'); setCustomDate('') }
