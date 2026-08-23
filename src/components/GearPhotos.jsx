@@ -68,7 +68,6 @@ export default function GearPhotos() {
 
   const visible = photos.filter(p => {
     if (filter === 'needs_context' && !p.pending_context) return false
-    if (filter === 'has_context' && p.pending_context)    return false
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
     if (jobFilter.trim() && !(p.ship_or_job || '').toLowerCase().includes(jobFilter.trim().toLowerCase())) return false
@@ -266,7 +265,6 @@ export default function GearPhotos() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {filterBtn('all', 'All')}
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
-          {filterBtn('has_context', 'Tagged')}
           {filterBtn('supply', `🔧 Supplies (${photos.filter(p => p.photo_type === 'supply').length})`)}
           {filterBtn('reference', `📋 Reference (${photos.filter(p => p.photo_type === 'reference').length})`)}
         </div>
