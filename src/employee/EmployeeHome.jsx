@@ -82,9 +82,11 @@ export default function EmployeeHome({ employee }) {
       .gte('work_date', weekStart).lte('work_date', weekEnd)
       .order('work_date').order('sort_order')
     setEntries(data || [])
+    // Excludes still-drafting GearPhotos supply lines (applied_at null) — not real yet.
     const { data: sup } = await supabase.schema('Cores').from('job_supplies')
       .select('*').eq('employee_id', employee.id)
       .gte('work_date', weekStart).lte('work_date', weekEnd)
+      .not('applied_at', 'is', null)
     setSupplies(sup || [])
     // Texted-in days not yet approved by the office — shown so a tech can see
     // and fix a text before Niki reviews it. Approved ones already show up
@@ -334,8 +336,11 @@ export default function EmployeeHome({ employee }) {
     if (entry.entry_source !== 'self') { setError('This entry has been approved and can only be changed by the office.'); setConfirmDeleteId(null); return }
     const { error: err } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id).eq('employee_id', employee.id)
     if (err) { setError(err.message); setConfirmDeleteId(null); return }
+    // Applied only — a still-drafting GearPhotos line for this job/day isn't
+    // tied to this entry's existence and must survive the entry being deleted.
     await supabase.schema('Cores').from('job_supplies').delete()
       .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+      .not('applied_at', 'is', null)
     await cleanupStatPay(entry.employee_id, entry.work_date)
     setConfirmDeleteId(null)
     await load({ silent: true })

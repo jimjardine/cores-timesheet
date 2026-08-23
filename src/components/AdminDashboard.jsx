@@ -151,7 +151,8 @@ export default function AdminDashboard() {
     supabase.schema('Cores').from('payroll_config').select('key, value').then(({ data }) => setPayrollConfig(Object.fromEntries((data || []).map(r => [r.key, Number(r.value)]))))
     supabase.schema('Cores').from('stat_holidays').select('holiday_date').then(({ data }) => setStatHolidays(new Set((data || []).map(r => r.holiday_date))))
     supabase.schema('Cores').from('jobs').select('*, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
-    supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').order('work_date', { ascending: false }).then(({ data }) => setSupplies(data || []))
+    // Excludes still-drafting GearPhotos supply lines (applied_at null) — not real until Applied.
+    supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').not('applied_at', 'is', null).order('work_date', { ascending: false }).then(({ data }) => setSupplies(data || []))
     supabase.schema('Cores').from('gear_photos').select('*').then(({ data }) => setGearPhotos(data || []))
     supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at').then(({ data }) => setPostedWeeks(Object.fromEntries((data || []).map(r => [`${r.employee_id}|${r.week_start}`, r.posted_at]))))
   }, [])
@@ -238,12 +239,15 @@ export default function AdminDashboard() {
     const jobIdsOnTimesheet = allEntries ? [...new Set(allEntries.map(entry => entry.job_id))] : [e.job_id]
     setTimesheetJobs(jobIdsOnTimesheet)
 
-    // Fetch existing supplies for this entry
+    // Fetch existing supplies for this entry — applied only, since a
+    // still-drafting GearPhotos line isn't part of what this editor manages
+    // and replaceSupplies() (on Save) never touches unapplied rows anyway.
     const { data: existingSupplies } = await supabase
       .schema('Cores').from('job_supplies')
       .select('job_id, supply_name, quantity')
       .eq('employee_id', e.employee_id)
       .eq('work_date', e.work_date)
+      .not('applied_at', 'is', null)
 
     if (existingSupplies && existingSupplies.length > 0) {
       setEditSupplies(existingSupplies.map(s => ({
@@ -346,8 +350,11 @@ export default function AdminDashboard() {
     const { data: siblings } = await supabase.schema('Cores').from('timesheet_entries')
       .select('id').eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
     if (!siblings || siblings.length === 0) {
+      // Applied only — a still-drafting GearPhotos line for this job/day isn't
+      // tied to this entry's existence and must survive the entry being deleted.
       const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').delete()
         .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
+        .not('applied_at', 'is', null)
       if (supplyError) alert(`Entry deleted, but couldn't clean up its supplies: ${supplyError.message}`)
     }
     // If that was the employee's last real entry in the pay week, the auto
@@ -884,7 +891,10 @@ export default function AdminDashboard() {
         .schema('Cores').from('job_supplies')
         .select('supply_name, quantity, description, jobs(job_number)')
         .eq('employee_id', emp.id)
-        .eq('work_date', workDate),
+        .eq('work_date', workDate)
+        // Customer-facing PDF — a still-drafting GearPhotos line must never
+        // print here before she's actually applied it.
+        .not('applied_at', 'is', null),
     ])
     const submission = subRows?.[0] || null
     // Prefer the times saved on the timesheet entries themselves (works for both
