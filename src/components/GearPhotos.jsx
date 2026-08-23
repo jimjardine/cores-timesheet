@@ -19,6 +19,7 @@ export default function GearPhotos() {
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all')
   const [jobFilter, setJobFilter] = useState('')
+  const [employeeFilter, setEmployeeFilter] = useState('')
   const [dateFilter, setDateFilter] = useState('all')
   const [customDate, setCustomDate] = useState('')
   const [lightbox, setLightbox] = useState(null)
@@ -71,11 +72,12 @@ export default function GearPhotos() {
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
     if (jobFilter.trim() && !(p.ship_or_job || '').toLowerCase().includes(jobFilter.trim().toLowerCase())) return false
+    if (employeeFilter && p.employee_id !== employeeFilter) return false
     if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
     if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
     return true
   })
-  const hasActiveFilter = filter !== 'all' || jobFilter.trim() || dateFilter !== 'all'
+  const hasActiveFilter = filter !== 'all' || jobFilter.trim() || employeeFilter || dateFilter !== 'all'
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
@@ -235,7 +237,7 @@ export default function GearPhotos() {
 
   return (
     <div style={{ padding: '1.5rem 2rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Gear Photos</h2>
         <span style={{ color: '#888', fontSize: '0.85rem' }}>{photos.length} total</span>
         <input
@@ -244,6 +246,16 @@ export default function GearPhotos() {
           placeholder="Filter by job number..."
           style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 180, marginLeft: '1rem' }}
         />
+        <select
+          value={employeeFilter}
+          onChange={e => setEmployeeFilter(e.target.value)}
+          style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem' }}
+        >
+          <option value="">All people</option>
+          {employees.slice().sort((a, b) => a.name.localeCompare(b.name)).map(e => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
+        </select>
         <button
           onClick={() => {
             if (dateFilter === 'all') { setDateFilter('today'); setCustomDate('') }
