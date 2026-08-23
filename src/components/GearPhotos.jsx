@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
 import { getAdminName } from './PasswordGate'
+import JobPicker from '../employee/JobPicker'
 
 const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
@@ -18,7 +19,7 @@ export default function GearPhotos() {
   const [employees, setEmployees] = useState([])
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all')
-  const [jobFilter, setJobFilter] = useState('')
+  const [jobFilterId, setJobFilterId] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [dateFilter, setDateFilter] = useState('all')
   const [customDate, setCustomDate] = useState('')
@@ -48,7 +49,7 @@ export default function GearPhotos() {
       // Include closed jobs: a photo can legitimately be tagged to a job that's
       // since closed, and excluding them silently nulled out job_id (photo vanished
       // from every report with no error).
-      supabase.schema('Cores').from('jobs').select('id, job_number, description, status'),
+      supabase.schema('Cores').from('jobs').select('id, job_number, description, status, vessels(name)'),
       supabase.schema('Cores').from('employees').select('id, name'),
       supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').not('source_photo_id', 'is', null),
     ])
@@ -71,13 +72,13 @@ export default function GearPhotos() {
     if (filter === 'needs_context' && !p.pending_context) return false
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
-    if (jobFilter.trim() && !(p.ship_or_job || '').toLowerCase().includes(jobFilter.trim().toLowerCase())) return false
+    if (jobFilterId && p.job_id !== jobFilterId) return false
     if (employeeFilter && p.employee_id !== employeeFilter) return false
     if (dateFilter === 'today' && p.work_date !== toYMD(new Date())) return false
     if (dateFilter === 'custom' && customDate && p.work_date !== customDate) return false
     return true
   })
-  const hasActiveFilter = filter !== 'all' || jobFilter.trim() || employeeFilter || dateFilter !== 'all'
+  const hasActiveFilter = filter !== 'all' || jobFilterId || employeeFilter || dateFilter !== 'all'
 
   async function saveContext(photo, value) {
     setSavingId(photo.id)
@@ -240,12 +241,22 @@ export default function GearPhotos() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Gear Photos</h2>
         <span style={{ color: '#888', fontSize: '0.85rem' }}>{photos.length} total</span>
-        <input
-          value={jobFilter}
-          onChange={e => setJobFilter(e.target.value)}
-          placeholder="Filter by job number..."
-          style={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 180, marginLeft: '1rem' }}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginLeft: '1rem' }}>
+          <JobPicker
+            jobs={jobs}
+            value={jobFilterId}
+            onChange={job => setJobFilterId(job.id)}
+            placeholder="Filter by job #..."
+            inputStyle={{ padding: '0.4rem 0.7rem', border: '1px solid #ccc', borderRadius: 6, fontSize: '0.85rem', minWidth: 200 }}
+          />
+          {jobFilterId && (
+            <button
+              onClick={() => setJobFilterId('')}
+              title="Clear job filter"
+              style={{ padding: '0.3rem 0.5rem', border: '1px solid #ccc', borderRadius: 6, background: '#fff', color: '#666', cursor: 'pointer', fontSize: '0.85rem' }}
+            >✕</button>
+          )}
+        </div>
         <select
           value={employeeFilter}
           onChange={e => setEmployeeFilter(e.target.value)}
