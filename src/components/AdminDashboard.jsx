@@ -1576,10 +1576,11 @@ export default function AdminDashboard() {
                                 ) : e.entry_source === 'sms' ? (
                                   // Approved SMS-sourced entries aren't edited in place — hours only
                                   // ever change by going back through SMS Review and re-approving.
-                                  <span>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    {postedToSageControl(e.employee_id, e.work_date)}
                                     <button onClick={() => revertToPending(e)} disabled={revertingId === e.id}
                                       title="Send this back to SMS Review to change hours, then re-approve it"
-                                      style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: revertingId === e.id ? 'default' : 'pointer', fontSize: '0.8rem', color: '#555' }}>
+                                      style={{ padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: revertingId === e.id ? 'default' : 'pointer', fontSize: '0.8rem', color: '#555' }}>
                                       {revertingId === e.id ? 'Reverting…' : '↩ Revert to Pending'}
                                     </button>
                                     <button onClick={() => setConfirmDeleteId(e.id)} disabled={revertingId === e.id} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ffaaaa', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#c0392b' }}>Delete</button>
