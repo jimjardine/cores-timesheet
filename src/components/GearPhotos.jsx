@@ -46,10 +46,16 @@ export default function GearPhotos() {
   // Checkbox overrides, keyed by row id — absent means "same as stored".
   const [checkedRows, setCheckedRows] = useState({})
   const [savingPhotoId, setSavingPhotoId] = useState(null)
+  // `${employee_id}|${work_date}` for every day that already has a real
+  // timesheet entry. job_supplies has no FK to timesheet_entries — a supply
+  // applied for an employee/day with no entry yet would sit invisible until
+  // one showed up, so Save to Timesheet is blocked until there's an entry
+  // for it to actually attach to.
+  const [entryDays, setEntryDays] = useState(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: p }, { data: j }, { data: emps }, { data: logged }] = await Promise.all([
+    const [{ data: p }, { data: j }, { data: emps }, { data: logged }, { data: entries }] = await Promise.all([
       supabase.schema('Cores').from('gear_photos').select('*').order('created_at', { ascending: false }),
       // Include closed jobs: a photo can legitimately be tagged to a job that's
       // since closed, and excluding them silently nulled out job_id (photo vanished
@@ -57,6 +63,7 @@ export default function GearPhotos() {
       supabase.schema('Cores').from('jobs').select('id, job_number, description, status, vessels(name)'),
       supabase.schema('Cores').from('employees').select('id, name'),
       supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').not('source_photo_id', 'is', null),
+      supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date'),
     ])
     setPhotos(p || [])
     setJobs(j || [])
@@ -66,12 +73,14 @@ export default function GearPhotos() {
       (byPhoto[row.source_photo_id] ||= []).push(row)
     }
     setSuppliesByPhoto(byPhoto)
+    setEntryDays(new Set((entries || []).map(e => `${e.employee_id}|${e.work_date}`)))
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || null
+  const hasEntryForPhoto = (photo) => photo.employee_id && entryDays.has(`${photo.employee_id}|${photo.work_date}`)
 
   // Same substring match JobPicker's own dropdown uses, so what the grid
   // shows always agrees with what the dropdown suggests.
@@ -137,6 +146,10 @@ export default function GearPhotos() {
   // timesheet, every unticked one doesn't. Unticking an already-applied line
   // takes it back off — same fully reversible posture as the billed checkbox.
   async function saveToTimesheet(photo) {
+    if (!hasEntryForPhoto(photo)) {
+      alert(`${employeeName(photo.employee_id) || 'This employee'} doesn't have a timesheet entry for ${fmtDate(photo.work_date)} yet — supplies can't be saved until hours are logged for that day.`)
+      return
+    }
     const rows = suppliesByPhoto[photo.id] || []
     const pending = (newLines[photo.id] || []).filter(l => l.supply_name.trim())
     const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
@@ -405,6 +418,7 @@ export default function GearPhotos() {
                     ? [{ key: 'l0', supply_name: photo.note || '', quantity: '1', checked: true }]
                     : [])
                   const busy = savingPhotoId === photo.id
+                  const canSave = hasEntryForPhoto(photo)
                   const qtyStyle = { width: '3.2rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
                   const descStyle = { flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
 
@@ -412,6 +426,11 @@ export default function GearPhotos() {
 
                   return (
                     <div style={{ marginBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                      {!canSave && (
+                        <div style={{ fontSize: '0.72rem', color: '#a05a00', background: '#fff6e8', border: '1px solid #f0d9a8', borderRadius: 4, padding: '0.35rem 0.5rem' }}>
+                          No timesheet entry yet for {employeeName(photo.employee_id) || 'this employee'} on {fmtDate(photo.work_date)} — can't save supplies until hours are logged for that day.
+                        </div>
+                      )}
                       {rows.map(row => {
                         const v = rowEdits[row.id] ?? { supply_name: row.supply_name, quantity: String(row.quantity) }
                         const set = (patch) => setRowEdits(d => ({ ...d, [row.id]: { ...v, ...patch } }))
@@ -450,8 +469,15 @@ export default function GearPhotos() {
                         >+ Add line</button>
                         <button
                           onClick={() => saveToTimesheet(photo)}
-                          disabled={busy}
-                          style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px solid #0066cc', background: '#0066cc', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+                          disabled={busy || !canSave}
+                          title={canSave ? undefined : 'No timesheet entry yet for that employee/day'}
+                          style={{
+                            flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', borderRadius: 4,
+                            border: `1px solid ${canSave ? '#0066cc' : '#ccc'}`,
+                            background: canSave ? '#0066cc' : '#eee',
+                            color: canSave ? '#fff' : '#999',
+                            cursor: canSave ? 'pointer' : 'not-allowed',
+                          }}
                         >{busy ? 'Saving…' : 'Save to Timesheet'}</button>
                       </div>
                     </div>
