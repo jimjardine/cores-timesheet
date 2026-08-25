@@ -52,10 +52,15 @@ export default function GearPhotos() {
   // one showed up, so Save to Timesheet is blocked until there's an entry
   // for it to actually attach to.
   const [entryDays, setEntryDays] = useState(new Set())
+  // Same key, but for a day whose hours were texted in and are still
+  // awaiting admin approval (no timesheet_entries row yet, but not "nothing
+  // logged" either) — lets the blocked message tell the two apart instead of
+  // reading like the tech never reported their hours at all.
+  const [pendingDays, setPendingDays] = useState(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: p }, { data: j }, { data: emps }, { data: logged }, { data: entries }] = await Promise.all([
+    const [{ data: p }, { data: j }, { data: emps }, { data: logged }, { data: entries }, { data: pending }] = await Promise.all([
       supabase.schema('Cores').from('gear_photos').select('*').order('created_at', { ascending: false }),
       // Include closed jobs: a photo can legitimately be tagged to a job that's
       // since closed, and excluding them silently nulled out job_id (photo vanished
@@ -64,6 +69,7 @@ export default function GearPhotos() {
       supabase.schema('Cores').from('employees').select('id, name'),
       supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').not('source_photo_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date'),
+      supabase.schema('Cores').from('sms_submissions').select('employee_id, work_date').in('status', ['submitted', 'collecting']),
     ])
     setPhotos(p || [])
     setJobs(j || [])
@@ -74,6 +80,7 @@ export default function GearPhotos() {
     }
     setSuppliesByPhoto(byPhoto)
     setEntryDays(new Set((entries || []).map(e => `${e.employee_id}|${e.work_date}`)))
+    setPendingDays(new Set((pending || []).map(e => `${e.employee_id}|${e.work_date}`)))
     setLoading(false)
   }, [])
 
@@ -81,6 +88,7 @@ export default function GearPhotos() {
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || null
   const hasEntryForPhoto = (photo) => photo.employee_id && entryDays.has(`${photo.employee_id}|${photo.work_date}`)
+  const hasPendingSubmission = (photo) => photo.employee_id && pendingDays.has(`${photo.employee_id}|${photo.work_date}`)
 
   // Same substring match JobPicker's own dropdown uses, so what the grid
   // shows always agrees with what the dropdown suggests.
@@ -142,12 +150,24 @@ export default function GearPhotos() {
   // without touching anything is a no-op rather than a mass un-apply.
   const isChecked = (row) => checkedRows[row.id] ?? !!row.applied_at
 
+  // Distinguishes "nothing logged at all" from "hours were texted in but
+  // an admin hasn't approved them yet" — from the tech's side those feel
+  // very different ("I entered my time!") even though neither has produced
+  // a real timesheet_entries row for a supply to attach to.
+  function blockedReason(photo) {
+    const name = employeeName(photo.employee_id) || 'This employee'
+    const date = fmtDate(photo.work_date)
+    return hasPendingSubmission(photo)
+      ? `${name}'s hours for ${date} were texted in but haven't been approved yet — supplies can be saved once that submission is approved.`
+      : `${name} doesn't have a timesheet entry for ${date} yet — supplies can't be saved until hours are logged for that day.`
+  }
+
   // The one write for the whole card: every ticked line ends up on the
   // timesheet, every unticked one doesn't. Unticking an already-applied line
   // takes it back off — same fully reversible posture as the billed checkbox.
   async function saveToTimesheet(photo) {
     if (!hasEntryForPhoto(photo)) {
-      alert(`${employeeName(photo.employee_id) || 'This employee'} doesn't have a timesheet entry for ${fmtDate(photo.work_date)} yet — supplies can't be saved until hours are logged for that day.`)
+      alert(blockedReason(photo))
       return
     }
     const rows = suppliesByPhoto[photo.id] || []
@@ -428,7 +448,7 @@ export default function GearPhotos() {
                     <div style={{ marginBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                       {!canSave && (
                         <div style={{ fontSize: '0.72rem', color: '#a05a00', background: '#fff6e8', border: '1px solid #f0d9a8', borderRadius: 4, padding: '0.35rem 0.5rem' }}>
-                          No timesheet entry yet for {employeeName(photo.employee_id) || 'this employee'} on {fmtDate(photo.work_date)} — can't save supplies until hours are logged for that day.
+                          {blockedReason(photo)}
                         </div>
                       )}
                       {rows.map(row => {
@@ -470,7 +490,7 @@ export default function GearPhotos() {
                         <button
                           onClick={() => saveToTimesheet(photo)}
                           disabled={busy || !canSave}
-                          title={canSave ? undefined : 'No timesheet entry yet for that employee/day'}
+                          title={canSave ? undefined : blockedReason(photo)}
                           style={{
                             flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', borderRadius: 4,
                             border: `1px solid ${canSave ? '#0066cc' : '#ccc'}`,
