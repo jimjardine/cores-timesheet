@@ -5,7 +5,11 @@ import { fmtHours } from './format'
 // (Document# CW-OAD-F002 rev.0) — one employee's Thu–Wed pay week, reg/OT/per diem
 // per day. "Posted" is tracked as a whole-week flag (see weekly_summary_posted), so
 // when the week is posted every day's POSTED cell is checked off (an X, since the
-// standard PDF font has no reliable checkmark glyph), not just one row.
+// standard PDF font has no reliable checkmark glyph), not just one row — kept as-is
+// to match the physical numbered form. A real "POSTED TO SAGE — {date} by {name}"
+// stamp is drawn below the table in addition, same convention as the daily
+// timesheet PDF's stamp (see timesheetPdf.js), since the X alone doesn't say who
+// or when.
 export function fmtShortDate(ymd) {
   const d = new Date(ymd + 'T12:00:00')
   const mon = d.toLocaleDateString('en-US', { month: 'short' })
@@ -27,7 +31,8 @@ export function isWeekend(ymd) {
 const fmtHrs = (n) => (n ? fmtHours(n) : '')
 
 // days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems }, Thursday first
-export function generateWeeklyCompilationPDF({ employeeName, days, posted }) {
+export function generateWeeklyCompilationPDF({ employeeName, days, postedAt = null, postedBy = null }) {
+  const posted = !!postedAt
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 50
@@ -157,6 +162,18 @@ export function generateWeeklyCompilationPDF({ employeeName, days, posted }) {
   doc.rect(margin, headerTop, contentW, y - headerTop)
   doc.setLineWidth(0.75)
   Object.values(colX).slice(1).forEach(x => doc.line(x, headerTop, x, y))
+
+  if (posted) {
+    y += 16
+    const stampH = 22
+    doc.setDrawColor(45, 106, 56); doc.setLineWidth(1)
+    doc.roundedRect(margin, y, contentW, stampH, 3, 3)
+    doc.setTextColor(45, 106, 56)
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    const stampDate = new Date(postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    doc.text(`POSTED TO SAGE — ${stampDate}${postedBy ? ' by ' + postedBy : ''}`, pageW / 2, y + 14, { align: 'center' })
+    doc.setTextColor(0, 0, 0)
+  }
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
   doc.text('Document# CW-OAD-F002 rev.0', margin, doc.internal.pageSize.getHeight() - 30)

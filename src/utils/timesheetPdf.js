@@ -8,7 +8,7 @@ import { CAVEAT_REGULAR_BASE64 } from './caveatFont'
 // supervisorSignature are optional {name, subtitle} objects — when present,
 // the name prints in a cursive font in place of the blank "Approved by:" line,
 // sourced from real confirmation data (see AdminDashboard.printTimesheetFor).
-export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [], employeeSignature = null, supervisorSignature = null }) {
+export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, timeOut, lunchMinutes, totalHours, perDiem = 0, jobLines, supplyLines = [], employeeSignature = null, supervisorSignature = null, postedAt = null, postedBy = null }) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   doc.addFileToVFS('Caveat-Regular.ttf', CAVEAT_REGULAR_BASE64)
   doc.addFont('Caveat-Regular.ttf', 'Caveat', 'normal')
@@ -57,6 +57,23 @@ export function generateDailyTimesheetPDF({ employeeName, workDate, timeIn, time
   doc.setDrawColor(0); doc.setLineWidth(1)
   doc.line(margin, y, pageW - margin, y)
   y += 20
+
+  // ── Posted to Sage stamp ──
+  // Only appears once Niki has actually posted this employee's pay week —
+  // same denormalized name+timestamp convention as the signature rows below
+  // (approved_by_name/approved_at), stamped via getAdminName() at the moment
+  // she posts (see AdminDashboard.togglePosted).
+  if (postedAt) {
+    const stampH = 22
+    doc.setDrawColor(45, 106, 56); doc.setLineWidth(1)
+    doc.roundedRect(margin, y, contentW, stampH, 3, 3)
+    doc.setTextColor(45, 106, 56)
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    const stampDate = new Date(postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    doc.text(`POSTED TO SAGE — ${stampDate}${postedBy ? ' by ' + postedBy : ''}`, pageW / 2, y + 14, { align: 'center' })
+    doc.setTextColor(0, 0, 0)
+    y += stampH + 12
+  }
 
   // ── Employee / Date / Time In / Time Out / Lunch / Total Hrs ──
   const fieldRow = (label1, val1, label2, val2) => {
