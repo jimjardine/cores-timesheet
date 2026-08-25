@@ -377,16 +377,20 @@ export default function AdminDashboard() {
       return
     }
     // job_supplies logged from the same text (not from a gear photo — those
-    // carry source_photo_id instead) would be deleted along with the entries
-    // below. If any have already been marked billed, deleting them loses
-    // that billing history, so she gets one more explicit warning first.
+    // carry source_photo_id instead) get cleaned up along with the entries
+    // below. A supply already marked billed is real billing history, though —
+    // deleting it would lose that, so it's detached (sms_submission_id
+    // cleared) instead of removed: it survives, still billed, just no longer
+    // tied to this submission, and won't get recreated as a duplicate when
+    // she re-approves. Only genuinely unbilled ones are deleted outright,
+    // since those are safe to regenerate from the corrected text.
     const { data: supplyRows } = await supabase.schema('Cores').from('job_supplies')
       .select('id, billed_at').eq('sms_submission_id', entry.source_submission_id)
     const billedCount = (supplyRows || []).filter(s => s.billed_at).length
 
     const baseMsg = `Revert this to pending? This deletes the approved timesheet entry (and any other job lines from the same text) and reopens the submission in SMS Review — it'll need to be re-approved after she fixes it.`
     const billedMsg = billedCount > 0
-      ? `\n\nHeads up: ${billedCount} supply line${billedCount > 1 ? 's' : ''} from this submission ${billedCount > 1 ? 'have' : 'has'} already been marked billed. Reverting deletes ${billedCount > 1 ? 'them' : 'it'} too.`
+      ? `\n\nHeads up: ${billedCount} supply line${billedCount > 1 ? 's' : ''} from this submission ${billedCount > 1 ? 'have' : 'has'} already been marked billed — ${billedCount > 1 ? 'they' : 'it'} will be kept (still billed), just unlinked from this submission.`
       : ''
     if (!confirm(baseMsg + billedMsg)) return
 
@@ -396,8 +400,14 @@ export default function AdminDashboard() {
     if (delEntriesErr) { alert(`Revert failed: ${delEntriesErr.message}`); setRevertingId(null); return }
 
     const { error: delSuppliesErr } = await supabase.schema('Cores').from('job_supplies')
-      .delete().eq('sms_submission_id', entry.source_submission_id)
+      .delete().eq('sms_submission_id', entry.source_submission_id).is('billed_at', null)
     if (delSuppliesErr) alert(`Entry reverted, but couldn't remove its supplies: ${delSuppliesErr.message}`)
+
+    if (billedCount > 0) {
+      const { error: detachErr } = await supabase.schema('Cores').from('job_supplies')
+        .update({ sms_submission_id: null }).eq('sms_submission_id', entry.source_submission_id).not('billed_at', 'is', null)
+      if (detachErr) alert(`Entry reverted, but couldn't preserve its billed supplies: ${detachErr.message}`)
+    }
 
     const { error: statusErr } = await supabase.schema('Cores').from('sms_submissions')
       .update({ status: 'submitted', updated_at: new Date().toISOString() })
