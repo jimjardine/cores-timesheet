@@ -151,28 +151,46 @@ export default function GearPhotos() {
   // without touching anything is a no-op rather than a mass un-apply.
   const isChecked = (row) => checkedRows[row.id] ?? !!row.applied_at
 
-  // Distinguishes "nothing logged at all" from "hours were texted in but
-  // an admin hasn't approved them yet" — from the tech's side those feel
-  // very different ("I entered my time!") even though neither has produced
-  // a real timesheet_entries row for a supply to attach to.
+  // A pending (texted-in, not-yet-approved) submission is enough to save a
+  // supply against — she doesn't have to wait for admin approval to log
+  // what's in a photo. It just won't show in the Edit Entry modal's
+  // Supplies list until that submission is approved and a real
+  // timesheet_entries row exists for it to attach to (still visible on the
+  // Supplies report either way).
+  const canSaveSupply = (photo) => hasEntryForPhoto(photo) || hasPendingSubmission(photo)
+
+  // Only reachable when there's truly nothing logged for that employee/day —
+  // a pending submission is enough to save against, so this isn't "no entry",
+  // it's "no entry and nothing pending either."
   function blockedReason(photo) {
     const name = employeeName(photo.employee_id) || 'This employee'
     const date = fmtDate(photo.work_date)
-    return hasPendingSubmission(photo)
-      ? `${name}'s hours for ${date} were texted in but haven't been approved yet — supplies can be saved once that submission is approved.`
-      : `${name} doesn't have a timesheet entry for ${date} yet — supplies can't be saved until hours are logged for that day.`
+    return `${name} doesn't have a timesheet entry for ${date} yet — supplies can't be saved until hours are logged for that day.`
+  }
+
+  // The not-yet-saved lines for a card — a fresh photo defaults to one line
+  // pre-filled from the tech's note, shown before she's touched anything.
+  // Shared between the render and the save so accepting that default and
+  // hitting Save immediately actually saves it, instead of silently saving
+  // nothing because newLines[photo.id] was never set by an onChange.
+  const linesForPhoto = (photo) => {
+    const rows = suppliesByPhoto[photo.id] || []
+    const pending = newLines[photo.id]
+    return pending ?? (rows.length === 0
+      ? [{ key: 'l0', supply_name: photo.note || '', quantity: '1', checked: true }]
+      : [])
   }
 
   // The one write for the whole card: every ticked line ends up on the
   // timesheet, every unticked one doesn't. Unticking an already-applied line
   // takes it back off — same fully reversible posture as the billed checkbox.
   async function saveToTimesheet(photo) {
-    if (!hasEntryForPhoto(photo)) {
+    if (!canSaveSupply(photo)) {
       alert(blockedReason(photo))
       return
     }
     const rows = suppliesByPhoto[photo.id] || []
-    const pending = (newLines[photo.id] || []).filter(l => l.supply_name.trim())
+    const pending = linesForPhoto(photo).filter(l => l.supply_name.trim())
     const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
     const cleared = { applied_at: null, applied_by: null }
     setSavingPhotoId(photo.id)
@@ -432,14 +450,12 @@ export default function GearPhotos() {
                 })()}
                 {photo.job_id && photo.photo_type === 'supply' && (() => {
                   const rows = suppliesByPhoto[photo.id] || []
-                  const pending = newLines[photo.id]
                   // Start her off with one line pre-filled from whatever the
                   // tech texted in, so the common case is tick-and-save.
-                  const lines = pending ?? (rows.length === 0
-                    ? [{ key: 'l0', supply_name: photo.note || '', quantity: '1', checked: true }]
-                    : [])
+                  const lines = linesForPhoto(photo)
                   const busy = savingPhotoId === photo.id
-                  const canSave = hasEntryForPhoto(photo)
+                  const canSave = canSaveSupply(photo)
+                  const stillPending = canSave && !hasEntryForPhoto(photo)
                   const qtyStyle = { width: '3.2rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
                   const descStyle = { flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
 
@@ -450,6 +466,11 @@ export default function GearPhotos() {
                       {!canSave && (
                         <div style={{ fontSize: '0.72rem', color: '#a05a00', background: '#fff6e8', border: '1px solid #f0d9a8', borderRadius: 4, padding: '0.35rem 0.5rem' }}>
                           {blockedReason(photo)}
+                        </div>
+                      )}
+                      {stillPending && (
+                        <div style={{ fontSize: '0.72rem', color: '#555', background: '#f3f6fa', border: '1px solid #dbe4ee', borderRadius: 4, padding: '0.35rem 0.5rem' }}>
+                          {employeeName(photo.employee_id) || 'This employee'}'s hours for {fmtDate(photo.work_date)} are still awaiting approval — this will show on the timesheet once that submission is approved.
                         </div>
                       )}
                       {rows.map(row => {
