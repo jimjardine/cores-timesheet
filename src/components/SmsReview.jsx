@@ -217,7 +217,11 @@ export default function SmsReview({ onApproved } = {}) {
       // ot_hours left null — the edge function's reg/ot split here is only a
       // same-day estimate for the review-screen preview; computeOTMap derives
       // the real split (incl. weekly threshold) at display/export time.
-      ot_hours:    null,
+      // Exception: an entry she's explicitly overridden in the Edit modal
+      // (ot_override, set by saveEdit()) writes the real split instead —
+      // the same "one legitimate manual override" precedent as AdminDashboard's
+      // own Edit modal for an already-approved entry.
+      ot_hours:    e.ot_override ? Number(e.ot_hours) : null,
       description: e.description || null,
       // per_diem is a multiplier (×1 standard, ×2 double), not a dollar amount
       per_diem:    i === 0 && hasPD ? 1 : 0,
@@ -341,6 +345,9 @@ export default function SmsReview({ onApproved } = {}) {
         job_number:  e.job_number || '',
         hours:       e.hours != null ? String(e.hours) : '',
         description: e.description || '',
+        // Only pre-fill this if she'd previously set an explicit override —
+        // otherwise it stays blank so the auto-split keeps applying.
+        ot_override: e.ot_override && e.ot_hours != null ? String(e.ot_hours) : '',
       })),
       supplies:          (sub.supplies || []).map(s => ({
         job_number:  s.job_number || '',
@@ -353,7 +360,7 @@ export default function SmsReview({ onApproved } = {}) {
   const setEntryField = (i, field, value) =>
     setEditFields(p => ({ ...p, entries: p.entries.map((e, j) => j === i ? { ...e, [field]: value } : e) }))
   const addEntryRow = () =>
-    setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', hours: '', description: '' }] }))
+    setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', hours: '', description: '', ot_override: '' }] }))
   const removeEntryRow = (i) =>
     setEditFields(p => ({ ...p, entries: p.entries.filter((_, j) => j !== i) }))
 
@@ -366,13 +373,23 @@ export default function SmsReview({ onApproved } = {}) {
 
   async function saveEdit() {
     // Drop blank rows, then re-split reg/OT the same way the edge function does
+    // — unless she's typed an explicit OT override for that entry, which wins.
     const cleaned = editFields.entries
       .filter(e => e.job_number.trim() || e.description.trim() || e.hours !== '')
-      .map(e => ({ job_number: e.job_number.trim(), hours: Number(e.hours) || 0, description: e.description.trim() }))
+      .map(e => ({
+        job_number:  e.job_number.trim(),
+        hours:       Number(e.hours) || 0,
+        description: e.description.trim(),
+        otOverride:  e.ot_override !== '' && e.ot_override != null ? Number(e.ot_override) : null,
+      }))
 
     if (cleaned.some(e => !e.job_number)) { alert('Every entry needs a job number'); return }
     if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
     if (cleaned.some(e => !e.description)) { alert('Every entry needs a note describing what was done'); return }
+    if (cleaned.some(e => e.otOverride != null && (e.otOverride < 0 || e.otOverride > e.hours))) {
+      alert("An entry's OT override can't be negative or more than its total hours")
+      return
+    }
 
     // Two entries for the same job in one day is a legitimate, common case
     // (e.g. one task on it in the morning, a different task in the
@@ -405,12 +422,22 @@ export default function SmsReview({ onApproved } = {}) {
       ? (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
       : false
     let regLeft = statDay ? 0 : Math.max(0, otThreshold - alreadyWorked)
-    const entries = cleaned.map(e => {
-      const hours = Math.round(e.hours * 100) / 100
-      const reg   = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100
-      const ot    = Math.round((hours - reg) * 100) / 100
-      regLeft     = Math.max(0, regLeft - hours)
-      return { ...e, hours, reg_hours: reg, ot_hours: ot }
+    const entries = cleaned.map(({ job_number, hours: rawHours, description, otOverride }) => {
+      const hours = Math.round(rawHours * 100) / 100
+      // An explicit override skips the auto-split entirely for this entry —
+      // it's what approve() will write as the real ot_hours, not just a
+      // same-day preview. Still advances regLeft (by the *actual* reg this
+      // entry consumed) so later un-overridden entries split correctly.
+      if (otOverride != null) {
+        const ot  = Math.round(otOverride * 100) / 100
+        const reg = Math.round((hours - ot) * 100) / 100
+        regLeft   = Math.max(0, regLeft - reg)
+        return { job_number, hours, description, reg_hours: reg, ot_hours: ot, ot_override: true }
+      }
+      const reg = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100
+      const ot  = Math.round((hours - reg) * 100) / 100
+      regLeft   = Math.max(0, regLeft - hours)
+      return { job_number, hours, description, reg_hours: reg, ot_hours: ot, ot_override: false }
     })
 
     const supplies = (editFields.supplies || [])
@@ -1009,6 +1036,7 @@ export default function SmsReview({ onApproved } = {}) {
                 <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Hours</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 80 }} title="Leave blank to auto-split reg/OT as usual. Fill in to override how much of this entry's hours count as OT.">OT override</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2 }}>Description</th>
                   <th style={{ width: 30 }} />
                 </tr>
@@ -1032,6 +1060,16 @@ export default function SmsReview({ onApproved } = {}) {
                           value={e.hours}
                           onChange={ev => setEntryField(i, 'hours', ev.target.value)}
                           style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          type="number" min="0" step="0.25"
+                          value={e.ot_override}
+                          onChange={ev => setEntryField(i, 'ot_override', ev.target.value)}
+                          placeholder="(auto)"
+                          title="Leave blank to auto-split. Fill in to force this many of the entry's hours to count as OT."
+                          style={{ ...inp, borderColor: e.ot_override !== '' ? '#0066cc' : '#ccc' }}
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>

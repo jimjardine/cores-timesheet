@@ -99,6 +99,7 @@ export default function AdminDashboard() {
   const [addingNewJob, setAddingNewJob] = useState(false)
   const [newJobFields, setNewJobFields] = useState({ job_id: '', hours: '', description: '' })
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [revertingId, setRevertingId] = useState(null)
   const [exportSummaries, setExportSummaries] = useState(true)
 
   // ── Manual entry ──
@@ -361,6 +362,48 @@ export default function AdminDashboard() {
     // stat-pay entries for that week are no longer earned — remove them
     await cleanupStatPay(entry.employee_id, entry.work_date)
     setConfirmDeleteId(null)
+    await loadTimesheets()
+  }
+
+  // The only path to changing an approved SMS-sourced entry's hours: send it
+  // back to SMS Review instead of editing it in place, so every change to an
+  // already-approved timesheet still goes through the approve step again —
+  // never silently altered behind that gate.
+  async function revertToPending(entry) {
+    if (!entry.source_submission_id) {
+      alert("This entry isn't linked to a submission — there's nothing to revert it to.")
+      return
+    }
+    // job_supplies logged from the same text (not from a gear photo — those
+    // carry source_photo_id instead) would be deleted along with the entries
+    // below. If any have already been marked billed, deleting them loses
+    // that billing history, so she gets one more explicit warning first.
+    const { data: supplyRows } = await supabase.schema('Cores').from('job_supplies')
+      .select('id, billed_at').eq('sms_submission_id', entry.source_submission_id)
+    const billedCount = (supplyRows || []).filter(s => s.billed_at).length
+
+    const baseMsg = `Revert this to pending? This deletes the approved timesheet entry (and any other job lines from the same text) and reopens the submission in SMS Review — it'll need to be re-approved after she fixes it.`
+    const billedMsg = billedCount > 0
+      ? `\n\nHeads up: ${billedCount} supply line${billedCount > 1 ? 's' : ''} from this submission ${billedCount > 1 ? 'have' : 'has'} already been marked billed. Reverting deletes ${billedCount > 1 ? 'them' : 'it'} too.`
+      : ''
+    if (!confirm(baseMsg + billedMsg)) return
+
+    setRevertingId(entry.id)
+    const { error: delEntriesErr } = await supabase.schema('Cores').from('timesheet_entries')
+      .delete().eq('source_submission_id', entry.source_submission_id)
+    if (delEntriesErr) { alert(`Revert failed: ${delEntriesErr.message}`); setRevertingId(null); return }
+
+    const { error: delSuppliesErr } = await supabase.schema('Cores').from('job_supplies')
+      .delete().eq('sms_submission_id', entry.source_submission_id)
+    if (delSuppliesErr) alert(`Entry reverted, but couldn't remove its supplies: ${delSuppliesErr.message}`)
+
+    const { error: statusErr } = await supabase.schema('Cores').from('sms_submissions')
+      .update({ status: 'submitted', updated_at: new Date().toISOString() })
+      .eq('id', entry.source_submission_id)
+    if (statusErr) alert(`Entry reverted, but couldn't reopen the submission in SMS Review: ${statusErr.message}`)
+
+    await cleanupStatPay(entry.employee_id, entry.work_date)
+    setRevertingId(null)
     await loadTimesheets()
   }
 
@@ -1487,6 +1530,17 @@ export default function AdminDashboard() {
                                     <span style={{ fontSize: '0.85rem', color: '#c0392b', marginRight: '0.5rem' }}>Delete?</span>
                                     <button onClick={() => deleteEntry(e)} style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', background: '#c0392b', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
                                     <button onClick={() => setConfirmDeleteId(null)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}>No</button>
+                                  </span>
+                                ) : e.entry_source === 'sms' ? (
+                                  // Approved SMS-sourced entries aren't edited in place — hours only
+                                  // ever change by going back through SMS Review and re-approving.
+                                  <span>
+                                    <button onClick={() => revertToPending(e)} disabled={revertingId === e.id}
+                                      title="Send this back to SMS Review to change hours, then re-approve it"
+                                      style={{ marginRight: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: revertingId === e.id ? 'default' : 'pointer', fontSize: '0.8rem', color: '#555' }}>
+                                      {revertingId === e.id ? 'Reverting…' : '↩ Revert to Pending'}
+                                    </button>
+                                    <button onClick={() => setConfirmDeleteId(e.id)} disabled={revertingId === e.id} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ffaaaa', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#c0392b' }}>Delete</button>
                                   </span>
                                 ) : (
                                   <span>
