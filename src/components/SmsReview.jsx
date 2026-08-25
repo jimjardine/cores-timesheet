@@ -50,6 +50,13 @@ export default function SmsReview({ onApproved } = {}) {
   // flagged before an admin approves it a second time, instead of only being
   // caught after the fact.
   const [approvedDaySet, setApprovedDaySet]   = useState(new Set())
+  // Supplies already saved for an employee/day — most commonly logged from a
+  // Gear Photos card while this submission is still pending, per source_photo_id.
+  // job_supplies has no FK to sms_submissions for that path, so this is a
+  // separate employee+date lookup, same shape as approvedDaySet above. Without
+  // this, a supply she'd already saved was invisible here until the submission
+  // got approved and a real timesheet_entries row existed for it to attach to.
+  const [appliedSupplies, setAppliedSupplies] = useState([])
 
   // Text-the-employee ("admin note") affordance — per-submission toggle,
   // draft text, and send status (undefined | 'sending' | 'sent' | error string)
@@ -74,19 +81,21 @@ export default function SmsReview({ onApproved } = {}) {
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
     const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
-    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }, { data: approvedDays }] = await Promise.all([
+    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }, { data: approvedDays }, { data: applied }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date').gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
+      supabase.schema('Cores').from('job_supplies').select('employee_id, work_date, supply_name, quantity, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
     setEmployees(emps || [])
     setGearPhotos(photos || [])
     setApprovedDaySet(new Set((approvedDays || []).map(e => `${e.employee_id}|${e.work_date}`)))
+    setAppliedSupplies(applied || [])
     const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
     setOtThreshold(ot ? Number(ot.value) : 8)
     if (!silent) setLoading(false)
@@ -135,6 +144,11 @@ export default function SmsReview({ onApproved } = {}) {
   // meaningless for a recurring job like SHOP that's logged constantly.
   const entryPhotos = (jobId, employeeId, workDate) =>
     gearPhotos.filter(p => p.job_id === jobId && p.employee_id === employeeId && p.work_date === workDate)
+
+  // Supplies already saved (e.g. from Gear Photos) for this submission's
+  // employee/day, independent of whatever's parsed into sub.supplies.
+  const appliedSuppliesFor = (employeeId, workDate) =>
+    appliedSupplies.filter(s => s.employee_id === employeeId && s.work_date === workDate)
 
   const toggle = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
@@ -674,6 +688,11 @@ export default function SmsReview({ onApproved } = {}) {
                     📝 note
                   </span>
                 )}
+                {appliedSuppliesFor(sub.employee_id, sub.work_date).length > 0 && (
+                  <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: '#e6f4ea', color: '#2a7a2a', border: '1px solid #2a7a2a44' }}>
+                    🔧 {appliedSuppliesFor(sub.employee_id, sub.work_date).length} supply logged
+                  </span>
+                )}
               </div>
               <span style={{ color: '#999', fontSize: '0.8rem' }}>{isExpanded ? '▲' : '▼'}</span>
             </div>
@@ -791,6 +810,29 @@ export default function SmsReview({ onApproved } = {}) {
                       })}
                     </tbody>
                   </table>
+                )}
+
+                {/* Supplies already saved from a Gear Photos card — shown regardless of
+                    this submission's status, since they're real job_supplies rows that
+                    exist independent of approval. Read-only here; edit them back on the
+                    photo they came from. */}
+                {appliedSuppliesFor(sub.employee_id, sub.work_date).length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#2a7a2a', fontWeight: 600, marginBottom: '0.3rem' }}>
+                      ✓ Already saved to the timesheet (from Gear Photos)
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                      <tbody>
+                        {appliedSuppliesFor(sub.employee_id, sub.work_date).map((s, i) => (
+                          <tr key={i} style={{ borderTop: '1px solid #eee' }}>
+                            <td style={{ padding: '0.35rem 0.6rem', fontWeight: 600 }}>{s.supply_name}</td>
+                            <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', width: 55 }}>×{s.quantity}</td>
+                            <td style={{ padding: '0.35rem 0.6rem', width: 70, color: '#888' }}>{s.jobs?.job_number || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
 
                 {/* Conversation history */}
