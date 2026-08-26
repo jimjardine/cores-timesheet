@@ -76,7 +76,7 @@ export default function AdminDashboard() {
   const [statHolidays, setStatHolidays] = useState(new Set())
   const [jobs, setJobs] = useState([])
   const [supplies, setSupplies] = useState([])
-  const [postedWeeks, setPostedWeeks] = useState({})
+  const [postedDays, setPostedDays] = useState({})
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
@@ -159,7 +159,7 @@ export default function AdminDashboard() {
     // Excludes still-drafting GearPhotos supply lines (applied_at null) — not real until Applied.
     supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').not('applied_at', 'is', null).order('work_date', { ascending: false }).then(({ data }) => setSupplies(data || []))
     supabase.schema('Cores').from('gear_photos').select('*').then(({ data }) => setGearPhotos(data || []))
-    supabase.schema('Cores').from('weekly_summary_posted').select('employee_id, week_start, posted_at, posted_by').then(({ data }) => setPostedWeeks(Object.fromEntries((data || []).map(r => [`${r.employee_id}|${r.week_start}`, { posted_at: r.posted_at, posted_by: r.posted_by }]))))
+    supabase.schema('Cores').from('daily_summary_posted').select('employee_id, work_date, posted_at, posted_by').then(({ data }) => setPostedDays(Object.fromEntries((data || []).map(r => [`${r.employee_id}|${r.work_date}`, { posted_at: r.posted_at, posted_by: r.posted_by }]))))
   }, [])
 
   // Auto-refresh so one admin's edit (e.g. Niki zeroing out a per diem) shows up
@@ -409,12 +409,16 @@ export default function AdminDashboard() {
     const { data: supplyRows } = await supabase.schema('Cores').from('job_supplies')
       .select('id, billed_at').eq('sms_submission_id', entry.source_submission_id)
     const billedCount = (supplyRows || []).filter(s => s.billed_at).length
+    const postedInfo = postedDays[postedKey(entry.employee_id, entry.work_date)]
 
     const baseMsg = `Revert this to pending? This deletes the approved timesheet entry (and any other job lines from the same text) and reopens the submission in SMS Review — it'll need to be re-approved after she fixes it.`
     const billedMsg = billedCount > 0
       ? `\n\nHeads up: ${billedCount} supply line${billedCount > 1 ? 's' : ''} from this submission ${billedCount > 1 ? 'have' : 'has'} already been marked billed — ${billedCount > 1 ? 'they' : 'it'} will be kept (still billed), just unlinked from this submission.`
       : ''
-    if (!confirm(baseMsg + billedMsg)) return
+    const postedMsg = postedInfo
+      ? `\n\nHeads up: this day is already marked Posted to Sage${postedInfo.posted_by ? ' (by ' + postedInfo.posted_by + ')' : ''} — you'll need to fix it in Sage directly too. Reverting will clear the Posted to Sage stamp here.`
+      : ''
+    if (!confirm(baseMsg + billedMsg + postedMsg)) return
 
     setRevertingId(entry.id)
     const { error: delEntriesErr } = await supabase.schema('Cores').from('timesheet_entries')
@@ -435,6 +439,13 @@ export default function AdminDashboard() {
       .update({ status: 'submitted', updated_at: new Date().toISOString() })
       .eq('id', entry.source_submission_id)
     if (statusErr) alert(`Entry reverted, but couldn't reopen the submission in SMS Review: ${statusErr.message}`)
+
+    if (postedInfo) {
+      const { error: unpostErr } = await supabase.schema('Cores').from('daily_summary_posted')
+        .delete().eq('employee_id', entry.employee_id).eq('work_date', entry.work_date)
+      if (unpostErr) alert(`Entry reverted, but couldn't clear the Posted to Sage stamp: ${unpostErr.message}`)
+      else setPostedDays(p => { const n = { ...p }; delete n[postedKey(entry.employee_id, entry.work_date)]; return n })
+    }
 
     await cleanupStatPay(entry.employee_id, entry.work_date)
     setRevertingId(null)
@@ -576,62 +587,56 @@ export default function AdminDashboard() {
     return weeks
   }
 
-  function postedKey(empId, weekStart) { return `${empId}|${weekStart}` }
+  function postedKey(empId, workDate) { return `${empId}|${workDate}` }
 
-  async function togglePosted(empId, weekStart) {
-    const key = postedKey(empId, weekStart)
-    if (postedWeeks[key]) {
-      const { error } = await supabase.schema('Cores').from('weekly_summary_posted').delete().eq('employee_id', empId).eq('week_start', weekStart)
+  async function togglePosted(empId, workDate) {
+    const key = postedKey(empId, workDate)
+    if (postedDays[key]) {
+      const { error } = await supabase.schema('Cores').from('daily_summary_posted').delete().eq('employee_id', empId).eq('work_date', workDate)
       if (error) { alert('Error updating posted to Sage status: ' + error.message); return }
-      setPostedWeeks(p => { const n = { ...p }; delete n[key]; return n })
+      setPostedDays(p => { const n = { ...p }; delete n[key]; return n })
     } else {
-      const { data, error } = await supabase.schema('Cores').from('weekly_summary_posted')
-        .insert({ employee_id: empId, week_start: weekStart, posted_by: getAdminName() }).select().single()
+      const { data, error } = await supabase.schema('Cores').from('daily_summary_posted')
+        .insert({ employee_id: empId, work_date: workDate, posted_by: getAdminName() }).select().single()
       if (error) { alert('Error updating posted to Sage status: ' + error.message); return }
-      setPostedWeeks(p => ({ ...p, [key]: { posted_at: data.posted_at, posted_by: data.posted_by } }))
+      setPostedDays(p => ({ ...p, [key]: { posted_at: data.posted_at, posted_by: data.posted_by } }))
     }
   }
 
-  // Same "are you sure, this week isn't over yet" guard the Weekly Compilation
-  // view's button already had — shared so the new inline toggles (Timesheets
-  // list, per-entry rows) get the same protection against posting a week
-  // that's still being worked.
-  function togglePostedWithGuard(empId, weekStart, isPosted) {
+  // Same "are you sure, this isn't done yet" guard the old week-level toggle
+  // had, adapted to a single day: only fires when marking a future date posted.
+  function togglePostedWithGuard(empId, workDate, isPosted) {
     if (!isPosted) {
-      const weekEndDate = new Date(weekStart + 'T12:00:00')
-      weekEndDate.setDate(weekEndDate.getDate() + 6)
+      const dayDate = new Date(workDate + 'T12:00:00')
       const today = new Date(); today.setHours(0, 0, 0, 0)
-      if (weekEndDate > today) {
-        const label = weekEndDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-        if (!confirm(`This pay week isn't finished yet (ends ${label}) — mark as posted anyway?`)) return
+      if (dayDate > today) {
+        const label = dayDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+        if (!confirm(`This day is in the future (${label}) — mark as posted anyway?`)) return
       }
     }
-    togglePosted(empId, weekStart)
+    togglePosted(empId, workDate)
   }
 
   // Compact "Posted to Sage" badge/link for a row keyed by employee+work_date
-  // (Timesheets list, per-entry rows) — posting is per employee-week, so this
-  // resolves the row's date to its pay week and reads/writes the same
-  // postedWeeks state the Weekly Compilation view and Weekly Summary tab use.
-  // Clickable both ways (post and un-post) — same fully reversible posture as
-  // everything else in this app.
+  // (Timesheets list, per-entry rows) — posting is per day, so this reads/writes
+  // postedDays directly, no week resolution. Clickable both ways (post and
+  // un-post) — same fully reversible posture as everything else in this app.
   function postedToSageControl(empId, workDate) {
     if (!empId) return null
-    const weekStart = toYMD(getPayWeekStart(new Date(workDate + 'T12:00:00')))
-    const info = postedWeeks[postedKey(empId, weekStart)]
+    const info = postedDays[postedKey(empId, workDate)]
     if (info) {
       const dateLabel = info.posted_at ? new Date(info.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
       return (
         <span
-          onClick={e => { e.stopPropagation(); togglePostedWithGuard(empId, weekStart, true) }}
+          onClick={e => { e.stopPropagation(); togglePostedWithGuard(empId, workDate, true) }}
           title={`Posted to Sage${dateLabel ? ' ' + dateLabel : ''}${info.posted_by ? ' by ' + info.posted_by : ''} — click to un-post`}
           style={{ cursor: 'pointer', padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#e6f4ea', color: '#2d6a38', whiteSpace: 'nowrap' }}
-        >✓ Posted to Sage</span>
+        >✓ Posted{dateLabel ? ` — ${dateLabel}` : ''}</span>
       )
     }
     return (
       <span
-        onClick={e => { e.stopPropagation(); togglePostedWithGuard(empId, weekStart, false) }}
+        onClick={e => { e.stopPropagation(); togglePostedWithGuard(empId, workDate, false) }}
         style={{ cursor: 'pointer', color: '#0066cc', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
       >Post to Sage</span>
     )
@@ -1048,8 +1053,7 @@ export default function AdminDashboard() {
       ? { name: approver.approved_by_name, subtitle: `Approved · ${fmtSignedAt(approver.approved_at)}` }
       : null
 
-    const dayWeekStart = toYMD(getPayWeekStart(new Date(workDate + 'T12:00:00')))
-    const dayPostedInfo = postedWeeks[postedKey(emp.id, dayWeekStart)]
+    const dayPostedInfo = postedDays[postedKey(emp.id, workDate)]
 
     generateDailyTimesheetPDF({
       employeeName: emp.name,
@@ -1113,9 +1117,13 @@ export default function AdminDashboard() {
 
   // ── Weekly Compilation (on-screen match of the printed PDF) ──
   if (viewingWeeklyCompilation) {
-    const { emp, days, weekStart } = viewingWeeklyCompilation
-    const postedInfo = postedWeeks[postedKey(emp.id, weekStart)]
-    const isPosted = !!postedInfo
+    const { emp, days } = viewingWeeklyCompilation
+    const postedCount = days.filter(d => d.postedAt).length
+    const isPosted = postedCount === days.length
+    const latestPostedAt = postedCount > 0
+      ? days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
+      : null
+    const postedByNames = [...new Set(days.filter(d => d.postedAt).map(d => d.postedBy).filter(Boolean))]
     const totalReg = days.reduce((s, d) => s + Number(d.regHours || 0), 0)
     const totalOT = days.reduce((s, d) => s + Number(d.otHours || 0), 0)
     const totalPD = days.reduce((s, d) => s + Number(d.perDiems || 0), 0)
@@ -1128,20 +1136,24 @@ export default function AdminDashboard() {
           <button onClick={() => setViewingWeeklyCompilation(null)} style={{ padding: '0.3rem 0.9rem', border: '1px solid #ccc', borderRadius: '4px', background: '#fff', cursor: 'pointer', color: '#555', fontSize: '0.9rem' }}>
             ← Weekly Summary
           </button>
-          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days, postedAt: postedInfo?.posted_at, postedBy: postedInfo?.posted_by })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+          <button onClick={() => generateWeeklyCompilationPDF({ employeeName: emp.name, days })} style={{ padding: '0.4rem 1rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
             Download PDF
           </button>
-          <button
-            onClick={() => togglePostedWithGuard(emp.id, weekStart, isPosted)}
+          {/* Read-only status — posting itself only happens per day, from the Timesheets tab */}
+          <span
             style={{
-              marginLeft: 'auto', padding: '0.4rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
+              marginLeft: 'auto', padding: '0.4rem 1rem', borderRadius: '4px', fontWeight: 600,
               border: isPosted ? '1px solid #2d6a38' : '1px solid #ccc',
               background: isPosted ? '#e6f4ea' : '#fff',
               color: isPosted ? '#2d6a38' : '#555',
             }}
           >
-            {isPosted ? `✓ Posted to Sage — ${new Date(postedInfo.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${postedInfo.posted_by ? ` by ${postedInfo.posted_by}` : ''}` : 'Post to Sage'}
-          </button>
+            {isPosted
+              ? `✓ Posted to Sage — ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${postedByNames.length === 1 ? ` by ${postedByNames[0]}` : ''}`
+              : postedCount > 0
+              ? `${postedCount}/${days.length} days posted to Sage — most recent ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              : `${postedCount}/${days.length} days posted to Sage`}
+          </span>
         </div>
 
         <div style={{ ...card, padding: '2rem' }}>
@@ -1190,7 +1202,13 @@ export default function AdminDashboard() {
                       {d.otHours ? fmtHours(d.otHours) : ''}
                     </td>
                     <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{d.perDiems || ''}</td>
-                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700 }}>{isPosted ? '✓' : ''}</td>
+                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700, fontSize: '0.8rem' }}>
+                      {d.postedAt && (
+                        <span title={`Posted to Sage ${new Date(d.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${d.postedBy ? ' by ' + d.postedBy : ''}`}>
+                          ✓ {new Date(d.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
@@ -1199,7 +1217,7 @@ export default function AdminDashboard() {
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: totalOT ? '#c0392b' : '#333' }}>{fmtHours(totalOT)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{totalPD || ''}</td>
-                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{isPosted ? '✓' : ''}</td>
+                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{postedCount}/{days.length}</td>
               </tr>
             </tbody>
           </table>
@@ -2071,11 +2089,14 @@ export default function AdminDashboard() {
           const empSupplies = supplies.filter(s => s.employee_id === eid && s.work_date >= weekStart && s.work_date <= weekEndStr)
           const days = weekDates.map(dateYMD => {
             const dayEntries = empEntries.filter(e => e.work_date === dateYMD)
+            const dayPostedInfo = postedDays[postedKey(eid, dateYMD)]
             return {
               date: dateYMD,
               regHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
               otHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0),
               perDiems: dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0),
+              postedAt: dayPostedInfo?.posted_at || null,
+              postedBy: dayPostedInfo?.posted_by || null,
             }
           })
           return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies, days }
@@ -2099,8 +2120,7 @@ export default function AdminDashboard() {
                   onClick={async () => {
                     for (const row of weekData) {
                       if (!row.emp) continue
-                      const info = postedWeeks[postedKey(row.emp.id, weekStart)]
-                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, postedAt: info?.posted_at, postedBy: info?.posted_by })
+                      generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })
                       await new Promise(r => setTimeout(r, 300))
                     }
                   }}
@@ -2108,7 +2128,7 @@ export default function AdminDashboard() {
                 >Print All Weekly PDFs</button>
               )}
               {(() => {
-                const postedRows = weekData.filter(row => row.emp && !!postedWeeks[postedKey(row.emp.id, weekStart)])
+                const postedRows = weekData.filter(row => row.emp && row.days.every(d => d.postedAt))
                 return (
                   <button
                     onClick={async () => {
@@ -2117,8 +2137,7 @@ export default function AdminDashboard() {
                       setPrintAllPostedProgress({ done: 0, total: postedRows.length })
                       for (let i = 0; i < postedRows.length; i++) {
                         const row = postedRows[i]
-                        const info = postedWeeks[postedKey(row.emp.id, weekStart)]
-                        generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, postedAt: info?.posted_at, postedBy: info?.posted_by })
+                        generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })
                         await new Promise(r => setTimeout(r, 300))
                         setPrintAllPostedProgress({ done: i + 1, total: postedRows.length })
                       }
@@ -2150,8 +2169,14 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {weekData.map((row, i) => {
-                    const postedInfo = row.emp && postedWeeks[postedKey(row.emp.id, weekStart)]
-                    const isPosted = !!postedInfo
+                    const postedCount = row.emp ? row.days.filter(d => d.postedAt).length : 0
+                    const isPosted = row.emp && postedCount === row.days.length
+                    const latestPostedAt = postedCount > 0
+                      ? row.days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
+                      : null
+                    const latestPostedLabel = latestPostedAt
+                      ? new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                      : null
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '0.75rem', fontWeight: 600, ...(row.emp ? linkStyle : {}) }} onClick={() => row.emp && setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}>{row.emp?.name || 'Unknown'}</td>
@@ -2163,18 +2188,16 @@ export default function AdminDashboard() {
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem', color: '#555' }}>{row.supplies.length > 0 ? `${row.supplies.length} items` : '—'}</td>
                       <td style={{ padding: '0.75rem' }}>
                         {row.emp && (
+                          // Read-only status — posting itself only happens per day, from the Timesheets tab
                           <span
-                            onClick={() => togglePostedWithGuard(row.emp.id, weekStart, isPosted)}
-                            title={isPosted
-                              ? `Posted to Sage ${new Date(postedInfo.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${postedInfo.posted_by ? ' by ' + postedInfo.posted_by : ''} — click to un-post`
-                              : 'Click to mark posted to Sage'}
+                            title={isPosted ? `All 7 days posted to Sage — most recent ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 days posted to Sage — most recent ${latestPostedLabel}` : 'No days posted yet'}
                             style={{
-                              cursor: 'pointer', padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600,
-                              background: isPosted ? '#e6f4ea' : '#f5f5f5',
-                              color: isPosted ? '#2d6a38' : '#888',
-                              border: isPosted ? '1px solid #2d6a3844' : '1px solid #ddd',
+                              padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600,
+                              background: isPosted ? '#e6f4ea' : postedCount > 0 ? '#fdf0d5' : '#f5f5f5',
+                              color: isPosted ? '#2d6a38' : postedCount > 0 ? '#8a6100' : '#888',
+                              border: isPosted ? '1px solid #2d6a3844' : postedCount > 0 ? '1px solid #e6c98a' : '1px solid #ddd',
                             }}
-                          >{isPosted ? '✓ Posted to Sage' : 'Not posted'}</span>
+                          >{isPosted ? `✓ Posted — ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 · ${latestPostedLabel}` : `${postedCount}/7 posted`}</span>
                         )}
                       </td>
                       <td style={{ padding: '0.75rem', display: 'flex', gap: '0.4rem' }}>
@@ -2185,7 +2208,7 @@ export default function AdminDashboard() {
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >View</button>
                             <button
-                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days, postedAt: postedInfo?.posted_at, postedBy: postedInfo?.posted_by })}
+                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >PDF</button>
                           </>
