@@ -330,6 +330,15 @@ await scenario('out time does not stretch an already-stated single job', phone(4
   ['ts', ['SHOP: 1hrs', { absent: 'SHOP: 8hrs' }]],
 ])
 
+// 18c. A stop time that lands after midnight (almost always a mistyped am/pm,
+// e.g. "out 3" meant 3pm) gets flagged in the same reply, and still shows on
+// "ts" later — added 2026-08-26 alongside real reports of exactly this typo.
+await cleanupTestTech()
+await scenario('midnight out time warning', phone(42), [
+  ['This is Test. 4760 2hrs pump, in 7, out 3am, lunch 30', ['after midnight', 'mean pm']],
+  ['ts', ['after midnight']],
+])
+
 // 19. Supplies mixed into an hours text are captured (visible in TS view)
 await cleanupTestTech()
 await scenario('supplies inline', phone(19), [
