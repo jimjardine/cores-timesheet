@@ -107,6 +107,10 @@ export default function AdminDashboard() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [revertingId, setRevertingId] = useState(null)
   const [exportSummaries, setExportSummaries] = useState(true)
+  const [selectedRows, setSelectedRows] = useState(new Set())
+  const [batchPosting, setBatchPosting] = useState(false)
+  const [bundleDailyPdfs, setBundleDailyPdfs] = useState(new Set())
+  const [bundlePrintingEmpId, setBundlePrintingEmpId] = useState(null)
 
   // ── Manual entry ──
   const [manualEntry, setManualEntry] = useState(null)
@@ -618,6 +622,33 @@ export default function AdminDashboard() {
     togglePosted(empId, workDate)
   }
 
+  // Posts every checked Timesheets-list row that isn't already posted — same
+  // day-level daily_summary_posted write togglePosted does for one row, just
+  // batched. Rows already posted are left alone (their own stamp untouched).
+  async function batchPostSelected() {
+    const toPost = timesheetRows.filter(row =>
+      selectedRows.has(row.key) && row.employee && !postedDays[postedKey(row.employee.id, row.date)]
+    )
+    if (toPost.length === 0) { setSelectedRows(new Set()); return }
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const futureCount = toPost.filter(row => new Date(row.date + 'T12:00:00') > today).length
+    if (futureCount > 0 && !confirm(`${futureCount} of the selected day${futureCount > 1 ? 's are' : ' is'} in the future — mark posted anyway?`)) return
+
+    setBatchPosting(true)
+    const adminName = getAdminName()
+    const { data, error } = await supabase.schema('Cores').from('daily_summary_posted')
+      .upsert(toPost.map(row => ({ employee_id: row.employee.id, work_date: row.date, posted_by: adminName })), { onConflict: 'employee_id,work_date' })
+      .select()
+    setBatchPosting(false)
+    if (error) { alert('Error posting selected days: ' + error.message); return }
+    setPostedDays(p => {
+      const n = { ...p }
+      for (const r of data || []) n[postedKey(r.employee_id, r.work_date)] = { posted_at: r.posted_at, posted_by: r.posted_by }
+      return n
+    })
+    setSelectedRows(new Set())
+  }
+
   // Compact "Posted to Sage" badge/link for a row keyed by employee+work_date
   // (Timesheets list, per-entry rows) — posting is per day, so this reads/writes
   // postedDays directly, no week resolution. Clickable both ways (post and
@@ -1085,6 +1116,22 @@ export default function AdminDashboard() {
   async function handlePrintTimesheet() {
     if (!selectedEmp || !selectedDate) return
     await printTimesheetFor(selectedEmp, selectedDate)
+  }
+
+  // Weekly Summary's PDF button: the compilation PDF, plus — when that row's
+  // "bundle daily timesheets" checkbox is checked — every individual daily
+  // timesheet PDF for the days in that week that actually have hours logged.
+  async function printWeeklyPdfBundle(emp, days) {
+    generateWeeklyCompilationPDF({ employeeName: emp.name, days })
+    if (!bundleDailyPdfs.has(emp.id)) return
+    const workedDays = days.filter(d => Number(d.regHours || 0) > 0 || Number(d.otHours || 0) > 0)
+    if (workedDays.length === 0) return
+    setBundlePrintingEmpId(emp.id)
+    for (const day of workedDays) {
+      await new Promise(r => setTimeout(r, 300))
+      await printTimesheetFor(emp, day.date)
+    }
+    setBundlePrintingEmpId(null)
   }
 
   async function handlePrintAllTimesheets() {
@@ -1658,6 +1705,12 @@ export default function AdminDashboard() {
                     style={{ padding: '0.45rem 1rem', background: printingAll ? '#99b8d9' : '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: printingAll ? 'default' : 'pointer', fontSize: '0.9rem' }}>
                     {printingAll ? `Printing ${printAllProgress?.done ?? 0}/${printAllProgress?.total ?? 0}…` : `Print All PDFs (${timesheetRows.length})`}
                   </button>
+                  {selectedRows.size > 0 && (
+                    <button onClick={batchPostSelected} disabled={batchPosting}
+                      style={{ padding: '0.45rem 1rem', background: batchPosting ? '#9dbfa0' : '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: batchPosting ? 'default' : 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                      {batchPosting ? 'Posting…' : `Post to Sage (${selectedRows.size})`}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1667,6 +1720,12 @@ export default function AdminDashboard() {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                      <th style={{ padding: '0.75rem', width: '2rem' }}>
+                        <input type="checkbox"
+                          checked={timesheetRows.length > 0 && selectedRows.size === timesheetRows.length}
+                          ref={el => { if (el) el.indeterminate = selectedRows.size > 0 && selectedRows.size < timesheetRows.length }}
+                          onChange={e => setSelectedRows(e.target.checked ? new Set(timesheetRows.map(r => r.key)) : new Set())} />
+                      </th>
                       {[
                         { key: 'employee', label: 'Employee', align: 'left' },
                         { key: 'date', label: 'Date', align: 'left' },
@@ -1700,6 +1759,14 @@ export default function AdminDashboard() {
                         }}
                         onMouseEnter={e => hoverRow(e, true)}
                         onMouseLeave={e => hoverRow(e, false)}>
+                        <td style={{ padding: '0.75rem' }} onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedRows.has(row.key)}
+                            onChange={e => setSelectedRows(prev => {
+                              const next = new Set(prev)
+                              if (e.target.checked) next.add(row.key); else next.delete(row.key)
+                              return next
+                            })} />
+                        </td>
                         <td style={{ padding: '0.75rem', ...linkStyle }}>{row.employee?.name}</td>
                         <td style={{ padding: '0.75rem', color: '#555' }}>{fmtDate(row.date)}</td>
                         <td style={{ padding: '0.75rem', textAlign: 'center', color: '#888' }}>{row.jobIds.size}</td>
@@ -1726,6 +1793,7 @@ export default function AdminDashboard() {
                   </tbody>
                   <tfoot>
                     <tr style={{ borderTop: '2px solid #ddd', background: '#fafafa', fontWeight: 700 }}>
+                      <td />
                       <td style={{ padding: '0.75rem', color: '#333' }}>Total</td>
                       <td colSpan={2} />
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
@@ -2210,9 +2278,20 @@ export default function AdminDashboard() {
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #ccc', background: '#fff', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >View</button>
                             <button
-                              onClick={() => generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })}
-                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
-                            >PDF</button>
+                              onClick={() => printWeeklyPdfBundle(row.emp, row.days)}
+                              disabled={bundlePrintingEmpId === row.emp.id}
+                              style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: bundlePrintingEmpId === row.emp.id ? '#99b8d9' : '#0066cc', borderRadius: '4px', cursor: bundlePrintingEmpId === row.emp.id ? 'default' : 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                            >{bundlePrintingEmpId === row.emp.id ? 'Printing…' : 'PDF'}</button>
+                            <label title="Also download each day's individual timesheet PDF"
+                              style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', color: '#555', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                              <input type="checkbox" checked={bundleDailyPdfs.has(row.emp.id)}
+                                onChange={e => setBundleDailyPdfs(prev => {
+                                  const next = new Set(prev)
+                                  if (e.target.checked) next.add(row.emp.id); else next.delete(row.emp.id)
+                                  return next
+                                })} />
+                              + daily
+                            </label>
                           </>
                         )}
                       </td>
