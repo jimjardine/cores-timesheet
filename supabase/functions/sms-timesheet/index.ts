@@ -429,7 +429,18 @@ async function sendResendEmail(to: string, subject: string, text: string): Promi
 // Recipients), not hardcoded — an active employee with an email and
 // low_stock_alert_recipient=true gets every alert. Testing safely just means
 // making sure only your own record is flagged there.
-async function sendLowStockAlert(supabase: any, item: string, jobRef: string | null, reporterFirstName: string, photoUrl: string | null): Promise<void> {
+// "Test Tech" — the disposable fixture scripts/test-sms.mjs uses (phone 9990000099).
+// A test run reporting "last can of brake cleaner" must never page a real employee —
+// this fired for real on 2026-08-26 (several full-suite runs each sent a genuine
+// low-stock email to everyone with the alert flag on, Tracy included) because nothing
+// distinguished a test-fixture report from a real one before sending.
+const TEST_TECH_ID = 'e3044c0c-9628-46e0-9837-2526240b63c3'
+
+async function sendLowStockAlert(supabase: any, item: string, jobRef: string | null, reporterFirstName: string, photoUrl: string | null, reporterEmployeeId: string | null = null): Promise<void> {
+  if (reporterEmployeeId === TEST_TECH_ID) {
+    console.log(`Low-stock alert suppressed — reported by Test Tech fixture (${item})`)
+    return
+  }
   const jobPart = jobRef ? ` (Job ${jobRef})` : ''
   const reporter = reporterFirstName || 'a tech'
   const photoPart = photoUrl ? `\n${photoUrl}` : ''
@@ -1412,7 +1423,7 @@ Deno.serve(async (req: Request) => {
         ? `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/gear-photos/${firstSaved.path}`
         : null
       const itemGuess = note && note.length <= 80 ? note : 'something (see photo)'
-      await sendLowStockAlert(supabase, itemGuess, photoContext, firstName, photoUrl)
+      await sendLowStockAlert(supabase, itemGuess, photoContext, firstName, photoUrl, employeeId)
     }
 
     const anySaved = saved.some(r => r !== null)
@@ -1731,7 +1742,7 @@ Deno.serve(async (req: Request) => {
     if (attempt === 0 && (parsed.low_stock || []).length > 0) {
       const reporterFirstName = (employeeName || '').split(' ')[0] || ''
       await Promise.all((parsed.low_stock || []).map((ls: any) =>
-        sendLowStockAlert(supabase, String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null)
+        sendLowStockAlert(supabase, String(ls.item || '').trim() || 'something', ls.job_number || fallbackJob || null, reporterFirstName, null, mergedEmployeeId)
       ))
     }
 
