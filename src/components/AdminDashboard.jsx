@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import PersonPicker from './PersonPicker'
 import GearPhotos from './GearPhotos'
+import ConfettiBurst from './ConfettiBurst'
 import { getAdminName } from './PasswordGate'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
@@ -16,6 +17,10 @@ import { fmtHours } from '../utils/format'
 import { generateWeeklyCompilationPDF, fmtShortDate, fmtHeaderDate, dayName, isWeekend } from '../utils/weeklyCompilationPdf'
 
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
+// Tracy gets a confetti celebration when her own timesheet is saved here —
+// a just-for-her touch, not a general feature, so it's a plain ID check
+// rather than a new employee flag.
+const TRACY_EMPLOYEE_ID = 'e8dfecda-261d-42b8-a2ca-9b43bebacc8c'
 
 const hoverRow = (e, on) => { e.currentTarget.style.background = on ? '#f0f6ff' : '' }
 const linkStyle = { color: '#0066cc', fontWeight: 600, cursor: 'pointer' }
@@ -51,6 +56,7 @@ export default function AdminDashboard() {
   // ── Timesheets tab ──
   const [entries, setEntries] = useState([])
   const [employees, setEmployees] = useState([])
+  const [celebrate, setCelebrate] = useState(false)
   const [loadingEntries, setLoadingEntries] = useState(true)
   const [filterEmployeeIds, setFilterEmployeeIds] = useState([])
   const [printingAll, setPrintingAll] = useState(false)
@@ -533,6 +539,9 @@ export default function AdminDashboard() {
         alert(`Save failed: ${error.message}`)
         return
       }
+
+      // A little just-for-her celebration on save
+      if (manualFields.employee_id === TRACY_EMPLOYEE_ID) setCelebrate(true)
 
       await loadTimesheets()
       setManualEntry(null)
@@ -1203,6 +1212,7 @@ export default function AdminDashboard() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+      <ConfettiBurst active={celebrate} onDone={() => setCelebrate(false)} />
 
       {/* ── Edit modal ── */}
       {editEntry && (
