@@ -4,9 +4,11 @@ import { supabase } from '../supabaseClient'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
 import { replaceSupplies, fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import JobPicker from './JobPicker'
+import MediaThumb from '../components/MediaThumb'
 import './employee.css'
 
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
 const blankJobLine = () => ({ job_id: '', hours: '', description: '' })
 const blankSupplyLine = () => ({ job_id: '', supply_name: '', quantity: 1 })
@@ -40,9 +42,24 @@ export default function EntryForm({ employee, mode }) {
   const [editHours, setEditHours] = useState('')
   const [editDescription, setEditDescription] = useState('')
 
+  // ── Photos (day-scoped, same gear-photos bucket the day-card upload uses) ──
+  const [photos, setPhotos] = useState([])
+  const [showPhotoUpload, setShowPhotoUpload] = useState(false)
+  const [photoJobId, setPhotoJobId] = useState('')
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+
   useEffect(() => {
     supabase.schema('Cores').from('jobs').select('id, job_number, description, vessels(name)').order('job_number').then(({ data }) => setJobs(data || []))
   }, [])
+
+  async function loadPhotos() {
+    const { data } = await supabase.schema('Cores').from('gear_photos')
+      .select('*').eq('employee_id', employee.id).eq('work_date', workDate).order('created_at')
+    setPhotos(data || [])
+  }
+  // Photos are day-scoped (not tied to a single job line), same as the
+  // day-card's own upload — re-fetch whenever the date this entry is for changes.
+  useEffect(() => { loadPhotos() }, [employee.id, workDate])
 
   useEffect(() => {
     if (mode !== 'edit') return
@@ -156,6 +173,27 @@ export default function EntryForm({ employee, mode }) {
     navigate('..')
   }
 
+  // Same gear-photos bucket + pending_context convention as the day-card
+  // upload in EmployeeHome.jsx — see that file's uploadPhoto for the full note.
+  async function uploadPhoto(file) {
+    setUploadingPhoto(true); setError('')
+    const jobNumber = photoJobId ? jobs.find(j => j.id === photoJobId)?.job_number || '' : ''
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+    const path = `${workDate}/${employee.id}/${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('gear-photos').upload(path, file, { contentType: file.type || 'image/jpeg' })
+    if (upErr) { setError(upErr.message); setUploadingPhoto(false); return }
+    const { error: insErr } = await supabase.schema('Cores').from('gear_photos').insert({
+      employee_id: employee.id, work_date: workDate, from_phone: 'mobile-app',
+      storage_path: path, job_id: photoJobId || null, ship_or_job: jobNumber || null,
+      pending_context: !photoJobId, file_size_bytes: file.size,
+    })
+    if (insErr) { setError(insErr.message); setUploadingPhoto(false); return }
+    await loadPhotos()
+    setUploadingPhoto(false)
+    setShowPhotoUpload(false)
+    setPhotoJobId('')
+  }
+
   async function deleteThisEntry() {
     setSaving(true)
     const { error: delError } = await supabase.schema('Cores').from('timesheet_entries')
@@ -260,6 +298,42 @@ export default function EntryForm({ employee, mode }) {
             <textarea rows={2} value={editDescription} onChange={e => setEditDescription(e.target.value)} />
           </div>
         )}
+
+        <div style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#444' }}>Photos</label>
+          {photos.length > 0 && (
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+              {photos.map(p => (
+                <MediaThumb key={p.id} src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
+                  style={{ width: '3.2rem', height: '3.2rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }} />
+              ))}
+            </div>
+          )}
+          {!showPhotoUpload ? (
+            <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
+              onClick={() => { setShowPhotoUpload(true); setPhotoJobId(mode === 'edit' ? editJobId : ''); setError('') }}>+ Photo</button>
+          ) : (
+            <div style={{ marginTop: '0.5rem' }}>
+              <div className="emp-field">
+                <label>Job this photo is for (optional)</label>
+                <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
+                {photoJobId && (
+                  <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
+                    onClick={() => setPhotoJobId('')}>Clear job</button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
+                  {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
+                  <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f) }} />
+                </label>
+                <button className="emp-btn emp-btn-secondary" onClick={() => { setShowPhotoUpload(false); setPhotoJobId('') }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#444' }}>Supplies used (optional)</label>
