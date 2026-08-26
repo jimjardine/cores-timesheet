@@ -213,9 +213,17 @@ export default function SmsReview({ onApproved } = {}) {
         for (const s of suppliesToApprove) {
           const jobId = jobIdFor(s.job_number)
           const hit = (existing || []).find(r => r.job_id === jobId && looksLikeSameSupply(s.supply_name, r.supply_name))
-          if (hit) dupes.push(`"${s.supply_name}" looks like it might be the same as "${hit.supply_name}" already logged for this job today (${hit.source_photo_id ? 'a gear photo' : 'another entry'})`)
+          if (hit) dupes.push({ name: s.supply_name, existing: hit.supply_name, source: hit.source_photo_id ? 'a gear photo' : 'another entry' })
         }
-        if (dupes.length > 0 && !confirm(`Possible duplicate:\n\n${dupes.join('\n')}\n\nApprove anyway?`)) return
+        // Just tell her exactly what's already there and let her decide —
+        // she knows whether this is the same item or a second one.
+        if (dupes.length === 1) {
+          const d = dupes[0]
+          if (!confirm(`There's already a "${d.existing}" logged for this job today (from ${d.source}). Do you want to add "${d.name}" as well?`)) return
+        } else if (dupes.length > 1) {
+          const list = dupes.map(d => `"${d.existing}" (from ${d.source}) — this submission also has "${d.name}"`).join('\n')
+          if (!confirm(`Some of these look like they're already logged for this job today:\n\n${list}\n\nApprove anyway?`)) return
+        }
       }
     }
 
