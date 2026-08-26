@@ -1484,7 +1484,8 @@ export default function AdminDashboard() {
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
               <MultiSelectDropdown
-                options={employees}
+                options={[...employees].sort((a, b) =>
+                  (a.name || '').split(' ').pop().localeCompare((b.name || '').split(' ').pop(), undefined, { sensitivity: 'base' }))}
                 selectedIds={filterEmployeeIds}
                 onChange={ids => { setFilterEmployeeIds(ids); setSelectedEmp(null); setSelectedDate(null) }}
                 placeholder="All employees" allLabel="All employees" />
