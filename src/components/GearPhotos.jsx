@@ -213,9 +213,17 @@ export default function GearPhotos() {
       const dupes = []
       for (const name of namesGoingOn) {
         const hit = elsewhere.find(r => looksLikeSameSupply(name, r.supply_name))
-        if (hit) dupes.push(`"${name}" looks like it might be the same as "${hit.supply_name}" already logged for this job today (${hit.source_photo_id ? 'another photo' : 'a text report'})`)
+        if (hit) dupes.push({ name, existing: hit.supply_name, source: hit.source_photo_id ? 'another photo' : 'a text report' })
       }
-      if (dupes.length > 0 && !confirm(`Possible duplicate:\n\n${dupes.join('\n')}\n\nApply anyway?`)) return
+      // Just tell her exactly what's already there and let her decide —
+      // she knows whether this is the same can or a second one.
+      if (dupes.length === 1) {
+        const d = dupes[0]
+        if (!confirm(`There's already a "${d.existing}" logged for this job today (from ${d.source}). Do you want to add "${d.name}" as well?`)) return
+      } else if (dupes.length > 1) {
+        const list = dupes.map(d => `"${d.existing}" (from ${d.source}) — you're also about to add "${d.name}"`).join('\n')
+        if (!confirm(`Some of these look like they're already logged for this job today:\n\n${list}\n\nAdd them anyway?`)) return
+      }
     }
 
     const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
@@ -515,6 +523,24 @@ export default function GearPhotos() {
                         </div>
                       )}
                       {rows.map(row => {
+                        // Ticked, applied, no pending edit — this row is already on
+                        // the timesheet and there's nothing left to do with it here.
+                        // A live checkbox + editable fields looked identical to a
+                        // still-unsaved line; shown instead as plain, greyed-out
+                        // text. Click it to unlock — for a typo fix or to take it
+                        // back off the timesheet.
+                        const locked = !!row.applied_at && isChecked(row) && !rowEdits[row.id]
+                        if (locked) {
+                          return (
+                            <div key={row.id}
+                              onClick={() => setRowEdits(d => ({ ...d, [row.id]: { supply_name: row.supply_name, quantity: String(row.quantity) } }))}
+                              title="On the timesheet — click to edit or remove"
+                              style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.4rem', color: '#999', background: '#f5f5f5', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              <span>{row.quantity} × {row.supply_name}</span>
+                            </div>
+                          )
+                        }
                         const v = rowEdits[row.id] ?? { supply_name: row.supply_name, quantity: String(row.quantity) }
                         const set = (patch) => setRowEdits(d => ({ ...d, [row.id]: { ...v, ...patch } }))
                         return (
