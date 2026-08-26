@@ -1751,16 +1751,22 @@ Deno.serve(async (req: Request) => {
     // recompute from the bounds rather than trust that number, since there's no ambiguity
     // to preserve when there's only one job.
     //
-    // Gated on last_mentioned_at === mergeStamp — i.e. THIS message is what just created or
-    // touched that lone entry — so it only ever double-checks a value Claude just produced,
-    // same turn, same job. Without that gate this fired on ANY later message that happened to
-    // complete the shift bounds while only one job was known so far (e.g. "out 3:30" arriving
-    // after a correctly-stated "shop 1hr" but before other jobs were texted) and silently
-    // overwrote that already-correct, explicitly-stated hours with the full shift span —
-    // Cory's shop hours: 1 -> 8 -> cascaded into his other job showing as all OT (2026-08-26).
-    if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut && allEntries[0].last_mentioned_at === mergeStamp) {
+    // Only allowed to run the FIRST time on an entry the current message didn't just create
+    // or touch itself (last_mentioned_at === mergeStamp) — otherwise a later, unrelated
+    // message that happens to complete the shift bounds while only one job is known SO FAR
+    // (more may still be coming) would silently overwrite that job's already-correct,
+    // explicitly-stated hours with the full shift span. Real incident: Cory's "Shop 1hr"
+    // silently became "Shop 8hrs" the instant he texted his out-time, before he'd texted his
+    // second job — which then showed as all OT once given (2026-08-26).
+    //
+    // Once an entry HAS been bounds-derived this way, _hours_from_bounds keeps it re-syncing
+    // on later bounds-only corrections too ("actually lunch was only 30 min") — that's a real,
+    // separate, intended behavior (a lone job's hours track the shift bounds once derived from
+    // them) and gating purely on last_mentioned_at would have broken it.
+    if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut &&
+        (allEntries[0].last_mentioned_at === mergeStamp || allEntries[0]._hours_from_bounds)) {
       const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
-      if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours }]
+      if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours, _hours_from_bounds: true }]
     }
 
     // ── Calculate time_out from hours + lunch ──
