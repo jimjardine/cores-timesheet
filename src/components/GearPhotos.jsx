@@ -5,7 +5,6 @@ import MediaViewer from './MediaViewer'
 import { getAdminName } from './PasswordGate'
 import JobPicker from '../employee/JobPicker'
 import PersonPicker from './PersonPicker'
-import { isVideoPath } from '../utils/media'
 import { looksLikeSameSupply } from '../utils/supplyMatch'
 
 const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
@@ -621,18 +620,18 @@ export default function GearPhotos() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', cursor: 'zoom-out',
           }}
         >
-          {/* Video keeps its own click-through blocked so tapping play/pause/scrub
-              on the native controls doesn't also close the lightbox. Images have
-              no interactive controls to protect, so a click on the image itself
-              closes it too — same "click it away" gesture as the background. */}
+          {/* Click-through blocked for both — video so tapping play/pause/scrub on
+              the native controls doesn't also close the lightbox, images so
+              MediaViewer's own click-drag-to-pan doesn't close it either. Only
+              clicking the surrounding backdrop closes it now. */}
           <div
-            onClick={isVideoPath(lightbox.storage_path) ? (e => e.stopPropagation()) : undefined}
+            onClick={e => e.stopPropagation()}
             style={{ maxWidth: '100%', maxHeight: '100%' }}
           >
             <MediaViewer
               src={publicUrl(lightbox.storage_path)}
               alt={lightbox.ship_or_job || 'gear photo'}
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4, cursor: isVideoPath(lightbox.storage_path) ? 'default' : 'zoom-out' }}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }}
             />
           </div>
         </div>
