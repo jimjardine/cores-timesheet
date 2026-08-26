@@ -7,16 +7,13 @@ import GearPhotos from './GearPhotos'
 import { getAdminName } from './PasswordGate'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
-import { replaceSupplies, addJobToDay } from '../utils/entrySave'
+import { replaceSupplies, submitManualEntry, fetchDailyOTContext, computeDailyOTSplit } from '../utils/entrySave'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
 import { generateWeeklyCompilationPDF, fmtShortDate, fmtHeaderDate, dayName, isWeekend } from '../utils/weeklyCompilationPdf'
-
-const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sms-timesheet`
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
@@ -121,7 +118,6 @@ export default function AdminDashboard() {
   // default OR the last thing we auto-filled; a real edit is never touched.
   const [autoFilled, setAutoFilled] = useState({ hours: null, lunch_minutes: null, stated_time_out: null, description: null, job_id: null })
   const PRISTINE_MANUAL_DEFAULTS = { hours: '', lunch_minutes: 30, stated_time_out: '15:30', description: '', job_id: '' }
-  const [confirmationWarning, setConfirmationWarning] = useState(null)
 
   // ── Submission Status tab ──
   // Separate from `entries` (approved timesheet_entries only) — this tab's
@@ -312,20 +308,28 @@ export default function AdminDashboard() {
       alert('Entry moved to a different employee/date — supplies were left as-is rather than moved, to avoid overwriting anything already logged there. Add them separately if needed.')
     }
 
-    // Save new job if being added
+    // Save new job if being added — goes to SMS Review for approval, same as
+    // any other manual entry, rather than landing live on the timesheet
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
-      const exempt = isConfirmationExempt(editFields.employee_id)
-      const { error: newJobError } = await addJobToDay(supabase, {
+      const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
+      const hours = Number(newJobFields.hours)
+      const { statDay, dailyOTThreshold, alreadyWorked } =
+        await fetchDailyOTContext(supabase, editFields.employee_id, editFields.work_date)
+      const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+      const { error: newJobError } = await submitManualEntry(supabase, {
         employeeId: editFields.employee_id, workDate: editFields.work_date,
-        jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
-        entrySource: 'manual', confirmationStatus: exempt ? 'not_required' : 'pending',
+        entries: [{
+          job_number: jobNumberFor(newJobFields.job_id), hours,
+          description: newJobFields.description.trim(),
+          reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+        }],
+        adminName: getAdminName(),
       })
       if (newJobError) {
         alert(`Failed to add job: ${newJobError.message}`)
         setSavingEdit(false)
         return
       }
-      if (!exempt) await requestEntryConfirmation(editFields.employee_id, editFields.work_date)
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     }
@@ -419,6 +423,8 @@ export default function AdminDashboard() {
     await loadTimesheets()
   }
 
+  // Goes to SMS Review for approval, same as any other manual entry, rather
+  // than landing live on the timesheet
   async function saveNewJobToTimesheet() {
     if (!newJobFields.job_id || !newJobFields.hours) {
       alert('Pick job and enter hours')
@@ -430,11 +436,20 @@ export default function AdminDashboard() {
     }
 
     try {
-      const exempt = isConfirmationExempt(editEntry.employee_id)
-      const { error } = await addJobToDay(supabase, {
+      const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
+      const hours = Number(newJobFields.hours)
+      const { statDay, dailyOTThreshold, alreadyWorked } =
+        await fetchDailyOTContext(supabase, editEntry.employee_id, editEntry.work_date)
+      const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+
+      const { error } = await submitManualEntry(supabase, {
         employeeId: editEntry.employee_id, workDate: editEntry.work_date,
-        jobId: newJobFields.job_id, hours: newJobFields.hours, description: newJobFields.description,
-        entrySource: 'manual', confirmationStatus: exempt ? 'not_required' : 'pending',
+        entries: [{
+          job_number: jobNumberFor(newJobFields.job_id), hours,
+          description: newJobFields.description.trim(),
+          reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+        }],
+        adminName: getAdminName(),
       })
 
       if (error) {
@@ -442,31 +457,11 @@ export default function AdminDashboard() {
         return
       }
 
-      if (!exempt) await requestEntryConfirmation(editEntry.employee_id, editEntry.work_date)
-      await ensureStatPay(editEntry.employee_id, editEntry.work_date)
       await loadTimesheets()
       setAddingNewJob(false)
       setNewJobFields({ job_id: '', hours: '', description: '' })
     } catch (err) {
       alert(`Error: ${err.message}`)
-    }
-  }
-
-  const isConfirmationExempt = (employeeId) => !!employees.find(e => e.id === employeeId)?.confirmation_exempt
-
-  // Text the employee to confirm a manually-entered timesheet — best-effort,
-  // surfaces a dismissible banner on failure rather than blocking with alert()
-  async function requestEntryConfirmation(employeeId, workDate) {
-    try {
-      const res = await fetch(FUNCTION_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
-        body: JSON.stringify({ action: 'request_confirmation', employee_id: employeeId, work_date: workDate }),
-      })
-      const data = await res.json()
-      if (!data.ok) setConfirmationWarning(`Entries saved, but couldn't text the employee to confirm: ${data.error}`)
-    } catch (e) {
-      setConfirmationWarning(`Entries saved, but the confirmation text failed to send: ${e.message}`)
     }
   }
 
@@ -489,48 +484,39 @@ export default function AdminDashboard() {
 
     setSavingManual(true)
     try {
-      // ot_hours left null on every line — computeOTMap derives reg/OT
-      // (stat/weekend, daily + weekly threshold) at display/export time
-      // instead of locking in a same-day-only split here. See entrySave.js.
-      const exempt = isConfirmationExempt(manualFields.employee_id)
-      const toInsert = validEntries.map((e, i) => ({
-        employee_id: manualFields.employee_id,
-        work_date: manualFields.work_date,
-        job_id: e.job_id,
-        hours: Number(e.hours),
-        ot_hours: null,
-        description: e.description || '',
-        per_diem: manualFields.per_diem,
-        sort_order: manualFields.sort_order + i,
-        time_in: manualFields.time_in || null,
-        stated_time_out: manualFields.stated_time_out || null,
-        lunch_minutes: manualFields.lunch_minutes || null,
-        // The office typed this in themselves — the employee hasn't confirmed
-        // it yet, but the office entering it IS the supervisor approval.
-        // confirmation_exempt employees (e.g. Tracy, on a fixed office
-        // schedule) skip the text — see isConfirmationExempt.
-        entry_source: 'manual',
-        confirmation_status: exempt ? 'not_required' : 'pending',
-        approved_by_name: getAdminName(),
-        approved_at: new Date().toISOString(),
-      }))
+      // Goes to SMS Review for Niki to approve — same gate a text goes
+      // through. The office typing this in is a report, not an approval;
+      // treating it as one let an entry land live with nobody having
+      // reviewed it (2026-08-26 incident). Applies to every employee,
+      // Tracy included — there's no more per-employee approval bypass here.
+      const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
+      const { statDay, dailyOTThreshold, alreadyWorked: startAlready } =
+        await fetchDailyOTContext(supabase, manualFields.employee_id, manualFields.work_date)
+      let alreadyWorked = startAlready
+      const entries = validEntries.map(e => {
+        const hours = Number(e.hours)
+        const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
+        alreadyWorked += hours
+        return {
+          job_number: jobNumberFor(e.job_id), hours, description: e.description.trim(),
+          reg_hours: Math.round(reg * 100) / 100, ot_hours: Math.round(ot * 100) / 100,
+        }
+      })
+      const supplies = (manualFields.supplies || [])
+        .filter(s => s.supply_name && s.job_id && Number(s.quantity) > 0)
+        .map(s => ({ job_number: jobNumberFor(s.job_id), supply_name: s.supply_name, quantity: Number(s.quantity) }))
 
-      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert(toInsert)
+      const { error } = await submitManualEntry(supabase, {
+        employeeId: manualFields.employee_id, workDate: manualFields.work_date,
+        timeIn: manualFields.time_in, statedTimeOut: manualFields.stated_time_out,
+        lunchMinutes: manualFields.lunch_minutes, hasPerDiem: Number(manualFields.per_diem) > 0,
+        entries, supplies, adminName: getAdminName(),
+      })
       if (error) {
         alert(`Save failed: ${error.message}`)
         return
       }
 
-      if (!exempt) await requestEntryConfirmation(manualFields.employee_id, manualFields.work_date)
-
-      // Insert supplies if any
-      const { error: supplyError } = await replaceSupplies(supabase, manualFields.employee_id, manualFields.work_date, manualFields.supplies)
-      if (supplyError) {
-        alert(`Supplies save failed: ${supplyError.message}`)
-        return
-      }
-
-      await ensureStatPay(manualFields.employee_id, manualFields.work_date)
       await loadTimesheets()
       setManualEntry(null)
       setAutoFilled({ hours: null, lunch_minutes: null, stated_time_out: null, description: null, job_id: null })
@@ -1354,10 +1340,7 @@ export default function AdminDashboard() {
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Per Diem</label>
                 <select style={inputStyle} value={manualFields.per_diem || 0} onChange={e => setManualFields(f => ({ ...f, per_diem: Number(e.target.value) }))}>
                   <option value={0}>None</option>
-                  <option value={0.5}>×0.5 Half</option>
-                  <option value={1}>×1 Standard</option>
-                  <option value={1.5}>×1.5</option>
-                  <option value={2}>×2 Double</option>
+                  <option value={1}>Yes</option>
                 </select>
               </div>
             </div>
@@ -1449,12 +1432,6 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', padding: '0.65rem 1rem', background: '#eaf2fc', border: '1px solid #b8d4f5', borderRadius: '6px', color: '#0a4a8a', fontSize: '0.9rem' }}>
               <span>Only approved entries show up here — {pendingSubmissionCount} submission{pendingSubmissionCount === 1 ? ' is' : 's are'} still waiting in SMS Review.</span>
               <button onClick={() => setActiveTab('sms')} style={{ padding: '0.3rem 0.8rem', border: '1px solid #0066cc', background: '#fff', color: '#0066cc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>Review now →</button>
-            </div>
-          )}
-          {confirmationWarning && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', padding: '0.65rem 1rem', background: '#fdf0d5', border: '1px solid #f0d090', borderRadius: '6px', color: '#8a6100', fontSize: '0.9rem' }}>
-              <span>{confirmationWarning}</span>
-              <button onClick={() => setConfirmationWarning(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#8a6100', fontSize: '1.1rem', lineHeight: 1, padding: 0 }}>×</button>
             </div>
           )}
           {/* Filters — always visible */}
