@@ -14,7 +14,15 @@ const MAX_SCALE = 4
 // once the *page* is pinch-zoomed on mobile (a long-standing iOS Safari
 // quirk — the browser keeps re-centering fixed elements in the visual
 // viewport) — you could zoom in but never scroll to see the part you
-// zoomed into. Owning zoom/pan here sidesteps that entirely.
+// zoomed into. Owning zoom/pan here sidesteps that entirely — PROVIDED the
+// browser's own native zoom is actually suppressed. It isn't enough to
+// preventDefault() from a React onWheel/onTouchMove prop: Chrome (and
+// React itself, for touch) registers those as passive listeners for
+// scroll-performance reasons, which silently makes preventDefault() a
+// no-op — the page zooms/scrolls anyway, on top of this component's own
+// transform, which is exactly the "zooms in but I can't get it back"
+// symptom this was built to fix. Wheel/touch listeners are therefore
+// attached manually with { passive: false } instead of via JSX props.
 export default function MediaViewer({ src, alt = '', style }) {
   const [scale, setScale] = useState(1)
   const [pos, setPos] = useState({ x: 0, y: 0 })
@@ -22,14 +30,14 @@ export default function MediaViewer({ src, alt = '', style }) {
   const containerRef = useRef(null)
   const dragRef = useRef(null)   // { startX, startY, origX, origY } while a drag is in progress
   const pinchRef = useRef(null)  // { startDist, startScale } while a two-finger pinch is in progress
+  const stateRef = useRef({ scale, pos })
+  stateRef.current = { scale, pos }
 
   // A new photo (or reopening the lightbox) always starts fresh — zoom
   // state shouldn't carry over from whatever was last viewed.
   useEffect(() => { setScale(1); setPos({ x: 0, y: 0 }) }, [src])
 
-  if (isVideoPath(src)) {
-    return <video src={src} controls autoPlay style={style} />
-  }
+  const isVideo = isVideoPath(src)
 
   const clamp = (s) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s))
 
@@ -38,23 +46,79 @@ export default function MediaViewer({ src, alt = '', style }) {
   // specific corner/gauge should keep that spot under the cursor, not
   // recenter the whole image every time.
   function zoomTo(nextScale, focal) {
+    const { scale: curScale, pos: curPos } = stateRef.current
     const s = clamp(nextScale)
     if (focal && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect()
       const fx = focal.x - rect.left - rect.width / 2
       const fy = focal.y - rect.top - rect.height / 2
-      const ratio = scale === 0 ? 1 : s / scale
-      setPos(p => (s === 1 ? { x: 0, y: 0 } : { x: fx - (fx - p.x) * ratio, y: fy - (fy - p.y) * ratio }))
+      const ratio = curScale === 0 ? 1 : s / curScale
+      setPos(s === 1 ? { x: 0, y: 0 } : { x: fx - (fx - curPos.x) * ratio, y: fy - (fy - curPos.y) * ratio })
     } else if (s === 1) {
       setPos({ x: 0, y: 0 })
     }
     setScale(s)
   }
 
-  function handleWheel(e) {
-    e.preventDefault()
-    e.stopPropagation()
-    zoomTo(scale - e.deltaY * 0.01, { x: e.clientX, y: e.clientY })
+  // Manually-attached, non-passive wheel/touch handlers — see the note
+  // above on why this can't just be onWheel/onTouchStart/onTouchMove props.
+  useEffect(() => {
+    if (isVideo) return
+    const el = containerRef.current
+    if (!el) return
+
+    function onWheel(e) {
+      e.preventDefault()
+      zoomTo(stateRef.current.scale - e.deltaY * 0.01, { x: e.clientX, y: e.clientY })
+    }
+
+    const touchDist = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+
+    function onTouchStart(e) {
+      if (e.touches.length === 2) {
+        e.preventDefault()
+        pinchRef.current = { startDist: touchDist(e.touches), startScale: stateRef.current.scale }
+      } else if (e.touches.length === 1 && stateRef.current.scale > 1) {
+        e.preventDefault()
+        const t = e.touches[0]
+        setDragging(true)
+        dragRef.current = { startX: t.clientX, startY: t.clientY, origX: stateRef.current.pos.x, origY: stateRef.current.pos.y }
+      }
+    }
+    function onTouchMove(e) {
+      if (e.touches.length === 2 && pinchRef.current) {
+        e.preventDefault()
+        const { startDist, startScale } = pinchRef.current
+        const [a, b] = e.touches
+        zoomTo(startScale * (touchDist(e.touches) / startDist), { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
+      } else if (e.touches.length === 1 && dragRef.current) {
+        e.preventDefault()
+        const t = e.touches[0]
+        const d = dragRef.current
+        setPos({ x: d.origX + (t.clientX - d.startX), y: d.origY + (t.clientY - d.startY) })
+      }
+    }
+    function onTouchEnd(e) {
+      if (e.touches.length < 2) pinchRef.current = null
+      if (e.touches.length === 0) { dragRef.current = null; setDragging(false) }
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: false })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [isVideo])
+
+  if (isVideo) {
+    return <video src={src} controls autoPlay style={style} />
   }
 
   function handleDoubleClick(e) {
@@ -77,51 +141,14 @@ export default function MediaViewer({ src, alt = '', style }) {
   }
   function endDrag() { dragRef.current = null; setDragging(false) }
 
-  const touchDist = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
-
-  function handleTouchStart(e) {
-    if (e.touches.length === 2) {
-      e.stopPropagation()
-      pinchRef.current = { startDist: touchDist(e.touches), startScale: scale }
-    } else if (e.touches.length === 1 && scale > 1) {
-      e.stopPropagation()
-      const t = e.touches[0]
-      setDragging(true)
-      dragRef.current = { startX: t.clientX, startY: t.clientY, origX: pos.x, origY: pos.y }
-    }
-  }
-  function handleTouchMove(e) {
-    if (e.touches.length === 2 && pinchRef.current) {
-      e.preventDefault()
-      e.stopPropagation()
-      const { startDist, startScale } = pinchRef.current
-      const [a, b] = e.touches
-      zoomTo(startScale * (touchDist(e.touches) / startDist), { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
-    } else if (e.touches.length === 1 && dragRef.current) {
-      e.preventDefault()
-      e.stopPropagation()
-      const t = e.touches[0]
-      const d = dragRef.current
-      setPos({ x: d.origX + (t.clientX - d.startX), y: d.origY + (t.clientY - d.startY) })
-    }
-  }
-  function handleTouchEnd(e) {
-    if (e.touches.length < 2) pinchRef.current = null
-    if (e.touches.length === 0) endDrag()
-  }
-
   return (
     <div
       ref={containerRef}
-      onWheel={handleWheel}
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={endDrag}
       onMouseLeave={endDrag}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       title={scale > 1 ? 'Drag to pan, double-click to reset' : 'Scroll or pinch to zoom, double-click to zoom in'}
       style={{ ...style, overflow: 'hidden', touchAction: 'none', cursor: scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'zoom-in' }}
     >
