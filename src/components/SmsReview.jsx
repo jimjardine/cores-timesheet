@@ -1125,6 +1125,7 @@ export default function SmsReview({ onApproved } = {}) {
                 <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Hours</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 80 }} title="Leave blank to auto-split reg/OT as usual. Fill in either this or OT override — they stay in sync with each other and with Hours.">Reg override</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 80 }} title="Leave blank to auto-split reg/OT as usual. Fill in to override how much of this entry's hours count as OT.">OT override</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2 }}>Description</th>
                   <th style={{ width: 30 }} />
@@ -1149,6 +1150,23 @@ export default function SmsReview({ onApproved } = {}) {
                           value={e.hours}
                           onChange={ev => setEntryField(i, 'hours', ev.target.value)}
                           style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          type="number" min="0" step="0.25"
+                          // Same single override as OT, just entered from the other
+                          // side — typing here writes the equivalent OT value
+                          // (hours - reg) into the same field saveEdit()/approve()
+                          // already read, so nothing downstream needs to change.
+                          value={e.ot_override !== '' ? String(Math.round((Number(e.hours || 0) - Number(e.ot_override)) * 100) / 100) : ''}
+                          onChange={ev => {
+                            const reg = ev.target.value
+                            setEntryField(i, 'ot_override', reg === '' ? '' : String(Math.round((Number(e.hours || 0) - Number(reg)) * 100) / 100))
+                          }}
+                          placeholder="(auto)"
+                          title="Leave blank to auto-split. Fill in to force this many of the entry's hours to count as regular."
+                          style={{ ...inp, borderColor: e.ot_override !== '' ? '#0066cc' : '#ccc' }}
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
