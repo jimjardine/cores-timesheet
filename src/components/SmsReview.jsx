@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 import { isWeekend } from '../utils/weeklyCompilationPdf'
 import { fmtHours } from '../utils/format'
+import { looksLikeSameSupply } from '../utils/supplyMatch'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import PersonPicker from './PersonPicker'
 import { getAdminName } from './PasswordGate'
@@ -195,6 +196,29 @@ export default function SmsReview({ onApproved } = {}) {
       const ok = confirm(`Heads up — this submission's job hours don't match its time span (off by ${Math.abs(deltaHrs)}hrs). Approve anyway?`)
       if (!ok) return
     }
+
+    // Guard against a text-reported supply duplicating one already logged
+    // elsewhere for the same employee/day/job — typically a gear photo whose
+    // note said the same thing this text did.
+    const suppliesToApprove = (sub.supplies || []).filter(s => s.supply_name?.trim())
+    if (suppliesToApprove.length > 0) {
+      const jobIdFor = (jobNumber) => jobs.find(j => j.job_number.toUpperCase() === (jobNumber || '').toUpperCase())?.id
+      const jobIds = [...new Set(suppliesToApprove.map(s => jobIdFor(s.job_number)).filter(Boolean))]
+      if (jobIds.length > 0) {
+        const { data: existing } = await supabase.schema('Cores').from('job_supplies')
+          .select('supply_name, job_id, source_photo_id')
+          .eq('employee_id', sub.employee_id).eq('work_date', sub.work_date).in('job_id', jobIds)
+          .not('applied_at', 'is', null)
+        const dupes = []
+        for (const s of suppliesToApprove) {
+          const jobId = jobIdFor(s.job_number)
+          const hit = (existing || []).find(r => r.job_id === jobId && looksLikeSameSupply(s.supply_name, r.supply_name))
+          if (hit) dupes.push(`"${s.supply_name}" looks like it might be the same as "${hit.supply_name}" already logged for this job today (${hit.source_photo_id ? 'a gear photo' : 'another entry'})`)
+        }
+        if (dupes.length > 0 && !confirm(`Possible duplicate:\n\n${dupes.join('\n')}\n\nApprove anyway?`)) return
+      }
+    }
+
     setActing(sub.id)
 
     // Atomically claim the submission before creating any entries — if this
