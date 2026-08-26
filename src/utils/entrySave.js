@@ -87,22 +87,31 @@ export function computeSubmissionTiming(timeIn, statedTimeOut, lunchMinutes, tot
   return { calculated_time_out, delta_minutes }
 }
 
-// Add one more job line to a day that already has entries (or start a new
-// day with a single job). Used for "add another job" on an existing
-// timesheet. ot_hours is left null — see note above — so computeOTMap
-// correctly reg/OT-splits it (including stat/weekend and weekly threshold)
-// alongside the day's other entries wherever it's displayed.
-export async function addJobToDay(supabase, { employeeId, workDate, jobId, hours, description, entrySource, confirmationStatus, sortOrder = 999 }) {
-  return cores(supabase).from('timesheet_entries').insert({
-    employee_id: employeeId,
-    work_date: workDate,
-    job_id: jobId,
-    hours: Number(hours),
-    description: description || '',
-    ot_hours: null,
-    per_diem: 0,
-    sort_order: sortOrder,
-    entry_source: entrySource,
-    confirmation_status: confirmationStatus,
+// Submit a manually-typed entry (or set of entries) for one employee/day as
+// an sms_submissions row — the same review gate a text goes through —
+// instead of writing timesheet_entries directly. An admin typing hours in is
+// not itself Niki's approval; before 2026-08-26 it was treated as one (see
+// AdminDashboard's old saveManualEntry/saveNewJobToTimesheet), and a manual
+// entry for an employee landed live and fully approved with nobody having
+// reviewed it. Used for both a brand-new day (AdminDashboard's Add Entry
+// form) and adding one more job to an existing day.
+export async function submitManualEntry(supabase, {
+  employeeId, workDate, timeIn, statedTimeOut, lunchMinutes, hasPerDiem,
+  entries, supplies = [], adminName,
+}) {
+  const totalHours = entries.reduce((s, e) => s + e.hours, 0)
+  const { calculated_time_out, delta_minutes } = computeSubmissionTiming(timeIn, statedTimeOut, lunchMinutes, totalHours)
+  return cores(supabase).from('sms_submissions').insert({
+    from_phone:         'admin-manual',
+    employee_id:        employeeId,
+    work_date:          workDate,
+    time_in:            timeIn || null,
+    stated_time_out:    statedTimeOut || null,
+    lunch_minutes:      lunchMinutes === '' || lunchMinutes == null ? null : Number(lunchMinutes),
+    per_diem_location:  hasPerDiem ? 'Office entry' : 'none',
+    entries, supplies,
+    status:             'submitted',
+    calculated_time_out, delta_minutes,
+    admin_note:         adminName ? `Entered manually by ${adminName}` : null,
   })
 }
