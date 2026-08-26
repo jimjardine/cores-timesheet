@@ -3,13 +3,12 @@ import { fmtHours } from './format'
 
 // Recreates the Cores Worldwide paper "Weekly Compilation / Daily Work Hours" form
 // (Document# CW-OAD-F002 rev.0) — one employee's Thu–Wed pay week, reg/OT/per diem
-// per day. "Posted" is tracked as a whole-week flag (see weekly_summary_posted), so
-// when the week is posted every day's POSTED cell is checked off (an X, since the
-// standard PDF font has no reliable checkmark glyph), not just one row — kept as-is
-// to match the physical numbered form. A real "POSTED TO SAGE — {date} by {name}"
-// stamp is drawn below the table in addition, same convention as the daily
-// timesheet PDF's stamp (see timesheetPdf.js), since the X alone doesn't say who
-// or when.
+// per day. "Posted" is tracked per day (see daily_summary_posted), so each day's
+// POSTED cell (an X, since the standard PDF font has no reliable checkmark glyph)
+// reflects that specific day, not the whole week. A "POSTED TO SAGE — {date} by
+// {name}" stamp is drawn below the table, same convention as the daily timesheet
+// PDF's stamp (see timesheetPdf.js) — only once every day in the week is posted,
+// since it speaks for the whole week.
 export function fmtShortDate(ymd) {
   const d = new Date(ymd + 'T12:00:00')
   const mon = d.toLocaleDateString('en-US', { month: 'short' })
@@ -30,9 +29,12 @@ export function isWeekend(ymd) {
 }
 const fmtHrs = (n) => (n ? fmtHours(n) : '')
 
-// days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems }, Thursday first
-export function generateWeeklyCompilationPDF({ employeeName, days, postedAt = null, postedBy = null }) {
-  const posted = !!postedAt
+// days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems, postedAt, postedBy },
+// Thursday first. Week-level "posted" (for the bottom stamp) only holds when every day is.
+export function generateWeeklyCompilationPDF({ employeeName, days }) {
+  const allPosted = days.every(d => !!d.postedAt)
+  const latestPostedAt = allPosted ? days.reduce((max, d) => (d.postedAt > max ? d.postedAt : max), days[0].postedAt) : null
+  const postedByNames = [...new Set(days.filter(d => d.postedAt).map(d => d.postedBy).filter(Boolean))]
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 50
@@ -136,7 +138,7 @@ export function generateWeeklyCompilationPDF({ employeeName, days, postedAt = nu
     }
     doc.text(fmtHrs(day.otHours), colX.ot + 6, rowTop + 14)
     doc.text(day.perDiems ? String(day.perDiems) : '', colX.pd + 6, rowTop + 14)
-    if (posted) {
+    if (day.postedAt) {
       doc.setFont('helvetica', 'bold')
       doc.text('X', colX.posted + colW.posted / 2 - 3, rowTop + 14)
       doc.setFont('helvetica', 'normal')
@@ -154,7 +156,7 @@ export function generateWeeklyCompilationPDF({ employeeName, days, postedAt = nu
   doc.text(fmtHrs(totalReg), colX.reg + 6, totalRowTop + rowH - 6)
   doc.text(fmtHrs(totalOT), colX.ot + 6, totalRowTop + rowH - 6)
   doc.text(totalPD ? String(totalPD) : '', colX.pd + 6, totalRowTop + rowH - 6)
-  if (posted) doc.text('X', colX.posted + colW.posted / 2 - 3, totalRowTop + rowH - 6)
+  if (allPosted) doc.text('X', colX.posted + colW.posted / 2 - 3, totalRowTop + rowH - 6)
   y += rowH
 
   // ── Outer borders + column lines for the whole table ──
@@ -163,15 +165,15 @@ export function generateWeeklyCompilationPDF({ employeeName, days, postedAt = nu
   doc.setLineWidth(0.75)
   Object.values(colX).slice(1).forEach(x => doc.line(x, headerTop, x, y))
 
-  if (posted) {
+  if (allPosted) {
     y += 16
     const stampH = 22
     doc.setDrawColor(45, 106, 56); doc.setLineWidth(1)
     doc.roundedRect(margin, y, contentW, stampH, 3, 3)
     doc.setTextColor(45, 106, 56)
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-    const stampDate = new Date(postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    doc.text(`POSTED TO SAGE — ${stampDate}${postedBy ? ' by ' + postedBy : ''}`, pageW / 2, y + 14, { align: 'center' })
+    const stampDate = new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    doc.text(`POSTED TO SAGE — ${stampDate}${postedByNames.length === 1 ? ' by ' + postedByNames[0] : ''}`, pageW / 2, y + 14, { align: 'center' })
     doc.setTextColor(0, 0, 0)
   }
 
