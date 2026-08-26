@@ -1750,7 +1750,15 @@ Deno.serve(async (req: Request) => {
     // the job itself ("4709 9 to 5" -> hours: 8, the raw span) despite being told not to —
     // recompute from the bounds rather than trust that number, since there's no ambiguity
     // to preserve when there's only one job.
-    if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut) {
+    //
+    // Gated on last_mentioned_at === mergeStamp — i.e. THIS message is what just created or
+    // touched that lone entry — so it only ever double-checks a value Claude just produced,
+    // same turn, same job. Without that gate this fired on ANY later message that happened to
+    // complete the shift bounds while only one job was known so far (e.g. "out 3:30" arriving
+    // after a correctly-stated "shop 1hr" but before other jobs were texted) and silently
+    // overwrote that already-correct, explicitly-stated hours with the full shift span —
+    // Cory's shop hours: 1 -> 8 -> cascaded into his other job showing as all OT (2026-08-26).
+    if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut && allEntries[0].last_mentioned_at === mergeStamp) {
       const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
       if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours }]
     }
