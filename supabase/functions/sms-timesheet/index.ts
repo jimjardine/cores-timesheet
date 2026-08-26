@@ -1260,6 +1260,9 @@ Deno.serve(async (req: Request) => {
     if (tsSub?.delta_minutes != null && Math.abs(tsSub.delta_minutes) > 15) {
       lines.push(`Heads up — your times and job hours are off by ${Math.abs(tsSub.delta_minutes)}min.`)
     }
+    if (tsSub?.stated_time_out && Number(tsSub.stated_time_out.slice(0, 2)) < 6) {
+      lines.push(`Heads up — your out time (${friendlyTime(tsSub.stated_time_out.substring(0, 5))}) is after midnight. Did you mean pm?`)
+    }
 
     if (tsSub) {
       lines.push(tsSub.per_diem_location && tsSub.per_diem_location !== 'none'
@@ -1782,6 +1785,13 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // A stop time between midnight and early morning is almost always a tech
+    // typing the wrong am/pm ("out 3" meant 3pm, parsed as 03:00) — rare enough
+    // to occasionally be a real overnight shift, common enough as a slip to be
+    // worth a same-message heads-up rather than silently trusting it.
+    const statedOutHour = mergedStatedOut ? Number(mergedStatedOut.slice(0, 2)) : null
+    const midnightOutWarning = statedOutHour != null && statedOutHour < 6
+
     // ── OT breakdown ──
     // Fetch daily threshold + any hours already approved for this employee today
     // so second/third texts in a day get correct OT attribution
@@ -1897,6 +1907,14 @@ Deno.serve(async (req: Request) => {
         flags.push('job hours missing — need total hours or an out time')
       }
       reply = daySummaryReply(firstName, touchedEntriesWithOT, totalHours, totalOTHours, mergedTimeIn, flags, unknownJobs, allEntriesWithOT.length, deltaMinutes)
+    }
+
+    // Appended after whichever branch above set `reply` (lunch/consumables ask,
+    // employee-not-found, or the day summary) — a mistyped am/pm on the out time
+    // is worth flagging no matter what else this reply is about, and the ask
+    // branches above return early before ever reaching daySummaryReply.
+    if (midnightOutWarning && mergedStatedOut && reply) {
+      reply += `\nHeads up — your out time (${friendlyTime(mergedStatedOut)}) is after midnight. Did you mean pm?`
     }
 
     // ── Save/update submission ──
