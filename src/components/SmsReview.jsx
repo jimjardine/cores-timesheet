@@ -990,7 +990,7 @@ export default function SmsReview({ onApproved } = {}) {
                         fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap',
                       }}
                     >
-                      {acting === sub.id ? 'Declining…' : 'Confirm decline'}
+                      {acting === sub.id ? 'Deleting…' : 'Confirm Delete'}
                     </button>
                   </div>
                 )}
