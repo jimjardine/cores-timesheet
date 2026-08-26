@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient'
 import SmsReview from './SmsReview'
 import PersonPicker from './PersonPicker'
 import GearPhotos from './GearPhotos'
-import ConfettiBurst from './ConfettiBurst'
+import ConfettiBurst, { CELEBRATION_VARIANTS, pickCelebrationVariant } from './ConfettiBurst'
 import { getAdminName } from './PasswordGate'
 import { generateDailyTimesheetPDF } from '../utils/timesheetPdf'
 import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
@@ -57,6 +57,7 @@ export default function AdminDashboard() {
   const [entries, setEntries] = useState([])
   const [employees, setEmployees] = useState([])
   const [celebrate, setCelebrate] = useState(false)
+  const [celebrateVariant, setCelebrateVariant] = useState('confetti')
   const [loadingEntries, setLoadingEntries] = useState(true)
   const [filterEmployeeIds, setFilterEmployeeIds] = useState([])
   const [printingAll, setPrintingAll] = useState(false)
@@ -552,7 +553,7 @@ export default function AdminDashboard() {
       }
 
       // A little just-for-her celebration on save
-      if (manualFields.employee_id === TRACY_EMPLOYEE_ID) setCelebrate(true)
+      if (manualFields.employee_id === TRACY_EMPLOYEE_ID) { setCelebrateVariant(pickCelebrationVariant()); setCelebrate(true) }
 
       await loadTimesheets()
       setManualEntry(null)
@@ -1230,7 +1231,7 @@ export default function AdminDashboard() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
-      <ConfettiBurst active={celebrate} onDone={() => setCelebrate(false)} />
+      <ConfettiBurst active={celebrate} onDone={() => setCelebrate(false)} emoji={CELEBRATION_VARIANTS[celebrateVariant]} />
 
       {/* ── Edit modal ── */}
       {editEntry && (
