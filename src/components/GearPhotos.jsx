@@ -6,6 +6,7 @@ import { getAdminName } from './PasswordGate'
 import JobPicker from '../employee/JobPicker'
 import PersonPicker from './PersonPicker'
 import { isVideoPath } from '../utils/media'
+import { looksLikeSameSupply } from '../utils/supplyMatch'
 
 const publicUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
 
@@ -191,6 +192,32 @@ export default function GearPhotos() {
     }
     const rows = suppliesByPhoto[photo.id] || []
     const pending = linesForPhoto(photo).filter(l => l.supply_name.trim())
+
+    // Guard against logging the same consumable twice for the same job/day —
+    // once from this photo, once already from elsewhere (typically the tech's
+    // own text report saying the same thing). Only lines actually about to go
+    // on the timesheet are worth checking; an unticked line isn't applying.
+    const namesGoingOn = [
+      ...pending.filter(l => l.checked).map(l => l.supply_name.trim()),
+      ...rows.filter(row => isChecked(row) && (rowEdits[row.id]?.supply_name ?? row.supply_name).trim())
+        .map(row => (rowEdits[row.id]?.supply_name ?? row.supply_name).trim()),
+    ]
+    if (namesGoingOn.length > 0 && photo.job_id) {
+      const { data: sameJobDay } = await supabase.schema('Cores').from('job_supplies')
+        .select('supply_name, source_photo_id')
+        .eq('employee_id', photo.employee_id).eq('work_date', photo.work_date).eq('job_id', photo.job_id)
+        .not('applied_at', 'is', null)
+      // Rows already on this same photo sit side by side deliberately (that's
+      // what "+ Add line" is for) — only cross-check against other photos/text.
+      const elsewhere = (sameJobDay || []).filter(r => r.source_photo_id !== photo.id)
+      const dupes = []
+      for (const name of namesGoingOn) {
+        const hit = elsewhere.find(r => looksLikeSameSupply(name, r.supply_name))
+        if (hit) dupes.push(`"${name}" looks like it might be the same as "${hit.supply_name}" already logged for this job today (${hit.source_photo_id ? 'another photo' : 'a text report'})`)
+      }
+      if (dupes.length > 0 && !confirm(`Possible duplicate:\n\n${dupes.join('\n')}\n\nApply anyway?`)) return
+    }
+
     const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
     const cleared = { applied_at: null, applied_by: null }
     setSavingPhotoId(photo.id)
@@ -456,6 +483,20 @@ export default function GearPhotos() {
                   const busy = savingPhotoId === photo.id
                   const canSave = canSaveSupply(photo)
                   const stillPending = canSave && !hasEntryForPhoto(photo)
+                  // Once a line is on the timesheet, re-clicking Save with
+                  // nothing changed must do nothing — otherwise there's no
+                  // visible difference between "already processed" and "not
+                  // saved yet," and the natural response to that uncertainty
+                  // is to hit + Add line and re-type the same supply,
+                  // creating a real duplicate row for the same photo.
+                  const hasNewContent = lines.some(l => l.supply_name.trim())
+                  const hasRowEdits = rows.some(row => {
+                    if (isChecked(row) !== !!row.applied_at) return true
+                    const edit = rowEdits[row.id]
+                    if (!edit) return false
+                    return edit.supply_name.trim() !== row.supply_name || Number(edit.quantity) !== Number(row.quantity)
+                  })
+                  const hasUnsaved = hasNewContent || hasRowEdits
                   const qtyStyle = { width: '3.2rem', padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
                   const descStyle = { flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', borderRadius: 4, border: '1px solid #ccc' }
 
@@ -511,16 +552,16 @@ export default function GearPhotos() {
                         >+ Add line</button>
                         <button
                           onClick={() => saveToTimesheet(photo)}
-                          disabled={busy || !canSave}
-                          title={canSave ? undefined : blockedReason(photo)}
+                          disabled={busy || !canSave || !hasUnsaved}
+                          title={!canSave ? blockedReason(photo) : !hasUnsaved ? 'Already on the timesheet — nothing new to save' : undefined}
                           style={{
                             flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', borderRadius: 4,
-                            border: `1px solid ${canSave ? '#0066cc' : '#ccc'}`,
-                            background: canSave ? '#0066cc' : '#eee',
-                            color: canSave ? '#fff' : '#999',
-                            cursor: canSave ? 'pointer' : 'not-allowed',
+                            border: `1px solid ${canSave && hasUnsaved ? '#0066cc' : '#ccc'}`,
+                            background: canSave && hasUnsaved ? '#0066cc' : '#eee',
+                            color: canSave && hasUnsaved ? '#fff' : '#999',
+                            cursor: canSave && hasUnsaved ? 'pointer' : 'not-allowed',
                           }}
-                        >{busy ? 'Saving…' : 'Save to Timesheet'}</button>
+                        >{busy ? 'Saving…' : !canSave || hasUnsaved ? 'Save to Timesheet' : 'Saved ✓'}</button>
                       </div>
                     </div>
                   )
