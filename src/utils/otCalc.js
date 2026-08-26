@@ -30,6 +30,21 @@ function payWeekStartYMD(ymd) {
   return toYMD(d)
 }
 
+// A per-employee fixed schedule (e.g. Tracy's 8.75/day, 5 on Fridays) only
+// covers a normal day — it's not a floor added on top of the standard OT
+// rule. If dayTotalHours exceeds it, the whole day reverts to the standard
+// dailyThreshold instead. Shared by computeOTMap (the real, final split) and
+// by any UI that needs to preview a split before an entry is actually
+// approved — those previews drifting out of sync with this rule is exactly
+// what made "her OT exemption isn't working" look like a real bug on
+// 2026-08-26 when it was really just an unrelated preview using the wrong
+// threshold.
+export function effectiveDailyThreshold(workDate, dailyThreshold, employeeThreshold, dayTotalHours) {
+  if (!employeeThreshold) return dailyThreshold
+  const personal = (isFriday(workDate) ? employeeThreshold.friday : employeeThreshold.daily) ?? null
+  return personal != null && dayTotalHours <= personal ? personal : dailyThreshold
+}
+
 /**
  * @param {Array} entries        timesheet_entries rows (any mix of employees/weeks)
  * @param {Object} opts
@@ -85,14 +100,8 @@ export function computeOTMap(entries, { dailyThreshold = 8, weeklyThreshold = 40
           map[e.id] = { reg: 0, ot: hrs }
           dayHoursSoFar += hrs
         } else {
-          let effectiveDailyThreshold = dailyThreshold
-          if (empOverride) {
-            const personalThreshold = (isFriday(e.work_date) ? empOverride.friday : empOverride.daily) ?? null
-            if (personalThreshold != null && dayTotals[e.work_date] <= personalThreshold) {
-              effectiveDailyThreshold = personalThreshold
-            }
-          }
-          const dailyRegRemaining  = Math.max(0, effectiveDailyThreshold - dayHoursSoFar)
+          const threshold = effectiveDailyThreshold(e.work_date, dailyThreshold, empOverride, dayTotals[e.work_date])
+          const dailyRegRemaining  = Math.max(0, threshold - dayHoursSoFar)
           const dailyReg           = Math.min(hrs, dailyRegRemaining)
           const weeklyRegRemaining = Math.max(0, weeklyThreshold - weeklyRegSoFar)
           const actualReg          = Math.min(dailyReg, weeklyRegRemaining)

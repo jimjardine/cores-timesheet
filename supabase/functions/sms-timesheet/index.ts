@@ -1768,20 +1768,37 @@ Deno.serve(async (req: Request) => {
     // ── OT breakdown ──
     // Fetch daily threshold + any hours already approved for this employee today
     // so second/third texts in a day get correct OT attribution
-    const [{ data: otCfg }, { data: priorEntries }, { data: statRows }] = await Promise.all([
+    const [{ data: otCfg }, { data: priorEntries }, { data: statRows }, { data: empThreshold }] = await Promise.all([
       supabase.from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single(),
       mergedEmployeeId
         ? supabase.from('timesheet_entries').select('hours').eq('employee_id', mergedEmployeeId).eq('work_date', workDate).eq('is_stat_pay', false)
         : Promise.resolve({ data: [] }),
       supabase.from('stat_holidays').select('holiday_date').eq('holiday_date', workDate),
+      mergedEmployeeId
+        ? supabase.from('employees').select('ot_daily_threshold, ot_friday_threshold').eq('id', mergedEmployeeId).single()
+        : Promise.resolve({ data: null }),
     ])
     // Work on a stat holiday or weekend is all OT — for a stat day, the 8 reg
     // hrs come from the auto stat-pay entry instead.
     const isStatDay = (statRows || []).length > 0
     const workDateDOW = new Date(workDate + 'T12:00:00').getDay()
     const isWeekendDay = workDateDOW === 0 || workDateDOW === 6
-    const dailyOTThreshold = (isStatDay || isWeekendDay) ? 0 : (otCfg ? Number(otCfg.value) : 8)
+    const globalDailyOTThreshold = (isStatDay || isWeekendDay) ? 0 : (otCfg ? Number(otCfg.value) : 8)
     const alreadyWorkedHours = (priorEntries || []).reduce((s: number, e: any) => s + Number(e.hours || 0), 0)
+    // A per-employee fixed schedule (e.g. Tracy's 8.75/day, 5 on Fridays —
+    // see otCalc.js's effectiveDailyThreshold, which this mirrors; the two
+    // can't share code across the frontend/Deno boundary, so keep them in
+    // sync by hand) only covers a normal day: if today's total (already
+    // logged + this text) exceeds it, the whole day reverts to the standard
+    // threshold instead of using her personal one as a floor on top of it.
+    let dailyOTThreshold = globalDailyOTThreshold
+    if (empThreshold && !isStatDay && !isWeekendDay) {
+      const isFriday = workDateDOW === 5
+      const personal = (isFriday ? empThreshold.ot_friday_threshold : empThreshold.ot_daily_threshold) ?? null
+      if (personal != null && (alreadyWorkedHours + totalHours) <= personal) {
+        dailyOTThreshold = personal
+      }
+    }
     const allEntriesWithOT = calcOTBreakdown(allEntries, dailyOTThreshold, alreadyWorkedHours)
     const totalOTHours = allEntriesWithOT.reduce((s: number, e: any) => s + (e.ot_hours || 0), 0)
 
