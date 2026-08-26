@@ -313,6 +313,23 @@ await scenario('all day inference', phone(18), [
   ['ts', ['4760: 8hrs']],
 ])
 
+// 18b. Regression test for the 2026-08-26 bug: an out-time arriving later,
+// with no job mentioned, while only ONE job is known so far must NOT
+// retroactively stretch that job's already-stated hours to fill the whole
+// shift — that's only meant to catch Claude leaking a bare time range into
+// a job's hours in the SAME message (see "all day inference" above), not to
+// override a real number the tech already gave in an earlier message just
+// because it happens to still be the only job reported when the shift's end
+// time comes in. (Real case: Cory's "Shop 1hr" silently became "Shop 8hrs"
+// the moment he texted his out-time, before he'd texted his second job —
+// which then pushed that second job's hours entirely into OT once given.)
+await cleanupTestTech()
+await scenario('out time does not stretch an already-stated single job', phone(41), [
+  ['This is Test. In at 7. Shop 1hr cleaned up scrap', ['SHOP: 1hrs']],
+  ['Out 3:30', []],
+  ['ts', ['SHOP: 1hrs', { absent: 'SHOP: 8hrs' }]],
+])
+
 // 19. Supplies mixed into an hours text are captured (visible in TS view)
 await cleanupTestTech()
 await scenario('supplies inline', phone(19), [
