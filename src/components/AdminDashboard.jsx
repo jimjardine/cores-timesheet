@@ -259,6 +259,16 @@ export default function AdminDashboard() {
     }
   }
 
+  // Same per-employee OT-threshold lookup computeEntryOT uses — passed into
+  // fetchDailyOTContext so the preview shown before a manual entry is
+  // approved agrees with what computeOTMap will actually charge once it is.
+  const employeeThresholdFor = (employeeId) => {
+    const emp = employees.find(e => e.id === employeeId)
+    return emp && (emp.ot_daily_threshold != null || emp.ot_friday_threshold != null)
+      ? { daily: emp.ot_daily_threshold, friday: emp.ot_friday_threshold }
+      : null
+  }
+
   async function saveEdit() {
     if (!editFields.description?.trim()) { alert('Add a note describing what was done'); return }
     if (addingNewJob && newJobFields.job_id && newJobFields.hours && !newJobFields.description?.trim()) {
@@ -313,8 +323,10 @@ export default function AdminDashboard() {
     if (addingNewJob && newJobFields.job_id && newJobFields.hours) {
       const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
       const hours = Number(newJobFields.hours)
-      const { statDay, dailyOTThreshold, alreadyWorked } =
-        await fetchDailyOTContext(supabase, editFields.employee_id, editFields.work_date)
+      const { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(
+        supabase, editFields.employee_id, editFields.work_date,
+        { employeeThreshold: employeeThresholdFor(editFields.employee_id), newHoursTotal: hours }
+      )
       const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
       const { error: newJobError } = await submitManualEntry(supabase, {
         employeeId: editFields.employee_id, workDate: editFields.work_date,
@@ -438,8 +450,10 @@ export default function AdminDashboard() {
     try {
       const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
       const hours = Number(newJobFields.hours)
-      const { statDay, dailyOTThreshold, alreadyWorked } =
-        await fetchDailyOTContext(supabase, editEntry.employee_id, editEntry.work_date)
+      const { statDay, dailyOTThreshold, alreadyWorked } = await fetchDailyOTContext(
+        supabase, editEntry.employee_id, editEntry.work_date,
+        { employeeThreshold: employeeThresholdFor(editEntry.employee_id), newHoursTotal: hours }
+      )
       const { reg, ot } = computeDailyOTSplit(hours, alreadyWorked, dailyOTThreshold, statDay)
 
       const { error } = await submitManualEntry(supabase, {
@@ -490,8 +504,11 @@ export default function AdminDashboard() {
       // reviewed it (2026-08-26 incident). Applies to every employee,
       // Tracy included — there's no more per-employee approval bypass here.
       const jobNumberFor = (jobId) => jobs.find(j => j.id === jobId)?.job_number || ''
-      const { statDay, dailyOTThreshold, alreadyWorked: startAlready } =
-        await fetchDailyOTContext(supabase, manualFields.employee_id, manualFields.work_date)
+      const newHoursTotal = validEntries.reduce((s, e) => s + Number(e.hours), 0)
+      const { statDay, dailyOTThreshold, alreadyWorked: startAlready } = await fetchDailyOTContext(
+        supabase, manualFields.employee_id, manualFields.work_date,
+        { employeeThreshold: employeeThresholdFor(manualFields.employee_id), newHoursTotal }
+      )
       let alreadyWorked = startAlready
       const entries = validEntries.map(e => {
         const hours = Number(e.hours)

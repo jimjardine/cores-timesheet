@@ -4,6 +4,7 @@
 // Pulled out of AdminDashboard.jsx's saveManualEntry/saveEdit/saveNewJobToTimesheet,
 // which had this logic three times over.
 import { isStatHoliday } from './statPay'
+import { effectiveDailyThreshold } from './otCalc'
 
 const cores = (supabase) => supabase.schema('Cores')
 
@@ -29,17 +30,31 @@ export function computeDailyOTSplit(hours, alreadyWorkedToday, dailyOTThreshold,
 }
 
 // Context computeDailyOTSplit needs for a preview: is this a stat/weekend day
-// (all OT), the configured daily threshold, and how many non-stat hours the
+// (all OT), the effective daily threshold, and how many non-stat hours the
 // employee already has logged that day.
-export async function fetchDailyOTContext(supabase, employeeId, workDate) {
+//
+// employeeThreshold ({ daily, friday }, e.g. Tracy's 8.75/5 fixed office
+// schedule — see otCalc.js) applies the same "whole day reverts to the
+// standard threshold if she works more than her personal one" rule
+// computeOTMap uses at display time, using newHoursTotal (every hour being
+// added this call, across all lines for the day — not just the one line
+// mid-loop) alongside whatever's already logged. Without this the preview
+// shown before approval silently used the generic threshold for someone with
+// a personal one, making it look like real OT that the final computeOTMap
+// pass was never actually going to charge.
+export async function fetchDailyOTContext(supabase, employeeId, workDate, { employeeThreshold, newHoursTotal = 0 } = {}) {
   const { data: otCfg } = await cores(supabase).from('payroll_config').select('value').eq('key', 'daily_ot_threshold').single()
-  const dailyOTThreshold = otCfg ? Number(otCfg.value) : 8
+  const globalDailyThreshold = otCfg ? Number(otCfg.value) : 8
 
   const statDay = (await isStatHoliday(workDate)) || isWeekend(workDate)
 
   const { data: existingToday } = await cores(supabase).from('timesheet_entries')
     .select('hours').eq('employee_id', employeeId).eq('work_date', workDate).eq('is_stat_pay', false)
   const alreadyWorked = (existingToday || []).reduce((s, e) => s + Number(e.hours), 0)
+
+  const dailyOTThreshold = statDay
+    ? globalDailyThreshold
+    : effectiveDailyThreshold(workDate, globalDailyThreshold, employeeThreshold, alreadyWorked + newHoursTotal)
 
   return { statDay, dailyOTThreshold, alreadyWorked }
 }

@@ -4,6 +4,7 @@ import { ensureStatPay, isStatHoliday } from '../utils/statPay'
 import { isWeekend } from '../utils/weeklyCompilationPdf'
 import { fmtHours } from '../utils/format'
 import { looksLikeSameSupply } from '../utils/supplyMatch'
+import { effectiveDailyThreshold } from '../utils/otCalc'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import PersonPicker from './PersonPicker'
 import { getAdminName } from './PasswordGate'
@@ -417,6 +418,16 @@ export default function SmsReview({ onApproved } = {}) {
   const removeSupplyRow = (i) =>
     setEditFields(p => ({ ...p, supplies: p.supplies.filter((_, j) => j !== i) }))
 
+  // Same per-employee OT-threshold lookup AdminDashboard's computeEntryOT
+  // uses — this modal's own reg/OT preview needs to agree with what
+  // computeOTMap will actually charge once the entry is approved.
+  const employeeThresholdFor = (employeeId) => {
+    const emp = employees.find(e => e.id === employeeId)
+    return emp && (emp.ot_daily_threshold != null || emp.ot_friday_threshold != null)
+      ? { daily: emp.ot_daily_threshold, friday: emp.ot_friday_threshold }
+      : null
+  }
+
   async function saveEdit() {
     // Drop blank rows, then re-split reg/OT the same way the edge function does
     // — unless she's typed an explicit OT override for that entry, which wins.
@@ -467,7 +478,11 @@ export default function SmsReview({ onApproved } = {}) {
     const statDay = editFields.work_date
       ? (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
       : false
-    let regLeft = statDay ? 0 : Math.max(0, otThreshold - alreadyWorked)
+    const newHoursTotal = cleaned.reduce((s, e) => s + e.hours, 0)
+    const dailyThreshold = statDay ? otThreshold : effectiveDailyThreshold(
+      editFields.work_date, otThreshold, employeeThresholdFor(editFields.employee_id), alreadyWorked + newHoursTotal
+    )
+    let regLeft = statDay ? 0 : Math.max(0, dailyThreshold - alreadyWorked)
     const entries = cleaned.map(({ job_number, hours: rawHours, description, otOverride }) => {
       const hours = Math.round(rawHours * 100) / 100
       // An explicit override skips the auto-split entirely for this entry —
