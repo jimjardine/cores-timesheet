@@ -631,7 +631,7 @@ export default function AdminDashboard() {
           onClick={e => { e.stopPropagation(); togglePostedWithGuard(empId, workDate, true) }}
           title={`Posted to Sage${dateLabel ? ' ' + dateLabel : ''}${info.posted_by ? ' by ' + info.posted_by : ''} — click to un-post`}
           style={{ cursor: 'pointer', padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#e6f4ea', color: '#2d6a38', whiteSpace: 'nowrap' }}
-        >✓ Posted to Sage</span>
+        >✓ Posted{dateLabel ? ` — ${dateLabel}` : ''}</span>
       )
     }
     return (
@@ -1120,7 +1120,9 @@ export default function AdminDashboard() {
     const { emp, days } = viewingWeeklyCompilation
     const postedCount = days.filter(d => d.postedAt).length
     const isPosted = postedCount === days.length
-    const latestPostedAt = isPosted ? days.reduce((max, d) => (d.postedAt > max ? d.postedAt : max), days[0].postedAt) : null
+    const latestPostedAt = postedCount > 0
+      ? days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
+      : null
     const postedByNames = [...new Set(days.filter(d => d.postedAt).map(d => d.postedBy).filter(Boolean))]
     const totalReg = days.reduce((s, d) => s + Number(d.regHours || 0), 0)
     const totalOT = days.reduce((s, d) => s + Number(d.otHours || 0), 0)
@@ -1148,6 +1150,8 @@ export default function AdminDashboard() {
           >
             {isPosted
               ? `✓ Posted to Sage — ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${postedByNames.length === 1 ? ` by ${postedByNames[0]}` : ''}`
+              : postedCount > 0
+              ? `${postedCount}/${days.length} days posted to Sage — most recent ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
               : `${postedCount}/${days.length} days posted to Sage`}
           </span>
         </div>
@@ -1198,7 +1202,13 @@ export default function AdminDashboard() {
                       {d.otHours ? fmtHours(d.otHours) : ''}
                     </td>
                     <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{d.perDiems || ''}</td>
-                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700 }}>{d.postedAt ? '✓' : ''}</td>
+                    <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38', fontWeight: 700, fontSize: '0.8rem' }}>
+                      {d.postedAt && (
+                        <span title={`Posted to Sage ${new Date(d.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${d.postedBy ? ' by ' + d.postedBy : ''}`}>
+                          ✓ {new Date(d.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
@@ -2161,6 +2171,12 @@ export default function AdminDashboard() {
                   {weekData.map((row, i) => {
                     const postedCount = row.emp ? row.days.filter(d => d.postedAt).length : 0
                     const isPosted = row.emp && postedCount === row.days.length
+                    const latestPostedAt = postedCount > 0
+                      ? row.days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
+                      : null
+                    const latestPostedLabel = latestPostedAt
+                      ? new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                      : null
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '0.75rem', fontWeight: 600, ...(row.emp ? linkStyle : {}) }} onClick={() => row.emp && setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}>{row.emp?.name || 'Unknown'}</td>
@@ -2174,14 +2190,14 @@ export default function AdminDashboard() {
                         {row.emp && (
                           // Read-only status — posting itself only happens per day, from the Timesheets tab
                           <span
-                            title={isPosted ? 'All 7 days posted to Sage' : `${postedCount}/7 days posted to Sage`}
+                            title={isPosted ? `All 7 days posted to Sage — most recent ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 days posted to Sage — most recent ${latestPostedLabel}` : 'No days posted yet'}
                             style={{
                               padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600,
                               background: isPosted ? '#e6f4ea' : postedCount > 0 ? '#fdf0d5' : '#f5f5f5',
                               color: isPosted ? '#2d6a38' : postedCount > 0 ? '#8a6100' : '#888',
                               border: isPosted ? '1px solid #2d6a3844' : postedCount > 0 ? '1px solid #e6c98a' : '1px solid #ddd',
                             }}
-                          >{isPosted ? '✓ Posted to Sage' : `${postedCount}/7 posted`}</span>
+                          >{isPosted ? `✓ Posted — ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 · ${latestPostedLabel}` : `${postedCount}/7 posted`}</span>
                         )}
                       </td>
                       <td style={{ padding: '0.75rem', display: 'flex', gap: '0.4rem' }}>

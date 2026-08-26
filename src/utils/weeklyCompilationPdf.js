@@ -28,6 +28,14 @@ export function isWeekend(ymd) {
   return dow === 0 || dow === 6
 }
 const fmtHrs = (n) => (n ? fmtHours(n) : '')
+// Short date for a posted_at timestamp (not a plain YYYY-MM-DD like fmtShortDate
+// takes) — Niki posts different days on different days through the week, so each
+// row needs its own date, not just a single week-level one.
+function postedDayLabel(iso) {
+  const d = new Date(iso)
+  const mon = d.toLocaleDateString('en-US', { month: 'short' })
+  return `${String(d.getDate()).padStart(2, '0')}-${mon}`
+}
 
 // days: array of 7 { date: 'YYYY-MM-DD', regHours, otHours, perDiems, postedAt, postedBy },
 // Thursday first. Week-level "posted" (for the bottom stamp) only holds when every day is.
@@ -139,9 +147,9 @@ export function generateWeeklyCompilationPDF({ employeeName, days }) {
     doc.text(fmtHrs(day.otHours), colX.ot + 6, rowTop + 14)
     doc.text(day.perDiems ? String(day.perDiems) : '', colX.pd + 6, rowTop + 14)
     if (day.postedAt) {
-      doc.setFont('helvetica', 'bold')
-      doc.text('X', colX.posted + colW.posted / 2 - 3, rowTop + 14)
-      doc.setFont('helvetica', 'normal')
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+      doc.text(postedDayLabel(day.postedAt), colX.posted + 6, rowTop + 14)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10)
     }
 
     y += rowH + blankRowH
@@ -156,7 +164,8 @@ export function generateWeeklyCompilationPDF({ employeeName, days }) {
   doc.text(fmtHrs(totalReg), colX.reg + 6, totalRowTop + rowH - 6)
   doc.text(fmtHrs(totalOT), colX.ot + 6, totalRowTop + rowH - 6)
   doc.text(totalPD ? String(totalPD) : '', colX.pd + 6, totalRowTop + rowH - 6)
-  if (allPosted) doc.text('X', colX.posted + colW.posted / 2 - 3, totalRowTop + rowH - 6)
+  const postedCount = days.filter(d => !!d.postedAt).length
+  doc.text(`${postedCount}/${days.length}`, colX.posted + 6, totalRowTop + rowH - 6)
   y += rowH
 
   // ── Outer borders + column lines for the whole table ──
