@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
-import { ensureStatPay, isStatHoliday } from '../utils/statPay'
-import { isWeekend } from '../utils/weeklyCompilationPdf'
+import { ensureStatPay } from '../utils/statPay'
 import { fmtHours } from '../utils/format'
 import { looksLikeSameSupply } from '../utils/supplyMatch'
-import { effectiveDailyThreshold } from '../utils/otCalc'
 import MultiSelectDropdown from './MultiSelectDropdown'
 import PersonPicker from './PersonPicker'
 import { getAdminName } from './PasswordGate'
@@ -31,7 +29,6 @@ export default function SmsReview({ onApproved } = {}) {
   const [jobs, setJobs]               = useState([])
   const [employees, setEmployees]     = useState([])
   const [gearPhotos, setGearPhotos]   = useState([])
-  const [otThreshold, setOtThreshold] = useState(8)
   const [filter, setFilter]           = useState('submitted')
   const [filterEmployeeIds, setFilterEmployeeIds] = useState([])
   const [sortBy, setSortBy]           = useState('recent')
@@ -83,11 +80,10 @@ export default function SmsReview({ onApproved } = {}) {
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
     const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
-    const [{ data: subs }, { data: j }, { data: emps }, { data: cfg }, { data: photos }, { data: approvedDays }, { data: applied }] = await Promise.all([
+    const [{ data: subs }, { data: j }, { data: emps }, { data: photos }, { data: approvedDays }, { data: applied }] = await Promise.all([
       supabase.schema('Cores').from('sms_submissions').select('*').order('updated_at', { ascending: false }),
       supabase.schema('Cores').from('jobs').select('id, job_number, description').eq('status', 'open'),
       supabase.schema('Cores').from('employees').select('id, name, active'),
-      supabase.schema('Cores').from('payroll_config').select('key, value'),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date').gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
       supabase.schema('Cores').from('job_supplies').select('employee_id, work_date, supply_name, quantity, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
@@ -98,8 +94,6 @@ export default function SmsReview({ onApproved } = {}) {
     setGearPhotos(photos || [])
     setApprovedDaySet(new Set((approvedDays || []).map(e => `${e.employee_id}|${e.work_date}`)))
     setAppliedSupplies(applied || [])
-    const ot = (cfg || []).find(r => r.key === 'daily_ot_threshold')
-    setOtThreshold(ot ? Number(ot.value) : 8)
     if (!silent) setLoading(false)
   }, [])
 
@@ -388,13 +382,15 @@ export default function SmsReview({ onApproved } = {}) {
       stated_time_out:   sub.stated_time_out ? sub.stated_time_out.substring(0, 5) : '',
       lunch_minutes:     sub.lunch_minutes != null ? String(sub.lunch_minutes) : '',
       per_diem_location: sub.per_diem_location || '',
+      // Reg/OT are typed directly here, pre-filled from whatever's currently
+      // shown in the list (the same reg_hours/ot_hours preview) so she's
+      // adjusting real numbers she already saw, not blanks. No more "leave
+      // blank to auto-split" — see saveEdit().
       entries:           (sub.entries || []).map(e => ({
         job_number:  e.job_number || '',
-        hours:       e.hours != null ? String(e.hours) : '',
+        reg_hours:   String(e.reg_hours ?? e.hours ?? ''),
+        ot_hours:    String(e.ot_hours ?? 0),
         description: e.description || '',
-        // Only pre-fill this if she'd previously set an explicit override —
-        // otherwise it stays blank so the auto-split keeps applying.
-        ot_override: e.ot_override && e.ot_hours != null ? String(e.ot_hours) : '',
       })),
       supplies:          (sub.supplies || []).map(s => ({
         job_number:  s.job_number || '',
@@ -407,7 +403,7 @@ export default function SmsReview({ onApproved } = {}) {
   const setEntryField = (i, field, value) =>
     setEditFields(p => ({ ...p, entries: p.entries.map((e, j) => j === i ? { ...e, [field]: value } : e) }))
   const addEntryRow = () =>
-    setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', hours: '', description: '', ot_override: '' }] }))
+    setEditFields(p => ({ ...p, entries: [...p.entries, { job_number: '', reg_hours: '', ot_hours: '0', description: '' }] }))
   const removeEntryRow = (i) =>
     setEditFields(p => ({ ...p, entries: p.entries.filter((_, j) => j !== i) }))
 
@@ -418,35 +414,28 @@ export default function SmsReview({ onApproved } = {}) {
   const removeSupplyRow = (i) =>
     setEditFields(p => ({ ...p, supplies: p.supplies.filter((_, j) => j !== i) }))
 
-  // Same per-employee OT-threshold lookup AdminDashboard's computeEntryOT
-  // uses — this modal's own reg/OT preview needs to agree with what
-  // computeOTMap will actually charge once the entry is approved.
-  const employeeThresholdFor = (employeeId) => {
-    const emp = employees.find(e => e.id === employeeId)
-    return emp && (emp.ot_daily_threshold != null || emp.ot_friday_threshold != null)
-      ? { daily: emp.ot_daily_threshold, friday: emp.ot_friday_threshold }
-      : null
-  }
-
   async function saveEdit() {
-    // Drop blank rows, then re-split reg/OT the same way the edge function does
-    // — unless she's typed an explicit OT override for that entry, which wins.
+    // Drop blank rows. Reg/OT are exactly what she typed — no auto-split
+    // here at all. The auto-split assigns OT by entry ORDER (whichever
+    // consumed the daily allowance first), which is wrong whenever the boys
+    // report their day out of order (e.g. Finn texted "drove to Pictou"
+    // before "worked all day" — the drive was really the OT, since it
+    // happened after a full 8hr day, but auto-split would have charged OT
+    // to whichever entry landed second). She's not filling in a gap in the
+    // math, she's just stating the real numbers directly.
     const cleaned = editFields.entries
-      .filter(e => e.job_number.trim() || e.description.trim() || e.hours !== '')
+      .filter(e => e.job_number.trim() || e.description.trim() || e.reg_hours !== '' || e.ot_hours !== '')
       .map(e => ({
         job_number:  e.job_number.trim(),
-        hours:       Number(e.hours) || 0,
+        reg_hours:   Number(e.reg_hours) || 0,
+        ot_hours:    Number(e.ot_hours) || 0,
         description: e.description.trim(),
-        otOverride:  e.ot_override !== '' && e.ot_override != null ? Number(e.ot_override) : null,
       }))
 
     if (cleaned.some(e => !e.job_number)) { alert('Every entry needs a job number'); return }
-    if (cleaned.some(e => !(e.hours > 0))) { alert('Every entry needs hours greater than 0'); return }
+    if (cleaned.some(e => !((e.reg_hours + e.ot_hours) > 0))) { alert('Every entry needs Reg + OT hours greater than 0'); return }
     if (cleaned.some(e => !e.description)) { alert('Every entry needs a note describing what was done'); return }
-    if (cleaned.some(e => e.otOverride != null && (e.otOverride < 0 || e.otOverride > e.hours))) {
-      alert("An entry's OT override can't be negative or more than its total hours")
-      return
-    }
+    if (cleaned.some(e => e.reg_hours < 0 || e.ot_hours < 0)) { alert("Reg and OT hours can't be negative"); return }
 
     // Two entries for the same job in one day is a legitimate, common case
     // (e.g. one task on it in the morning, a different task in the
@@ -465,40 +454,10 @@ export default function SmsReview({ onApproved } = {}) {
       if (!ok) return
     }
 
-    // Seed the split with hours already in timesheet_entries for this employee/date,
-    // matching the edge function — otherwise a second submission that day gets reg
-    // hours it shouldn't
-    let alreadyWorked = 0
-    if (editFields.employee_id && editFields.work_date) {
-      const { data: existing } = await supabase.schema('Cores').from('timesheet_entries')
-        .select('hours').eq('employee_id', editFields.employee_id).eq('work_date', editFields.work_date).eq('is_stat_pay', false)
-      alreadyWorked = (existing || []).reduce((s, e) => s + Number(e.hours || 0), 0)
-    }
-    // Work on a stat holiday or weekend is all OT — no reg allowance at all
-    const statDay = editFields.work_date
-      ? (await isStatHoliday(editFields.work_date)) || isWeekend(editFields.work_date)
-      : false
-    const newHoursTotal = cleaned.reduce((s, e) => s + e.hours, 0)
-    const dailyThreshold = statDay ? otThreshold : effectiveDailyThreshold(
-      editFields.work_date, otThreshold, employeeThresholdFor(editFields.employee_id), alreadyWorked + newHoursTotal
-    )
-    let regLeft = statDay ? 0 : Math.max(0, dailyThreshold - alreadyWorked)
-    const entries = cleaned.map(({ job_number, hours: rawHours, description, otOverride }) => {
-      const hours = Math.round(rawHours * 100) / 100
-      // An explicit override skips the auto-split entirely for this entry —
-      // it's what approve() will write as the real ot_hours, not just a
-      // same-day preview. Still advances regLeft (by the *actual* reg this
-      // entry consumed) so later un-overridden entries split correctly.
-      if (otOverride != null) {
-        const ot  = Math.round(otOverride * 100) / 100
-        const reg = Math.round((hours - ot) * 100) / 100
-        regLeft   = Math.max(0, regLeft - reg)
-        return { job_number, hours, description, reg_hours: reg, ot_hours: ot, ot_override: true }
-      }
-      const reg = Math.round(Math.min(hours, Math.max(0, regLeft)) * 100) / 100
-      const ot  = Math.round((hours - reg) * 100) / 100
-      regLeft   = Math.max(0, regLeft - hours)
-      return { job_number, hours, description, reg_hours: reg, ot_hours: ot, ot_override: false }
+    const entries = cleaned.map(({ job_number, reg_hours, ot_hours, description }) => {
+      const reg = Math.round(reg_hours * 100) / 100
+      const ot  = Math.round(ot_hours * 100) / 100
+      return { job_number, hours: Math.round((reg + ot) * 100) / 100, description, reg_hours: reg, ot_hours: ot, ot_override: true }
     })
 
     const supplies = (editFields.supplies || [])
@@ -1124,8 +1083,8 @@ export default function SmsReview({ onApproved } = {}) {
               <thead>
                 <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
-                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Hours</th>
-                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 80 }} title="Leave blank to auto-split reg/OT as usual. Fill in to override how much of this entry's hours count as OT.">OT override</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 65 }}>Reg</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 65 }}>OT</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2 }}>Description</th>
                   <th style={{ width: 30 }} />
                 </tr>
@@ -1146,19 +1105,17 @@ export default function SmsReview({ onApproved } = {}) {
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
                         <input
                           type="number" min="0" step="0.25"
-                          value={e.hours}
-                          onChange={ev => setEntryField(i, 'hours', ev.target.value)}
+                          value={e.reg_hours}
+                          onChange={ev => setEntryField(i, 'reg_hours', ev.target.value)}
                           style={inp}
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
                         <input
                           type="number" min="0" step="0.25"
-                          value={e.ot_override}
-                          onChange={ev => setEntryField(i, 'ot_override', ev.target.value)}
-                          placeholder="(auto)"
-                          title="Leave blank to auto-split. Fill in to force this many of the entry's hours to count as OT."
-                          style={{ ...inp, borderColor: e.ot_override !== '' ? '#0066cc' : '#ccc' }}
+                          value={e.ot_hours}
+                          onChange={ev => setEntryField(i, 'ot_hours', ev.target.value)}
+                          style={inp}
                         />
                       </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
@@ -1192,7 +1149,7 @@ export default function SmsReview({ onApproved } = {}) {
               </div>
             )}
             <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.3rem' }}>
-              Reg/OT split and out-time are recalculated automatically on save.
+              Reg and OT are exactly what's typed above — out-time is still recalculated automatically on save.
             </div>
 
             <label style={lbl}>Supplies Used</label>
