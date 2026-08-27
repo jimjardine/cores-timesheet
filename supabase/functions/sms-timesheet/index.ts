@@ -1489,10 +1489,17 @@ Deno.serve(async (req: Request) => {
         r = `Open jobs by boat:\n\n${lines}\n\nText JOBS + boat for details.`
       }
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
-    } else {
-      const r = vesselFilter ? `No open jobs found for ${vesselFilter}.` : 'No open jobs right now.'
+    } else if (!vesselFilter) {
+      // Bare "jobs" with genuinely nothing open — a real, valid answer.
+      const r = 'No open jobs right now.'
       return isTwilio ? twiML(r) : jsonReply({ reply: r })
     }
+    // vesselFilter matched no real vessel — the digit-prefix guard above only
+    // catches "jobs 4926...", not every phrasing a report could start with
+    // ("Jobs done today, 4760 6hrs...", a typo'd "jobs shop 6hrs..."). Rather
+    // than keep enumerating patterns, treat a non-match as proof this was
+    // never really a JOBS command and let it fall through to Claude instead
+    // of terminating the conversation with "No open jobs found for ...".
   }
 
   // ── Reply to a pending manual-entry confirmation ──
