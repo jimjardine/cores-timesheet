@@ -205,6 +205,17 @@ await scenario('plural jobs report not hijacked by JOBS list command', phone(45)
   ['This is Test. Jobs 4760 6hrs engine work', ['4760: 6hrs', { absent: 'No open jobs found' }]],
 ])
 
+// 2c. Same risk, non-numeric phrasing — the digit-prefix guard above only
+// catches a job number right after "jobs ". A report that starts with
+// "jobs " but not a digit ("Jobs done today, ...") would still hit the
+// vessel-filter path, match nothing, and used to terminate right there.
+// Falling through on no vessel match instead of replying "No open jobs
+// found" is what actually closes this off, not the digit guard.
+await cleanupTestTech()
+await scenario('non-numeric jobs phrasing not hijacked either', phone(46), [
+  ['This is Test. Jobs done today, 4760 6hrs engine work', ['4760: 6hrs', { absent: 'No open jobs found' }]],
+])
+
 // 2b. MOBILE and APP both return the mobile site link
 await scenario('mobile link', phone(39), [
   ['mobile', ['jimjardine.github.io/cores-timesheet']],
