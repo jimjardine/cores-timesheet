@@ -1411,8 +1411,18 @@ Deno.serve(async (req: Request) => {
     // unclassified for a manual sweep in the Gear Photos tab.
     const LOW_STOCK_RE = /\b(last (one|can|box|roll|tube|bottle|pair|bag|couple)|running low|almost out|getting low|down to (the )?last)\b/i
     const isLowStockCaption = LOW_STOCK_RE.test(msgBody)
+    // Same idea, same reasoning as the low-stock check — a caption that opens
+    // with "supply"/"supplies"/"parts" (same trigger words as the text-report
+    // parser, minus the Claude call) is an unambiguous enough signal to
+    // auto-tag on its own. Without this, a photo captioned "Supplies: 3
+    // disks" saved with photo_type null — invisible under the Supplies filter
+    // and never turned into a real job_supplies line — until an admin
+    // happened to notice it sitting untagged and fixed it by hand. Confirmed
+    // in production: Nicolae Ileshov, 2026-08-27.
+    const SUPPLY_CAPTION_RE = /^\s*(supplies?|parts?)\b/i
+    const isSupplyCaption = SUPPLY_CAPTION_RE.test(msgBody)
     const saved = await Promise.all(
-      mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId, note, isLowStockCaption ? 'supply' : null))
+      mediaUrls.map(url => savePhotoToStorage(supabase, url, employeeId, fromPhone, today, photoContext, jobId, note, (isLowStockCaption || isSupplyCaption) ? 'supply' : null))
     )
 
     const firstName = (employeeName || '').split(' ')[0] || ''
