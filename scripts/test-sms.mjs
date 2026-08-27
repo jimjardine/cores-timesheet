@@ -589,6 +589,17 @@ await scenario('photo low stock caption', phone(38), [
   ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
   ['last one! 4760', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
 ])
+
+// 33b. A "Supplies: ..." caption must not break the normal reply either —
+// same deterministic auto-tag as the low-stock check, just a different
+// trigger word. This reply-level check can't see photo_type itself (that's
+// verified separately against gear_photos), but it guards the visible
+// behavior: the photo still gets logged to the right job.
+await cleanupTestTech()
+await scenario('photo supplies caption', phone(47), [
+  ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
+  ['Supplies: 3 disks', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
+])
 // Nothing runs cleanupTestTech() after the last scenario otherwise, so its
 // gear-photos upload would sit in the bucket until the next full run starts.
 // Skipped on failure so a broken run's data stays put for debugging, same as
