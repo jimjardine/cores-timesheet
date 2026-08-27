@@ -35,8 +35,7 @@ export default function EmployeeApp() {
       </header>
       <Routes>
         <Route index element={<EmployeeHome employee={session} />} />
-        <Route path="entry/new" element={<EntryForm employee={session} mode="new" />} />
-        <Route path="entry/:entryId/edit" element={<EntryForm employee={session} mode="edit" />} />
+        <Route path="entry/new" element={<EntryForm employee={session} />} />
         <Route path="pending/:subId/edit" element={<PendingEntryEdit employee={session} />} />
         <Route path="*" element={<Navigate to="." replace />} />
       </Routes>

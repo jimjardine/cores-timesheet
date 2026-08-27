@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
-import { ensureStatPay, cleanupStatPay } from '../utils/statPay'
-import { replaceSupplies, fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
+import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import JobPicker from './JobPicker'
 import MediaThumb from '../components/MediaThumb'
 import './employee.css'
@@ -13,34 +12,28 @@ const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl
 const blankJobLine = () => ({ job_id: '', hours: '', description: '' })
 const blankSupplyLine = () => ({ job_id: '', supply_name: '', quantity: 1 })
 
-export default function EntryForm({ employee, mode }) {
+// Logs a brand-new day — multiple jobs, photos, supplies — lands in
+// sms_submissions for office review, same as a texted-in day. Used to also
+// handle editing an already-created entry_source='self' entry directly in
+// timesheet_entries, but that path (and the entries it edited) no longer
+// exists: mobile-created entries have gone through SMS Review since
+// 2026-08-17, and the last of the pre-that-date self-entries were converted
+// to entry_source='sms' on 2026-08-27 (todo #app-conversation-log).
+export default function EntryForm({ employee }) {
   const navigate = useNavigate()
-  const { entryId } = useParams()
   const [jobs, setJobs] = useState([])
-  const [loading, setLoading] = useState(mode === 'edit')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  // ── New-day fields (multi-job) ──
   const [workDate, setWorkDate] = useState(toYMD(new Date()))
   const [timeIn, setTimeIn] = useState('07:00')
   const [timeOut, setTimeOut] = useState('15:30')
   const [lunchMinutes, setLunchMinutes] = useState(30)
-  // Numeric multiplier — used only in edit mode, for legacy entry_source='self'
-  // rows that still carry timesheet_entries.per_diem directly (see saveEdit).
-  const [perDiem, setPerDiem] = useState(0)
-  // Free text — used in new-day mode, matches sms_submissions.per_diem_location
-  // (same shape a texted-in day uses; see saveNewDay/PendingEntryEdit.jsx).
+  // Matches sms_submissions.per_diem_location (same shape a texted-in day
+  // uses; see saveNewDay/PendingEntryEdit.jsx).
   const [perDiemLocation, setPerDiemLocation] = useState('')
   const [jobLines, setJobLines] = useState([blankJobLine()])
   const [supplyLines, setSupplyLines] = useState([blankSupplyLine()])
-
-  // ── Edit-single-entry fields ──
-  const [originalEntry, setOriginalEntry] = useState(null)
-  const [editJobId, setEditJobId] = useState('')
-  const [editHours, setEditHours] = useState('')
-  const [editDescription, setEditDescription] = useState('')
 
   // ── Photos (day-scoped, same gear-photos bucket the day-card upload uses) ──
   const [photos, setPhotos] = useState([])
@@ -60,38 +53,6 @@ export default function EntryForm({ employee, mode }) {
   // Photos are day-scoped (not tied to a single job line), same as the
   // day-card's own upload — re-fetch whenever the date this entry is for changes.
   useEffect(() => { loadPhotos() }, [employee.id, workDate])
-
-  useEffect(() => {
-    if (mode !== 'edit') return
-    let cancelled = false
-    async function loadEntry() {
-      setLoading(true)
-      const { data: entry } = await supabase.schema('Cores').from('timesheet_entries')
-        .select('*').eq('id', entryId).eq('employee_id', employee.id).single()
-      if (cancelled) return
-      if (!entry) { setError('Entry not found'); setLoading(false); return }
-      if (entry.entry_source !== 'self') { setError('locked'); setOriginalEntry(entry); setLoading(false); return }
-      setOriginalEntry(entry)
-      setWorkDate(entry.work_date)
-      setEditJobId(entry.job_id || '')
-      setEditHours(String(entry.hours ?? ''))
-      setEditDescription(entry.description || '')
-      setTimeIn(entry.time_in ? entry.time_in.substring(0, 5) : '')
-      setTimeOut(entry.stated_time_out ? entry.stated_time_out.substring(0, 5) : '')
-      setLunchMinutes(entry.lunch_minutes ?? '')
-      setPerDiem(entry.per_diem ?? 0)
-
-      // Applied only — a still-drafting GearPhotos line isn't part of what this
-      // editor manages, and replaceSupplies() (on Save) never touches it anyway.
-      const { data: sup } = await supabase.schema('Cores').from('job_supplies')
-        .select('job_id, supply_name, quantity').eq('employee_id', employee.id).eq('work_date', entry.work_date)
-        .not('applied_at', 'is', null)
-      setSupplyLines(sup && sup.length > 0 ? sup : [blankSupplyLine()])
-      setLoading(false)
-    }
-    loadEntry()
-    return () => { cancelled = true }
-  }, [mode, entryId, employee.id])
 
   function updateJobLine(i, patch) {
     setJobLines(lines => lines.map((l, idx) => idx === i ? { ...l, ...patch } : l))
@@ -133,11 +94,11 @@ export default function EntryForm({ employee, mode }) {
     const totalHours = entries.reduce((s, e) => s + e.hours, 0)
     const { calculated_time_out, delta_minutes } = computeSubmissionTiming(timeIn, timeOut, lunchMinutes, totalHours)
 
-    // Same gap as EmployeeHome's autosave — an app-logged day had nothing in
-    // raw_messages at all, so it showed no "Conversation" in SMS Review the
-    // way a texted-in day does. One snapshot line at creation time here,
-    // since this is a single create (not an autosave loop needing the
-    // session-close handling EmployeeHome.jsx uses).
+    // A texted-in day keeps its full back-and-forth in raw_messages, rendered
+    // as "Conversation" in SMS Review — an app-logged day had nothing there
+    // at all. One snapshot line at creation time here, since this is a
+    // single create (not an autosave loop needing the session-close
+    // handling EmployeeHome.jsx's equivalent uses).
     const summaryParts = [`In ${timeIn || '—'}`, `Out ${timeOut || '—'}`, `Lunch ${lunchMinutes === '' ? 0 : lunchMinutes}min`]
     if (perDiemLocation.trim()) summaryParts.push(`PD: ${perDiemLocation.trim()}`)
     for (const e of entries) summaryParts.push(`Job# ${e.job_number}: ${e.hours}hrs${e.description ? ' — ' + e.description : ''}`)
@@ -153,32 +114,6 @@ export default function EntryForm({ employee, mode }) {
     })
     if (insertError) { setError(insertError.message); setSaving(false); return }
 
-    setSaving(false)
-    navigate('..')
-  }
-
-  async function saveEdit() {
-    const hours = Number(editHours)
-    if (!editJobId || editHours === '' || hours < 0) { setError('Pick a job and enter hours (0 is fine)'); return }
-    if (!editDescription.trim()) { setError('Add a note describing what was done'); return }
-    setSaving(true); setError('')
-
-    // ot_hours left null — computeOTMap derives reg/OT at display/export
-    // time instead. See entrySave.js.
-    const { error: updateError } = await supabase.schema('Cores').from('timesheet_entries').update({
-      job_id: editJobId, work_date: workDate,
-      hours, ot_hours: null, description: editDescription,
-      per_diem: Number(perDiem) || 0,
-      time_in: timeIn || null, stated_time_out: timeOut || null,
-      lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),
-    }).eq('id', originalEntry.id).eq('employee_id', employee.id)
-    if (updateError) { setError(updateError.message); setSaving(false); return }
-
-    const { error: supplyError } = await replaceSupplies(supabase, employee.id, workDate, supplyLines)
-    if (supplyError) { setError(supplyError.message); setSaving(false); return }
-
-    await ensureStatPay(employee.id, workDate)
-    if (originalEntry.work_date !== workDate) await cleanupStatPay(employee.id, originalEntry.work_date)
     setSaving(false)
     navigate('..')
   }
@@ -202,34 +137,6 @@ export default function EntryForm({ employee, mode }) {
     setUploadingPhoto(false)
     setShowPhotoUpload(false)
     setPhotoJobId('')
-  }
-
-  async function deleteThisEntry() {
-    setSaving(true)
-    const { error: delError } = await supabase.schema('Cores').from('timesheet_entries')
-      .delete().eq('id', originalEntry.id).eq('employee_id', employee.id)
-    if (delError) { setError(delError.message); setSaving(false); return }
-    // Applied only — a still-drafting GearPhotos line for this job/day isn't
-    // tied to this entry's existence and must survive the entry being deleted.
-    await supabase.schema('Cores').from('job_supplies').delete()
-      .eq('employee_id', employee.id).eq('job_id', originalEntry.job_id).eq('work_date', originalEntry.work_date)
-      .not('applied_at', 'is', null)
-    await cleanupStatPay(employee.id, originalEntry.work_date)
-    setSaving(false)
-    navigate('..')
-  }
-
-  if (loading) return <div className="emp-main"><div className="emp-empty">Loading…</div></div>
-
-  if (error === 'locked') {
-    return (
-      <div className="emp-main">
-        <a className="emp-back-link" onClick={() => navigate('..')}>‹ Back</a>
-        <div className="emp-card">
-          <div className="emp-empty">🔒 This entry has been approved — the office will need to make any changes now.</div>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -261,53 +168,30 @@ export default function EntryForm({ employee, mode }) {
           </div>
           <div className="emp-field">
             <label>Per diem</label>
-            {mode === 'new' ? (
-              <input type="text" placeholder='"none" or hotel name' value={perDiemLocation} onChange={e => setPerDiemLocation(e.target.value)} />
-            ) : (
-              <select value={perDiem} onChange={e => setPerDiem(e.target.value)}>
-                <option value={0}>None</option>
-                <option value={1}>×1</option>
-                <option value={2}>×2</option>
-              </select>
-            )}
+            <input type="text" placeholder='"none" or hotel name' value={perDiemLocation} onChange={e => setPerDiemLocation(e.target.value)} />
           </div>
         </div>
 
-        {mode === 'new' ? (
-          <>
-            {jobLines.map((line, i) => (
-              <div className="emp-job-line" key={i}>
-                {jobLines.length > 1 && (
-                  <button className="emp-remove-line" onClick={() => setJobLines(l => l.filter((_, idx) => idx !== i))}>Remove</button>
-                )}
-                <div className="emp-field">
-                  <label>Job</label>
-                  <JobPicker jobs={jobs} value={line.job_id} onChange={(job) => updateJobLine(i, { job_id: job.id })} />
-                </div>
-                <div className="emp-field">
-                  <label>Hours</label>
-                  <input type="number" step="0.25" min="0" value={line.hours} onChange={e => updateJobLine(i, { hours: e.target.value })} />
-                </div>
-                <div className="emp-field">
-                  <label>Notes</label>
-                  <textarea rows={2} value={line.description} onChange={e => updateJobLine(i, { description: e.target.value })} />
-                </div>
-              </div>
-            ))}
-            <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => setJobLines(l => [...l, blankJobLine()])}>+ Add another job</button>
-          </>
-        ) : (
-          <div className="emp-field">
-            <label>Job</label>
-            <JobPicker jobs={jobs} value={editJobId} onChange={(job) => setEditJobId(job.id)} />
-            <div style={{ height: '0.6rem' }} />
-            <label>Hours</label>
-            <input type="number" step="0.25" min="0" value={editHours} onChange={e => setEditHours(e.target.value)} />
-            <div style={{ height: '0.6rem' }} />
-            <label>Notes</label>
-            <textarea rows={2} value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+        {jobLines.map((line, i) => (
+          <div className="emp-job-line" key={i}>
+            {jobLines.length > 1 && (
+              <button className="emp-remove-line" onClick={() => setJobLines(l => l.filter((_, idx) => idx !== i))}>Remove</button>
+            )}
+            <div className="emp-field">
+              <label>Job</label>
+              <JobPicker jobs={jobs} value={line.job_id} onChange={(job) => updateJobLine(i, { job_id: job.id })} />
+            </div>
+            <div className="emp-field">
+              <label>Hours</label>
+              <input type="number" step="0.25" min="0" value={line.hours} onChange={e => updateJobLine(i, { hours: e.target.value })} />
+            </div>
+            <div className="emp-field">
+              <label>Notes</label>
+              <textarea rows={2} value={line.description} onChange={e => updateJobLine(i, { description: e.target.value })} />
+            </div>
           </div>
-        )}
+        ))}
+        <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => setJobLines(l => [...l, blankJobLine()])}>+ Add another job</button>
 
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#444' }}>Photos</label>
@@ -321,7 +205,7 @@ export default function EntryForm({ employee, mode }) {
           )}
           {!showPhotoUpload ? (
             <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginTop: '0.5rem' }}
-              onClick={() => { setShowPhotoUpload(true); setPhotoJobId(mode === 'edit' ? editJobId : ''); setError('') }}>+ Photo</button>
+              onClick={() => { setShowPhotoUpload(true); setPhotoJobId(''); setError('') }}>+ Photo</button>
           ) : (
             <div style={{ marginTop: '0.5rem' }}>
               <div className="emp-field">
@@ -363,19 +247,9 @@ export default function EntryForm({ employee, mode }) {
         </div>
 
         <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          <button className="emp-btn" disabled={saving} onClick={mode === 'new' ? saveNewDay : saveEdit}>
+          <button className="emp-btn" disabled={saving} onClick={saveNewDay}>
             {saving ? 'Saving…' : 'Save'}
           </button>
-          {mode === 'edit' && (confirmDelete ? (
-            <div style={{ textAlign: 'center', fontSize: '0.9rem' }}>
-              Delete this entry?{' '}
-              <button className="emp-inline-link" style={{ color: '#c0392b' }} disabled={saving} onClick={deleteThisEntry}>Yes, delete</button>
-              {' / '}
-              <button className="emp-inline-link" onClick={() => setConfirmDelete(false)}>Cancel</button>
-            </div>
-          ) : (
-            <button className="emp-btn emp-btn-danger" disabled={saving} onClick={() => setConfirmDelete(true)}>Delete this entry</button>
-          ))}
         </div>
       </div>
     </div>
