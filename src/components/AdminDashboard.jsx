@@ -1731,12 +1731,10 @@ export default function AdminDashboard() {
                     style={{ padding: '0.45rem 1rem', background: printingAll ? '#99b8d9' : '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: printingAll ? 'default' : 'pointer', fontSize: '0.9rem' }}>
                     {printingAll ? `Printing ${printAllProgress?.done ?? 0}/${printAllProgress?.total ?? 0}…` : `Print All PDFs (${timesheetRows.length})`}
                   </button>
-                  {selectedRows.size > 0 && (
-                    <button onClick={batchPostSelected} disabled={batchPosting}
-                      style={{ padding: '0.45rem 1rem', background: batchPosting ? '#9dbfa0' : '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: batchPosting ? 'default' : 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
-                      {batchPosting ? 'Posting…' : `Post to Sage (${selectedRows.size})`}
-                    </button>
-                  )}
+                  <button onClick={batchPostSelected} disabled={batchPosting || selectedRows.size === 0}
+                    style={{ padding: '0.45rem 1rem', background: (batchPosting || selectedRows.size === 0) ? '#9dbfa0' : '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: (batchPosting || selectedRows.size === 0) ? 'default' : 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                    {batchPosting ? 'Posting…' : `Batch Post to Sage (${selectedRows.size})`}
+                  </button>
                 </div>
               </div>
 
