@@ -240,7 +240,12 @@ export default function SmsReview({ onApproved } = {}) {
       await load(); setActing(null); return
     }
 
-    const hasPD = sub.per_diem_location && sub.per_diem_location !== 'none'
+    // Case-insensitive: Claude is told to return lowercase "none" but
+    // occasionally capitalizes it like normal English ("None"), which an
+    // exact-match check treats as a real location — silently granting per
+    // diem nobody claimed. Confirmed in production against Wade Kenney's
+    // and Finn Jones's submissions (2026-08-27).
+    const hasPD = sub.per_diem_location && sub.per_diem_location.trim().toLowerCase() !== 'none'
 
     // Map job numbers to IDs — case-insensitive so "shop"/"Shop"/"SHOP" all match
     const jobMap = {}
@@ -716,7 +721,7 @@ export default function SmsReview({ onApproved } = {}) {
                       <strong>Δ:</strong> {(() => { const h = deltaMinsToHours(sub.delta_minutes); return `${h > 0 ? '+' : ''}${fmtHours(h)}hrs` })()}
                     </span>
                   )}
-                  <span><strong>Per diem:</strong> {sub.per_diem_location && sub.per_diem_location !== 'none' ? sub.per_diem_location : 'No'}</span>
+                  <span><strong>Per diem:</strong> {sub.per_diem_location && sub.per_diem_location.trim().toLowerCase() !== 'none' ? sub.per_diem_location : 'No'}</span>
                   <span style={{ color: '#999', marginLeft: 'auto' }}>{sub.from_phone}</span>
                 </div>
 
