@@ -542,8 +542,14 @@ export default function EmployeeHome({ employee }) {
               // duplicate: it reads as "you haven't logged today" even though
               // the locked entries right below it say otherwise. A muted hint
               // instead, same tone as the pending-shift one above.
-              <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
-                {`Already logged${dayEntries[0]?.time_in ? ` — In ${fmtTimeShort(dayEntries[0].time_in)} · Out ${dayEntries[0].stated_time_out ? fmtTimeShort(dayEntries[0].stated_time_out) : '—'}` : ''} (tap to add another job)`}
+              //
+              // Not tappable — once a day's approved, the crew can view it
+              // (the entries render right below, already expanded) but not
+              // add to or modify it. Reported by Jim, 2026-08-27: tapping
+              // this let anyone reopen an approved day and add another job
+              // to it after the fact.
+              <div className="emp-hint" style={{ marginBottom: '0.6rem' }}>
+                {`Already logged${dayEntries[0]?.time_in ? ` — In ${fmtTimeShort(dayEntries[0].time_in)} · Out ${dayEntries[0].stated_time_out ? fmtTimeShort(dayEntries[0].stated_time_out) : '—'}` : ''}`}
               </div>
             ) : (
               // A gray "tap to..." hint line reads as informational text, not
