@@ -81,7 +81,7 @@ async function deleteGearPhotosStorage(rows) {
   // Storage objects have to go before their gear_photos rows — nothing else
   // ever points at a leftover file once the row's gone, so it'd just sit in
   // the bucket forever with no way to find it again.
-  for (const row of rows) {
+  for (const row of Array.isArray(rows) ? rows : []) {
     await fetch(`${SUPABASE_URL}/storage/v1/object/gear-photos/${row.storage_path}`, {
       method: 'DELETE',
       headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
@@ -105,7 +105,7 @@ async function cleanupTestTech() {
   // behind for good.
   const photosRes = await fetch(
     `${SUPABASE_URL}/rest/v1/gear_photos?employee_id=eq.${TEST_TECH_ID}&select=storage_path`,
-    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Accept-Profile': 'Cores' } }
   )
   await deleteGearPhotosStorage(await photosRes.json().catch(() => []))
   await fetch(
@@ -120,7 +120,7 @@ async function cleanupPhone(fromPhone) {
   // Same shape: gear_photos + its storage file, then the submission itself.
   const photosRes = await fetch(
     `${SUPABASE_URL}/rest/v1/gear_photos?from_phone=eq.${fromPhone}&select=storage_path`,
-    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Accept-Profile': 'Cores' } }
   )
   await deleteGearPhotosStorage(await photosRes.json().catch(() => []))
   await fetch(
