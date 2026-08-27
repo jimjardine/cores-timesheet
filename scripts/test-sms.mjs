@@ -339,6 +339,17 @@ await scenario('midnight out time warning', phone(42), [
   ['ts', ['after midnight']],
 ])
 
+// 18d. Same-message variant of 18b/18c: a tech states explicit hours AND full
+// time bounds together in one message and the two disagree (e.g. "6hrs" but
+// in/out works out to 8hrs). Bounds still win (matches "all day inference"
+// above), but now flags the mismatch to the office instead of silently
+// swallowing it — the original 2026-08-08 review concern, closed 2026-08-27.
+await cleanupTestTech()
+await scenario('same-message hours/bounds mismatch flagged', phone(43), [
+  ['This is Test. 4760 6hrs pump, in 7, out 3:30, lunch 30', ['said 6hrs', '8hrs']],
+  ['ts', ['4760: 8hrs']],
+])
+
 // 19. Supplies mixed into an hours text are captured (visible in TS view)
 await cleanupTestTech()
 await scenario('supplies inline', phone(19), [
