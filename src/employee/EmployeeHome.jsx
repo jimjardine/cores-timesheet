@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
-import { payWeekRange, cleanupStatPay } from '../utils/statPay'
+import { payWeekRange } from '../utils/statPay'
 import { computeOTMap } from '../utils/otCalc'
 import { fmtHours } from '../utils/format'
 import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
@@ -65,7 +65,6 @@ export default function EmployeeHome({ employee }) {
   const [photoJobId, setPhotoJobId] = useState('')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [error, setError] = useState('')
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   const weekEnd = addDays(weekStart, 6)
 
@@ -369,20 +368,6 @@ export default function EmployeeHome({ employee }) {
     setNoteDraft('')
   }
 
-  async function deleteEntry(entry) {
-    if (entry.entry_source !== 'self') { setError('This entry has been approved and can only be changed by the office.'); setConfirmDeleteId(null); return }
-    const { error: err } = await supabase.schema('Cores').from('timesheet_entries').delete().eq('id', entry.id).eq('employee_id', employee.id)
-    if (err) { setError(err.message); setConfirmDeleteId(null); return }
-    // Applied only — a still-drafting GearPhotos line for this job/day isn't
-    // tied to this entry's existence and must survive the entry being deleted.
-    await supabase.schema('Cores').from('job_supplies').delete()
-      .eq('employee_id', entry.employee_id).eq('job_id', entry.job_id).eq('work_date', entry.work_date)
-      .not('applied_at', 'is', null)
-    await cleanupStatPay(entry.employee_id, entry.work_date)
-    setConfirmDeleteId(null)
-    await load({ silent: true })
-  }
-
   // Running total for the visible week — everything reported so far, whether
   // it's already approved or still sitting as a draft/texted-in submission
   // awaiting review, since a tech checking this wants "how much have I put
@@ -605,14 +590,16 @@ export default function EmployeeHome({ employee }) {
 
             {dayEntries.map((e) => {
               const ot = otMap[e.id]?.ot || 0
-              // Approved (or office-entered) hours are locked once they've been
-              // reviewed — only entries a tech added themselves can be reopened.
-              const locked = e.entry_source !== 'self'
+              // Every entry here traces back through SMS Review approval —
+              // entry_source='self' (a tech's own entry, reopenable straight
+              // from this row) hasn't existed since 2026-08-17, and the last
+              // of the pre-that-date rows were converted on 2026-08-27. So
+              // this is always a locked, view-only row now.
               return (
-                <div className="emp-job-row" key={e.id} onClick={locked ? undefined : () => navigate(`entry/${e.id}/edit`)} style={locked ? { cursor: 'default' } : undefined}>
+                <div className="emp-job-row" key={e.id} style={{ cursor: 'default' }}>
                   <div className="emp-job-info">
                     <div className="emp-job-number">
-                      {locked && <span title="Approved — office only" style={{ marginRight: '0.3rem' }}>🔒</span>}
+                      <span title="Approved — office only" style={{ marginRight: '0.3rem' }}>🔒</span>
                       {e.jobs?.job_number || (e.is_stat_pay ? 'Stat pay' : '—')}
                       {ot > 0 && <span className="emp-chip emp-chip-ot">OT {fmtHours(ot)}</span>}
                     </div>
@@ -701,21 +688,6 @@ export default function EmployeeHome({ employee }) {
                 onClick={() => { setNoteFor(ymd); setNoteDraft(''); setError('') }}>Add a note (not a job)</button>
             )}
 
-            {dayEntries.some(e => e.entry_source === 'self') && (
-              <div style={{ marginTop: '0.5rem' }}>
-                {dayEntries.filter(e => e.entry_source === 'self').map(e => confirmDeleteId === e.id ? (
-                  <span key={e.id} style={{ marginRight: '1rem', fontSize: '0.8rem' }}>
-                    Delete {e.jobs?.job_number || 'entry'}?{' '}
-                    <button className="emp-inline-link" style={{ color: '#c0392b' }} onClick={() => deleteEntry(e)}>Yes</button>
-                    {' / '}
-                    <button className="emp-inline-link" onClick={() => setConfirmDeleteId(null)}>No</button>
-                  </span>
-                ) : (
-                  <button key={e.id} className="emp-inline-link" style={{ marginRight: '1rem', fontSize: '0.8rem' }}
-                    onClick={() => setConfirmDeleteId(e.id)}>Delete {e.jobs?.job_number || 'entry'}</button>
-                ))}
-              </div>
-            )}
           </div>
         )
       })}
