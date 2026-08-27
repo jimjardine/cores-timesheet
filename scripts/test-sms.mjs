@@ -77,6 +77,18 @@ function friendlyDate(dstr) {
 
 const TEST_TECH_ID = 'e3044c0c-9628-46e0-9837-2526240b63c3'
 
+async function deleteGearPhotosStorage(rows) {
+  // Storage objects have to go before their gear_photos rows — nothing else
+  // ever points at a leftover file once the row's gone, so it'd just sit in
+  // the bucket forever with no way to find it again.
+  for (const row of rows) {
+    await fetch(`${SUPABASE_URL}/storage/v1/object/gear-photos/${row.storage_path}`, {
+      method: 'DELETE',
+      headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
+    })
+  }
+}
+
 async function cleanupTestTech() {
   // Delete ALL of Test Tech's submissions regardless of date.
   // Without this, "This is Test" in scenario N finds the submission from scenario N-1
@@ -84,6 +96,39 @@ async function cleanupTestTech() {
   // expression as a future date rather than today.
   await fetch(
     `${SUPABASE_URL}/rest/v1/sms_submissions?employee_id=eq.${TEST_TECH_ID}`,
+    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
+  // The photo scenarios self-identify as "This is Test" over a phone that isn't
+  // Test Tech's own, but the photo still gets a real Supabase Storage upload and
+  // a gear_photos row tagged with Test Tech's employee_id — this table was never
+  // included in the cleanup above, so every run left a real file in the bucket
+  // behind for good.
+  const photosRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/gear_photos?employee_id=eq.${TEST_TECH_ID}&select=storage_path`,
+    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
+  await deleteGearPhotosStorage(await photosRes.json().catch(() => []))
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/gear_photos?employee_id=eq.${TEST_TECH_ID}`,
+    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
+}
+
+async function cleanupPhone(fromPhone) {
+  // For scenarios that deliberately hit the "unrecognized number" path — no
+  // employee_id to key on, so cleanupTestTech() above doesn't reach these.
+  // Same shape: gear_photos + its storage file, then the submission itself.
+  const photosRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/gear_photos?from_phone=eq.${fromPhone}&select=storage_path`,
+    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
+  await deleteGearPhotosStorage(await photosRes.json().catch(() => []))
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/gear_photos?from_phone=eq.${fromPhone}`,
+    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/sms_submissions?from_phone=eq.${fromPhone}`,
     { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
   )
 }
@@ -138,6 +183,12 @@ const NO_NAG = [{ absent: 'lunch?' }, { absent: 'per diem tonight' }, { absent: 
 await scenario('unknown number', phone(1), [
   ['4760 6hrs engine work', ['office will match']],
 ])
+// Deliberately has no employee match, so it's not Test Tech's row — nothing
+// else ever picks it up. Left uncleaned, the office finds it sitting in SMS
+// Review flagged "employee unknown" and has to reject it as test data by hand.
+// Skipped on failure, same as the end-of-run cleanup below, so a broken
+// scenario's data stays put for debugging.
+if (failed === 0) await cleanupPhone(phone(1))
 
 // 2. HELP reply returns the help text
 await scenario('help request', phone(2), [
@@ -517,6 +568,11 @@ await scenario('photo low stock caption', phone(38), [
   ['This is Test. 4760 2hrs pump seals', ['4760: 2hrs']],
   ['last one! 4760', ['Got the photo', 'logged to 4760'], [TEST_IMAGE]],
 ])
+// Nothing runs cleanupTestTech() after the last scenario otherwise, so its
+// gear-photos upload would sit in the bucket until the next full run starts.
+// Skipped on failure so a broken run's data stays put for debugging, same as
+// the note below.
+if (failed === 0) await cleanupTestTech()
 
 // ── summary ────────────────────────────────────────────────────────────────
 
