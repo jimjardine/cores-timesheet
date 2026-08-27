@@ -2219,6 +2219,8 @@ export default function AdminDashboard() {
           return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies, days }
         }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
 
+        const postedRows = weekData.filter(row => row.emp && row.days.every(d => d.postedAt))
+
         return (
           <div>
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2245,7 +2247,6 @@ export default function AdminDashboard() {
                 >Print All Weekly PDFs</button>
               )}
               {(() => {
-                const postedRows = weekData.filter(row => row.emp && row.days.every(d => d.postedAt))
                 return (
                   <button
                     onClick={async () => {
@@ -2268,10 +2269,21 @@ export default function AdminDashboard() {
                       background: (printingAllPosted || postedRows.length === 0) ? '#9dbfa0' : '#2d6a38',
                       cursor: (printingAllPosted || postedRows.length === 0) ? 'not-allowed' : 'pointer',
                     }}
-                  >{printingAllPosted ? `Printing ${printAllPostedProgress?.done ?? 0}/${printAllPostedProgress?.total ?? 0}…` : `Print All Posted to Sage (${postedRows.length})`}</button>
+                  >{printingAllPosted ? `Printing ${printAllPostedProgress?.done ?? 0}/${printAllPostedProgress?.total ?? 0}…` : `Print Fully-Posted Weeks (${postedRows.length})`}</button>
                 )
               })()}
             </div>
+
+            {(() => {
+              // Spelled out here instead of only living in the button's title
+              // tooltip — a "(0)" nobody can explain without hovering reads as
+              // broken, not as "nobody's fully posted yet."
+              return postedRows.length === 0 && weekData.length > 0 ? (
+                <div style={{ marginTop: '-1rem', marginBottom: '1.5rem', fontSize: '0.85rem', color: '#888' }}>
+                  "Print Fully-Posted Weeks" only counts an employee once all 7 days of their week are posted to Sage — nobody qualifies yet this week.
+                </div>
+              ) : null
+            })()}
 
             {weekData.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No entries for this week</div>
@@ -2337,7 +2349,7 @@ export default function AdminDashboard() {
                                   if (e.target.checked) next.add(row.emp.id); else next.delete(row.emp.id)
                                   return next
                                 })} />
-                              + posted days
+                              + daily PDFs too
                             </label>
                           </>
                         )}
