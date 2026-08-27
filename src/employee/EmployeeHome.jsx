@@ -166,7 +166,44 @@ export default function EmployeeHome({ employee }) {
     setError('')
   }
 
+  // A texted-in day keeps a full back-and-forth in raw_messages, rendered as
+  // "Conversation" in SMS Review — an app-logged day had nothing there at
+  // all, since autosave only ever overwrites the current entries/time_in/etc.
+  // in place. This appends one summary line to that same array whenever an
+  // editing session ends, so the office gets a timeline instead of silence.
+  // Not on every autosave tick (that fires per field blur — logging each one
+  // would flood the conversation with near-duplicate lines); one snapshot
+  // per open-to-close session instead. Skipped if nothing changed since the
+  // last snapshot, so reopening a day just to look and closing it again
+  // doesn't repeat itself.
+  async function logActivitySnapshot(ymd) {
+    const id = daySubIdsRef.current[ymd]
+    if (!id) return
+    const { data: sub } = await supabase.schema('Cores').from('sms_submissions')
+      .select('time_in, stated_time_out, lunch_minutes, per_diem_location, entries, raw_messages, status')
+      .eq('id', id).single()
+    if (!sub) return
+
+    const parts = []
+    if (sub.time_in) parts.push(`In ${fmtTimeShort(sub.time_in)}`)
+    if (sub.stated_time_out) parts.push(`Out ${fmtTimeShort(sub.stated_time_out)}`)
+    if (sub.lunch_minutes != null) parts.push(`Lunch ${sub.lunch_minutes}min`)
+    if (sub.per_diem_location && sub.per_diem_location !== 'none') parts.push(`PD: ${sub.per_diem_location}`)
+    for (const e of sub.entries || []) parts.push(`Job# ${e.job_number}: ${e.hours}hrs${e.description ? ' — ' + e.description : ''}`)
+    if (parts.length === 0) return // nothing worth a snapshot
+
+    const label = sub.status === 'submitted' ? 'Submitted via app' : 'Saved via app'
+    const text = `${label}: ${parts.join(' · ')}`
+    const existing = sub.raw_messages || []
+    if (existing.length > 0 && existing[existing.length - 1].text === text) return // unchanged since last snapshot
+
+    await supabase.schema('Cores').from('sms_submissions')
+      .update({ raw_messages: [...existing, { ts: new Date().toISOString(), text, direction: 'in' }] })
+      .eq('id', id)
+  }
+
   function closeLog() {
+    if (logFor) logActivitySnapshot(logFor)
     setLogFor(null)
     setDraftLines([blankDraftLine()])
     setPhotoFor(null)

@@ -133,13 +133,23 @@ export default function EntryForm({ employee, mode }) {
     const totalHours = entries.reduce((s, e) => s + e.hours, 0)
     const { calculated_time_out, delta_minutes } = computeSubmissionTiming(timeIn, timeOut, lunchMinutes, totalHours)
 
+    // Same gap as EmployeeHome's autosave — an app-logged day had nothing in
+    // raw_messages at all, so it showed no "Conversation" in SMS Review the
+    // way a texted-in day does. One snapshot line at creation time here,
+    // since this is a single create (not an autosave loop needing the
+    // session-close handling EmployeeHome.jsx uses).
+    const summaryParts = [`In ${timeIn || '—'}`, `Out ${timeOut || '—'}`, `Lunch ${lunchMinutes === '' ? 0 : lunchMinutes}min`]
+    if (perDiemLocation.trim()) summaryParts.push(`PD: ${perDiemLocation.trim()}`)
+    for (const e of entries) summaryParts.push(`Job# ${e.job_number}: ${e.hours}hrs${e.description ? ' — ' + e.description : ''}`)
+    const raw_messages = [{ ts: new Date().toISOString(), text: `Logged via app: ${summaryParts.join(' · ')}`, direction: 'in' }]
+
     const { error: insertError } = await supabase.schema('Cores').from('sms_submissions').insert({
       from_phone: 'mobile-app', employee_id: employee.id, work_date: workDate,
       time_in: timeIn || null, stated_time_out: timeOut || null,
       lunch_minutes: lunchMinutes === '' ? null : Number(lunchMinutes),
       per_diem_location: perDiemLocation.trim() || 'none',
       entries, supplies, status: 'submitted',
-      calculated_time_out, delta_minutes,
+      calculated_time_out, delta_minutes, raw_messages,
     })
     if (insertError) { setError(insertError.message); setSaving(false); return }
 
