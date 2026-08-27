@@ -1276,7 +1276,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (tsSub) {
-      lines.push(tsSub.per_diem_location && tsSub.per_diem_location !== 'none'
+      lines.push(tsSub.per_diem_location && tsSub.per_diem_location.trim().toLowerCase() !== 'none'
         ? `PD: ${tsSub.per_diem_location}` : 'No per diem')
     }
     if ((tsSub?.supplies || []).length > 0) {
@@ -1717,8 +1717,15 @@ Deno.serve(async (req: Request) => {
                           ?? (submission?.stated_time_out ? submission.stated_time_out.substring(0, 5) : null)
     const mergedLunch     = parsed.lunch_minutes != null ? parsed.lunch_minutes
                           : (submission?.lunch_minutes != null ? submission.lunch_minutes : null)
-    const mergedPerDiem   = parsed.per_diem_location != null ? parsed.per_diem_location
+    // Claude is told to return lowercase "none" but occasionally capitalizes
+    // it like normal English ("None") — canonicalize here so every downstream
+    // check that compares against the exact string 'none' keeps working,
+    // instead of silently treating a capitalized "None" as a real location
+    // and granting per diem nobody claimed (confirmed in production against
+    // Wade Kenney's and Finn Jones's submissions, 2026-08-27).
+    const rawMergedPerDiem = parsed.per_diem_location != null ? parsed.per_diem_location
                           : (submission?.per_diem_location != null ? submission.per_diem_location : null)
+    const mergedPerDiem  = rawMergedPerDiem?.trim().toLowerCase() === 'none' ? 'none' : rawMergedPerDiem
     // An explicit "This is X" this turn always wins (it's a deliberate statement, possibly a
     // correction). Otherwise, prefer whichever employee the conversation already belongs to —
     // a follow-up reply like "no pd" has no name override, so without this the phone-fallback

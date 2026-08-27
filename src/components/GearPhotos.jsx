@@ -105,6 +105,7 @@ export default function GearPhotos() {
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
     if (filter === 'measurement' && p.photo_type !== 'measurement') return false
+    if (filter === 'receipt' && p.photo_type !== 'receipt') return false
     if (filter === 'untagged' && p.photo_type != null) return false
     if (jobFilterId) {
       if (p.job_id !== jobFilterId) return false
@@ -305,19 +306,14 @@ export default function GearPhotos() {
     setSavingId(null)
   }
 
-  // Same color per photo_type wherever it shows up — the per-photo tag button,
-  // its filter chip, and the count badge all use this so a color means one
-  // thing across the whole screen instead of everything defaulting to blue.
-  const PHOTO_TYPE_COLORS = { supply: '#c1631b', reference: '#0066cc', measurement: '#127a7a' }
-
-  const filterBtn = (key, label, activeColor = '#0066cc') => (
+  const filterBtn = (key, label) => (
     <button
       onClick={() => setFilter(key)}
       style={{
         padding: '0.4rem 0.9rem', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
-        background: filter === key ? activeColor : '#fff',
+        background: filter === key ? '#0066cc' : '#fff',
         color: filter === key ? '#fff' : '#333',
-        borderColor: filter === key ? activeColor : '#ccc',
+        borderColor: filter === key ? '#0066cc' : '#ccc',
       }}
     >{label}</button>
   )
@@ -373,7 +369,7 @@ export default function GearPhotos() {
             else { setDateFilter('all'); setCustomDate('') }
           }}
           style={{
-            padding: '0.4rem 0.9rem', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+            padding: '0.3rem 0.6rem', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer', fontSize: '0.78rem',
             background: dateFilter !== 'all' ? '#0066cc' : '#fff',
             color: dateFilter !== 'all' ? '#fff' : '#333',
             borderColor: dateFilter !== 'all' ? '#0066cc' : '#ccc',
@@ -388,9 +384,10 @@ export default function GearPhotos() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {filterBtn('all', 'All')}
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
-          {filterBtn('supply', `🔧 Supplies (${photos.filter(p => p.photo_type === 'supply').length})`, PHOTO_TYPE_COLORS.supply)}
-          {filterBtn('reference', `📋 Reference (${photos.filter(p => p.photo_type === 'reference').length})`, PHOTO_TYPE_COLORS.reference)}
-          {filterBtn('measurement', `📏 Measurement (${photos.filter(p => p.photo_type === 'measurement').length})`, PHOTO_TYPE_COLORS.measurement)}
+          {filterBtn('supply', `🔧 Supplies (${photos.filter(p => p.photo_type === 'supply').length})`)}
+          {filterBtn('reference', `📋 Reference (${photos.filter(p => p.photo_type === 'reference').length})`)}
+          {filterBtn('measurement', `📏 Measurement (${photos.filter(p => p.photo_type === 'measurement').length})`)}
+          {filterBtn('receipt', `🧾 Receipt (${photos.filter(p => p.photo_type === 'receipt').length})`)}
           {filterBtn('untagged', `Untagged (${photos.filter(p => p.photo_type == null).length})`)}
         </div>
       </div>
@@ -453,16 +450,16 @@ export default function GearPhotos() {
                     ✓ {matchedJob.description}{matchedJob.status === 'closed' ? ' (closed)' : ''}
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
-                  {[['supply', '🔧 Supply'], ['reference', '📋 Reference'], ['measurement', '📏 Measurement']].map(([key, label]) => (
+                <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.4rem' }}>
+                  {[['supply', '🔧 Supply'], ['reference', '📋 Reference'], ['measurement', '📏 Measurement'], ['receipt', '🧾 Receipt']].map(([key, label]) => (
                     <button
                       key={key}
                       onClick={() => savePhotoType(photo, key)}
                       disabled={savingId === photo.id}
                       style={{
-                        flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.78rem', borderRadius: 4, cursor: 'pointer',
-                        border: `1px solid ${photo.photo_type === key ? PHOTO_TYPE_COLORS[key] : '#ccc'}`,
-                        background: photo.photo_type === key ? PHOTO_TYPE_COLORS[key] : '#fff',
+                        flex: 1, padding: '0.22rem 0.3rem', fontSize: '0.68rem', borderRadius: 4, cursor: 'pointer',
+                        border: `1px solid ${photo.photo_type === key ? '#0066cc' : '#ccc'}`,
+                        background: photo.photo_type === key ? '#0066cc' : '#fff',
                         color: photo.photo_type === key ? '#fff' : '#555',
                       }}
                     >{label}</button>
