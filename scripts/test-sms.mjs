@@ -195,6 +195,16 @@ await scenario('help request', phone(2), [
   ['HELP', ['Cores Timesheets', 'TIMESHEET', 'Reply HELP']],
 ])
 
+// 2b. "Jobs 4760..." (plural, reporting hours) must not get hijacked by the
+// bare-keyword JOBS-list command just because it starts with "jobs ". Real
+// incident: "Jobs 4926.  5hrs tech work" got treated as JOBS <vessel filter>
+// with vesselFilter "4926.  5hrs tech work", matched no vessel, and replied
+// "No open jobs found" — the report never reached Claude at all.
+await cleanupTestTech()
+await scenario('plural jobs report not hijacked by JOBS list command', phone(45), [
+  ['This is Test. Jobs 4760 6hrs engine work', ['4760: 6hrs', { absent: 'No open jobs found' }]],
+])
+
 // 2b. MOBILE and APP both return the mobile site link
 await scenario('mobile link', phone(39), [
   ['mobile', ['jimjardine.github.io/cores-timesheet']],
