@@ -104,6 +104,8 @@ export default function GearPhotos() {
     if (filter === 'needs_context' && !p.pending_context) return false
     if (filter === 'supply' && p.photo_type !== 'supply') return false
     if (filter === 'reference' && p.photo_type !== 'reference') return false
+    if (filter === 'measurement' && p.photo_type !== 'measurement') return false
+    if (filter === 'untagged' && p.photo_type != null) return false
     if (jobFilterId) {
       if (p.job_id !== jobFilterId) return false
     } else if (jobFilterQuery.trim()) {
@@ -383,6 +385,8 @@ export default function GearPhotos() {
           {filterBtn('needs_context', `Needs ship/job (${photos.filter(p => p.pending_context).length})`)}
           {filterBtn('supply', `🔧 Supplies (${photos.filter(p => p.photo_type === 'supply').length})`)}
           {filterBtn('reference', `📋 Reference (${photos.filter(p => p.photo_type === 'reference').length})`)}
+          {filterBtn('measurement', `📏 Measurement (${photos.filter(p => p.photo_type === 'measurement').length})`)}
+          {filterBtn('untagged', `Untagged (${photos.filter(p => p.photo_type == null).length})`)}
         </div>
       </div>
 
@@ -445,7 +449,7 @@ export default function GearPhotos() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
-                  {[['supply', '🔧 Supply'], ['reference', '📋 Reference']].map(([key, label]) => (
+                  {[['supply', '🔧 Supply'], ['reference', '📋 Reference'], ['measurement', '📏 Measurement']].map(([key, label]) => (
                     <button
                       key={key}
                       onClick={() => savePhotoType(photo, key)}
