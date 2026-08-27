@@ -111,6 +111,11 @@ export default function AdminDashboard() {
   const [batchPosting, setBatchPosting] = useState(false)
   const [bundleDailyPdfs, setBundleDailyPdfs] = useState(new Set())
   const [bundlePrintingEmpId, setBundlePrintingEmpId] = useState(null)
+  // The actual re-entry guard for printWeeklyPdfBundle — a ref, not the state
+  // above. Several rapid clicks happen synchronously before React commits a
+  // state update, so a check-then-set against bundlePrintingEmpId state let a
+  // fast double/triple-click through every time; a ref updates immediately.
+  const printingEmpRef = useRef(null)
 
   // ── Manual entry ──
   const [manualEntry, setManualEntry] = useState(null)
@@ -1120,18 +1125,39 @@ export default function AdminDashboard() {
 
   // Weekly Summary's PDF button: the compilation PDF, plus — when that row's
   // "bundle daily timesheets" checkbox is checked — every individual daily
-  // timesheet PDF for the days in that week that actually have hours logged.
+  // timesheet PDF for the days in that week already posted to Sage (not just
+  // worked days — a day nobody's confirmed as posted yet isn't "associated"
+  // with the summary the same way a posted one is).
+  //
+  // Guarded by printingEmpRef (a ref, not React state — several rapid clicks
+  // happen synchronously before a state update ever commits, so a
+  // check-then-set against state let every one of them through) even in the
+  // non-bundling path, so a fast double/triple-click on "PDF" can't fire the
+  // compilation download more than once. Reported 2026-08-26: nothing
+  // previously disabled the button at all when the checkbox was unchecked.
   async function printWeeklyPdfBundle(emp, days) {
-    generateWeeklyCompilationPDF({ employeeName: emp.name, days })
-    if (!bundleDailyPdfs.has(emp.id)) return
-    const workedDays = days.filter(d => Number(d.regHours || 0) > 0 || Number(d.otHours || 0) > 0)
-    if (workedDays.length === 0) return
+    if (printingEmpRef.current === emp.id) return
+    printingEmpRef.current = emp.id
     setBundlePrintingEmpId(emp.id)
-    for (const day of workedDays) {
-      await new Promise(r => setTimeout(r, 300))
-      await printTimesheetFor(emp, day.date)
+    try {
+      generateWeeklyCompilationPDF({ employeeName: emp.name, days })
+      if (bundleDailyPdfs.has(emp.id)) {
+        const postedDaysList = days.filter(d => postedDays[postedKey(emp.id, d.date)])
+        for (const day of postedDaysList) {
+          await new Promise(r => setTimeout(r, 300))
+          await printTimesheetFor(emp, day.date)
+        }
+      }
+      // Always hold the guard for a moment, even in the plain-compilation
+      // case with nothing left to do — an early return here would let
+      // `finally` clear the guard again almost instantly (jsPDF's own save()
+      // isn't always instant), and a fast double/triple-click before it's
+      // released produced duplicate downloads (reported 2026-08-26).
+      await new Promise(r => setTimeout(r, 500))
+    } finally {
+      printingEmpRef.current = null
+      setBundlePrintingEmpId(null)
     }
-    setBundlePrintingEmpId(null)
   }
 
   async function handlePrintAllTimesheets() {
@@ -2282,7 +2308,7 @@ export default function AdminDashboard() {
                               disabled={bundlePrintingEmpId === row.emp.id}
                               style={{ padding: '0.3rem 0.7rem', border: '1px solid #0066cc', background: '#fff', color: bundlePrintingEmpId === row.emp.id ? '#99b8d9' : '#0066cc', borderRadius: '4px', cursor: bundlePrintingEmpId === row.emp.id ? 'default' : 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
                             >{bundlePrintingEmpId === row.emp.id ? 'Printing…' : 'PDF'}</button>
-                            <label title="Also download each day's individual timesheet PDF"
+                            <label title="Also download the individual daily timesheet PDF for each day already posted to Sage"
                               style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', color: '#555', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                               <input type="checkbox" checked={bundleDailyPdfs.has(row.emp.id)}
                                 onChange={e => setBundleDailyPdfs(prev => {
@@ -2290,7 +2316,7 @@ export default function AdminDashboard() {
                                   if (e.target.checked) next.add(row.emp.id); else next.delete(row.emp.id)
                                   return next
                                 })} />
-                              + daily
+                              + posted days
                             </label>
                           </>
                         )}
