@@ -1438,7 +1438,15 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Jobs list request (before the Claude parse — deterministic keyword) ──
-  const isJobsRequest = msgLower === 'jobs' || msgLower.startsWith('jobs ')
+  // "jobs " alone doesn't confirm it's the list command — a normal report
+  // can start the same way ("Jobs 4926. 5hrs tech work"), and a vessel name
+  // never starts with a digit the way a job number does. Without this guard
+  // that exact message got swallowed as "JOBS <vessel filter>" with
+  // vesselFilter "4926.  5hrs tech work", matched no vessel, and replied "No
+  // open jobs found" — silently dropping the whole report before it ever
+  // reached Claude. Confirmed in production, Jim Jardine, 2026-08-27.
+  const isJobsRequest = msgLower === 'jobs'
+    || (msgLower.startsWith('jobs ') && !/^\d/.test(msgLower.slice(5).trim()))
   if (isJobsRequest) {
     // Extract vessel name filter if present (e.g., "jobs wave master")
     const vesselFilter = msgLower === 'jobs' ? null : msgLower.slice(5).trim()
