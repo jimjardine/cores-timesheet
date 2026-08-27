@@ -1192,8 +1192,11 @@ export default function AdminDashboard() {
   // ── Weekly Compilation (on-screen match of the printed PDF) ──
   if (viewingWeeklyCompilation) {
     const { emp, days } = viewingWeeklyCompilation
-    const postedCount = days.filter(d => d.postedAt).length
-    const isPosted = postedCount === days.length
+    // Denominator is days actually worked, not all 7 calendar days — see the
+    // same note on postedRows/workedDays in the Weekly Summary table below.
+    const workedDays = days.filter(d => d.hasEntries)
+    const postedCount = workedDays.filter(d => d.postedAt).length
+    const isPosted = workedDays.length > 0 && postedCount === workedDays.length
     const latestPostedAt = postedCount > 0
       ? days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
       : null
@@ -1225,8 +1228,10 @@ export default function AdminDashboard() {
             {isPosted
               ? `✓ Posted to Sage — ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}${postedByNames.length === 1 ? ` by ${postedByNames[0]}` : ''}`
               : postedCount > 0
-              ? `${postedCount}/${days.length} days posted to Sage — most recent ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
-              : `${postedCount}/${days.length} days posted to Sage`}
+              ? `${postedCount}/${workedDays.length} worked days posted to Sage — most recent ${new Date(latestPostedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+              : workedDays.length > 0
+              ? `${postedCount}/${workedDays.length} worked days posted to Sage`
+              : 'Nothing worked this week'}
           </span>
         </div>
 
@@ -1291,7 +1296,7 @@ export default function AdminDashboard() {
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#2d6a38' }}>{fmtHours(totalReg)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: totalOT ? '#c0392b' : '#333' }}>{fmtHours(totalOT)}</td>
                 <td style={{ ...tdStyleWc, textAlign: 'right', color: '#8B4513' }}>{totalPD || ''}</td>
-                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{postedCount}/{days.length}</td>
+                <td style={{ ...tdStyleWc, textAlign: 'center', color: '#2d6a38' }}>{postedCount}/{workedDays.length}</td>
               </tr>
             </tbody>
           </table>
@@ -2209,6 +2214,13 @@ export default function AdminDashboard() {
             const dayPostedInfo = postedDays[postedKey(eid, dateYMD)]
             return {
               date: dateYMD,
+              // A day with nothing logged (a normal weekend, for almost
+              // everyone) has no entry row to attach a "post to Sage" toggle
+              // to — it can never become posted, no matter what. Counting it
+              // toward "fully posted" made that state nearly unreachable for
+              // any real 5-day week. "Fully posted" now means every day that
+              // was actually worked is posted, not every calendar day.
+              hasEntries: dayEntries.length > 0,
               regHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.reg || 0), 0),
               otHours: dayEntries.reduce((s, e) => s + (otMap[e.id]?.ot || 0), 0),
               perDiems: dayEntries.reduce((s, e) => s + Number(e.per_diem || 0), 0),
@@ -2219,7 +2231,8 @@ export default function AdminDashboard() {
           return { emp, totalHours, regHours, otHours, perDiem, jobNums, supplies: empSupplies, days }
         }).sort((a, b) => (a.emp?.name || '').localeCompare(b.emp?.name || ''))
 
-        const postedRows = weekData.filter(row => row.emp && row.days.every(d => d.postedAt))
+        const postedRows = weekData.filter(row =>
+          row.emp && row.days.some(d => d.hasEntries) && row.days.every(d => !d.hasEntries || d.postedAt))
 
         return (
           <div>
@@ -2280,7 +2293,7 @@ export default function AdminDashboard() {
               // broken, not as "nobody's fully posted yet."
               return postedRows.length === 0 && weekData.length > 0 ? (
                 <div style={{ marginTop: '-1rem', marginBottom: '1.5rem', fontSize: '0.85rem', color: '#888' }}>
-                  "Print Fully-Posted Weeks" only counts an employee once all 7 days of their week are posted to Sage — nobody qualifies yet this week.
+                  "Print Fully-Posted Weeks" only counts an employee once every day they worked that week is posted to Sage — nobody qualifies yet this week.
                 </div>
               ) : null
             })()}
@@ -2298,8 +2311,13 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {weekData.map((row, i) => {
-                    const postedCount = row.emp ? row.days.filter(d => d.postedAt).length : 0
-                    const isPosted = row.emp && postedCount === row.days.length
+                    // Denominator is days actually worked, not all 7 calendar
+                    // days — a day nobody worked has no entry to post in the
+                    // first place, so counting it toward "fully posted" made
+                    // that state nearly unreachable for a normal work week.
+                    const workedDays = row.emp ? row.days.filter(d => d.hasEntries) : []
+                    const postedCount = workedDays.filter(d => d.postedAt).length
+                    const isPosted = row.emp && workedDays.length > 0 && postedCount === workedDays.length
                     const latestPostedAt = postedCount > 0
                       ? row.days.reduce((max, d) => (d.postedAt && (!max || d.postedAt > max) ? d.postedAt : max), null)
                       : null
@@ -2319,14 +2337,14 @@ export default function AdminDashboard() {
                         {row.emp && (
                           // Read-only status — posting itself only happens per day, from the Timesheets tab
                           <span
-                            title={isPosted ? `All 7 days posted to Sage — most recent ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 days posted to Sage — most recent ${latestPostedLabel}` : 'No days posted yet'}
+                            title={isPosted ? `All ${workedDays.length} worked day${workedDays.length === 1 ? '' : 's'} posted to Sage — most recent ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/${workedDays.length} worked days posted to Sage — most recent ${latestPostedLabel}` : workedDays.length > 0 ? 'No days posted yet' : 'Nothing worked this week'}
                             style={{
                               padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600,
                               background: isPosted ? '#e6f4ea' : postedCount > 0 ? '#fdf0d5' : '#f5f5f5',
                               color: isPosted ? '#2d6a38' : postedCount > 0 ? '#8a6100' : '#888',
                               border: isPosted ? '1px solid #2d6a3844' : postedCount > 0 ? '1px solid #e6c98a' : '1px solid #ddd',
                             }}
-                          >{isPosted ? `✓ Posted — ${latestPostedLabel}` : postedCount > 0 ? `${postedCount}/7 · ${latestPostedLabel}` : `${postedCount}/7 posted`}</span>
+                          >{isPosted ? `✓ Posted — ${latestPostedLabel}` : `${postedCount}/${workedDays.length}${latestPostedLabel ? ' · ' + latestPostedLabel : ' posted'}`}</span>
                         )}
                       </td>
                       <td style={{ padding: '0.75rem', display: 'flex', gap: '0.4rem' }}>
