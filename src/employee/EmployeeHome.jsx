@@ -527,6 +527,11 @@ export default function EmployeeHome({ employee }) {
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.6rem', marginTop: '0.9rem' }}>
                   <button className="emp-btn emp-btn-secondary" disabled={savingLog} onClick={closeLog}>Save Entry</button>
                   <button className="emp-btn" disabled={savingLog} onClick={() => submitDay(ymd)}>Submit day</button>
+                  {/* Everything above autosaves as it's typed, so there's nothing to
+                      actually discard — this closes the same way Save Entry does.
+                      It exists for whoever opened this just to look and wants a
+                      button that doesn't read like they're committing to anything. */}
+                  <button type="button" className="emp-inline-link" style={{ fontSize: '0.85rem' }} disabled={savingLog} onClick={closeLog}>Cancel</button>
                   {savingLog && <span style={{ fontSize: '0.8rem', color: '#999' }}>Saving…</span>}
                 </div>
               </div>
