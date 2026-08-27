@@ -820,7 +820,7 @@ CONTEXT: Earlier in this conversation we asked the worker what consumables/suppl
   const data = await res.json()
   const text = (data.content?.[0]?.text || '').trim()
   const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error(`No JSON in Claude response (${res.status}): ${text}`)
+  if (!jsonMatch) throw new Error(`No JSON in Claude response (${res.status}): ${text || JSON.stringify(data)}`)
   return JSON.parse(jsonMatch[0])
 }
 
@@ -1568,6 +1568,7 @@ Deno.serve(async (req: Request) => {
   try {
     parsed = await parseWithClaude(msgBody, today, parseContext)
   } catch (_e) {
+    console.error('parseWithClaude failed:', _e instanceof Error ? _e.message : String(_e))
     const r = "Couldn't read that one. Reply HELP for the format, or text the office directly."
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
@@ -1777,10 +1778,27 @@ Deno.serve(async (req: Request) => {
     // on later bounds-only corrections too ("actually lunch was only 30 min") — that's a real,
     // separate, intended behavior (a lone job's hours track the shift bounds once derived from
     // them) and gating purely on last_mentioned_at would have broken it.
+    // Same-message variant of the above: a tech states explicit hours AND full time
+    // bounds together in one message and the two don't agree (e.g. "4760 6hrs, in 7,
+    // out 3:30" — bounds say 8). Bounds still win here (Claude's stated number is often
+    // itself just the raw span, per the note above — there's no reliable way to tell
+    // "genuinely stated" from "computed from the range" at this point), but silently
+    // trusting bounds with no visibility was the original 2026-08-08 concern — flag a
+    // real mismatch to the office instead of swallowing it. Only checked on first touch
+    // (this message), not on a later _hours_from_bounds re-sync (e.g. a lunch
+    // correction), since that re-sync is intended behavior and would false-positive here.
+    let hoursBoundsMismatch: { stated: number; bounds: number } | null = null
     if (allEntries.length === 1 && mergedTimeIn && mergedStatedOut &&
         (allEntries[0].last_mentioned_at === mergeStamp || allEntries[0]._hours_from_bounds)) {
+      const firstTouch = allEntries[0].last_mentioned_at === mergeStamp
+      const statedHours = Number(allEntries[0].hours) || 0
       const boundedHours = Math.round(((timeToMins(mergedStatedOut) - timeToMins(mergedTimeIn) - (mergedLunch || 0)) / 60) * 100) / 100
-      if (boundedHours > 0) allEntries = [{ ...allEntries[0], hours: boundedHours, _hours_from_bounds: true }]
+      if (boundedHours > 0) {
+        if (firstTouch && statedHours > 0 && Math.abs(statedHours - boundedHours) > 0.1) {
+          hoursBoundsMismatch = { stated: statedHours, bounds: boundedHours }
+        }
+        allEntries = [{ ...allEntries[0], hours: boundedHours, _hours_from_bounds: true }]
+      }
     }
 
     // ── Calculate time_out from hours + lunch ──
@@ -1926,6 +1944,9 @@ Deno.serve(async (req: Request) => {
     // branches above return early before ever reaching daySummaryReply.
     if (midnightOutWarning && mergedStatedOut && reply) {
       reply += `\nHeads up — your out time (${friendlyTime(mergedStatedOut)}) is after midnight. Did you mean pm?`
+    }
+    if (hoursBoundsMismatch && reply) {
+      reply += `\nHeads up — you said ${hoursBoundsMismatch.stated}hrs but your in/out times work out to ${hoursBoundsMismatch.bounds}hrs. Logged ${hoursBoundsMismatch.bounds}hrs — reply to correct if that's wrong.`
     }
 
     // ── Save/update submission ──
