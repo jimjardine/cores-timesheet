@@ -109,7 +109,11 @@
 
 .emp-job-info { flex: 1; min-width: 0; }
 .emp-job-number { font-weight: 600; }
-.emp-job-desc { color: #555; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wraps to as many lines as it needs — a long SMS-sourced description used to
+   truncate to one line with no way to see the rest, since locked (office-
+   approved) rows aren't tappable to open an edit view. Reported by Wade
+   Kenney, 2026-08-27. */
+.emp-job-desc { color: #555; font-size: 0.85rem; overflow-wrap: break-word; }
 .emp-job-hours { font-weight: 600; white-space: nowrap; }
 
 .emp-chip {
