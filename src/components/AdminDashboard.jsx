@@ -64,6 +64,11 @@ export default function AdminDashboard() {
   const [printAllProgress, setPrintAllProgress] = useState(null)
   const [printingAllPosted, setPrintingAllPosted] = useState(false)
   const [printAllPostedProgress, setPrintAllPostedProgress] = useState(null)
+  // Weekly Summary's "Print Selected" — manual, not auto-detected. A "fully
+  // posted" heuristic can never cover every real case (an employee still
+  // getting one day corrected, a week nobody's finished reviewing) — letting
+  // the office just pick who's ready is simpler and always right.
+  const [selectedWeeklyEmpIds, setSelectedWeeklyEmpIds] = useState(new Set())
   const [datePreset, setDatePreset] = useState('this-week')
   const [dateFrom, setDateFrom] = useState(() => toYMD(getPayWeekStart(new Date())))
   const [dateTo, setDateTo] = useState(() => {
@@ -2239,7 +2244,7 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <label style={{ color: '#555', fontWeight: 600 }}>Pay Week:</label>
-                <select value={weekStart} onChange={e => setPayWeekStart(new Date(e.target.value + 'T12:00:00'))} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <select value={weekStart} onChange={e => { setPayWeekStart(new Date(e.target.value + 'T12:00:00')); setSelectedWeeklyEmpIds(new Set()) }} style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px' }}>
                   {payWeeks.map(w => {
                     const end = new Date(w); end.setDate(end.getDate() + 6)
                     return <option key={toYMD(w)} value={toYMD(w)}>{fmtPayDate(toYMD(w))} – {fmtPayDate(toYMD(end))}</option>
@@ -2260,43 +2265,39 @@ export default function AdminDashboard() {
                 >Print All Weekly PDFs</button>
               )}
               {(() => {
+                const selectedRows = weekData.filter(row => row.emp && selectedWeeklyEmpIds.has(row.emp.id))
                 return (
                   <button
                     onClick={async () => {
-                      if (printingAllPosted || postedRows.length === 0) return
+                      if (printingAllPosted || selectedRows.length === 0) return
                       setPrintingAllPosted(true)
-                      setPrintAllPostedProgress({ done: 0, total: postedRows.length })
-                      for (let i = 0; i < postedRows.length; i++) {
-                        const row = postedRows[i]
+                      setPrintAllPostedProgress({ done: 0, total: selectedRows.length })
+                      for (let i = 0; i < selectedRows.length; i++) {
+                        const row = selectedRows[i]
                         generateWeeklyCompilationPDF({ employeeName: row.emp.name, days: row.days })
                         await new Promise(r => setTimeout(r, 300))
-                        setPrintAllPostedProgress({ done: i + 1, total: postedRows.length })
+                        setPrintAllPostedProgress({ done: i + 1, total: selectedRows.length })
                       }
                       setPrintingAllPosted(false)
                     }}
-                    disabled={printingAllPosted || postedRows.length === 0}
-                    title={postedRows.length === 0 ? 'No weeks posted to Sage yet for this pay week' : undefined}
+                    disabled={printingAllPosted || selectedRows.length === 0}
+                    title={selectedRows.length === 0 ? 'Tick employees on the left to include them' : undefined}
                     style={{
                       padding: '0.4rem 1rem', borderRadius: '4px', fontWeight: 600,
                       border: 'none', color: '#fff',
-                      background: (printingAllPosted || postedRows.length === 0) ? '#9dbfa0' : '#2d6a38',
-                      cursor: (printingAllPosted || postedRows.length === 0) ? 'not-allowed' : 'pointer',
+                      background: (printingAllPosted || selectedRows.length === 0) ? '#9dbfa0' : '#2d6a38',
+                      cursor: (printingAllPosted || selectedRows.length === 0) ? 'not-allowed' : 'pointer',
                     }}
-                  >{printingAllPosted ? `Printing ${printAllPostedProgress?.done ?? 0}/${printAllPostedProgress?.total ?? 0}…` : `Print Fully-Posted Weeks (${postedRows.length})`}</button>
+                  >{printingAllPosted ? `Printing ${printAllPostedProgress?.done ?? 0}/${printAllPostedProgress?.total ?? 0}…` : `Print Selected (${selectedRows.length})`}</button>
                 )
               })()}
+              {postedRows.length > 0 && (
+                <button
+                  onClick={() => setSelectedWeeklyEmpIds(new Set(postedRows.map(r => r.emp.id)))}
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #2d6a38', background: '#fff', color: '#2d6a38', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                >Select fully-posted ({postedRows.length})</button>
+              )}
             </div>
-
-            {(() => {
-              // Spelled out here instead of only living in the button's title
-              // tooltip — a "(0)" nobody can explain without hovering reads as
-              // broken, not as "nobody's fully posted yet."
-              return postedRows.length === 0 && weekData.length > 0 ? (
-                <div style={{ marginTop: '-1rem', marginBottom: '1.5rem', fontSize: '0.85rem', color: '#888' }}>
-                  "Print Fully-Posted Weeks" only counts an employee once every day they worked that week is posted to Sage — nobody qualifies yet this week.
-                </div>
-              ) : null
-            })()}
 
             {weekData.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No entries for this week</div>
@@ -2304,6 +2305,11 @@ export default function AdminDashboard() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    <th style={{ padding: '0.75rem', width: '2rem' }}>
+                      <input type="checkbox"
+                        checked={weekData.some(r => r.emp) && weekData.filter(r => r.emp).every(r => selectedWeeklyEmpIds.has(r.emp.id))}
+                        onChange={e => setSelectedWeeklyEmpIds(e.target.checked ? new Set(weekData.filter(r => r.emp).map(r => r.emp.id)) : new Set())} />
+                    </th>
                     {['Employee', 'Total Hrs', 'Reg Hrs', 'OT Hrs', 'Per Diem', 'Jobs', 'Supplies', 'Posted to Sage', ''].map(h => (
                       <th key={h} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.9rem', fontWeight: 600, color: '#555' }}>{h}</th>
                     ))}
@@ -2326,6 +2332,16 @@ export default function AdminDashboard() {
                       : null
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '0.75rem' }}>
+                        {row.emp && (
+                          <input type="checkbox" checked={selectedWeeklyEmpIds.has(row.emp.id)}
+                            onChange={e => setSelectedWeeklyEmpIds(prev => {
+                              const next = new Set(prev)
+                              if (e.target.checked) next.add(row.emp.id); else next.delete(row.emp.id)
+                              return next
+                            })} />
+                        )}
+                      </td>
                       <td style={{ padding: '0.75rem', fontWeight: 600, ...(row.emp ? linkStyle : {}) }} onClick={() => row.emp && setViewingWeeklyCompilation({ emp: row.emp, days: row.days, weekStart })}>{row.emp?.name || 'Unknown'}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center' }}>{fmtHours(row.totalHours)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38' }}>{fmtHours(row.regHours)}</td>
