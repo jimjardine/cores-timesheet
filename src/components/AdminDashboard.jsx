@@ -1628,7 +1628,25 @@ export default function AdminDashboard() {
                     b.work_date.localeCompare(a.work_date) || (a.sort_order ?? 1) - (b.sort_order ?? 1)
                   )
                   return (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                      <colgroup>
+                        {/* Explicit widths so Description (the one column with real
+                            prose) gets the room it needs — left to auto layout, the
+                            browser starves it to make space for unbreakable columns
+                            like the action buttons, wrapping every word onto its own
+                            line. table-layout: fixed makes these the real column
+                            widths, so the narrower columns wrap too when they need to. */}
+                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '5%' }} />
+                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '5%' }} />
+                        <col style={{ width: '5%' }} />
+                        <col style={{ width: '5%' }} />
+                        <col style={{ width: '33%' }} />
+                        <col style={{ width: '6%' }} />
+                        <col style={{ width: '14%' }} />
+                      </colgroup>
                       <thead>
                         <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                           {[['Date','left'],['Job','left'],['Customer','left'],['Vessel','left'],['Reg','center'],['OT','center'],['PD','center'],['Description','left'],['Photos','center'],['','left']].map(([h, align]) => (
@@ -1673,7 +1691,7 @@ export default function AdminDashboard() {
                                   ) : <span style={{ color: '#ccc' }}>—</span>
                                 })()}
                               </td>
-                              <td style={{ padding: '0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                              <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                                 {isConfirmingDelete ? (
                                   <span>
                                     <span style={{ fontSize: '0.85rem', color: '#c0392b', marginRight: '0.5rem' }}>Delete?</span>
@@ -1683,7 +1701,7 @@ export default function AdminDashboard() {
                                 ) : e.entry_source === 'sms' ? (
                                   // Approved SMS-sourced entries aren't edited in place — hours only
                                   // ever change by going back through SMS Review and re-approving.
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <span style={{ display: 'inline-flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem' }}>
                                     {postedToSageControl(e.employee_id, e.work_date)}
                                     <button onClick={() => revertToPending(e)} disabled={revertingId === e.id}
                                       title="Send this back to SMS Review to change hours, then re-approve it"
@@ -1693,7 +1711,7 @@ export default function AdminDashboard() {
                                     <button onClick={() => setConfirmDeleteId(e.id)} disabled={revertingId === e.id} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ffaaaa', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#c0392b' }}>Delete</button>
                                   </span>
                                 ) : (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <span style={{ display: 'inline-flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem' }}>
                                     {postedToSageControl(e.employee_id, e.work_date)}
                                     <button onClick={() => openEdit(e, reg, ot)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ccc', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#555' }}>Edit</button>
                                     <button onClick={() => setConfirmDeleteId(e.id)} style={{ padding: '0.2rem 0.6rem', border: '1px solid #ffaaaa', borderRadius: '3px', background: '#fff', cursor: 'pointer', fontSize: '0.8rem', color: '#c0392b' }}>Delete</button>
