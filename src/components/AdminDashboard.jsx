@@ -1636,14 +1636,14 @@ export default function AdminDashboard() {
                             like the action buttons, wrapping every word onto its own
                             line. table-layout: fixed makes these the real column
                             widths, so the narrower columns wrap too when they need to. */}
-                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '12%' }} />
                         <col style={{ width: '5%' }} />
-                        <col style={{ width: '9%' }} />
-                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '8%' }} />
+                        <col style={{ width: '8%' }} />
                         <col style={{ width: '5%' }} />
                         <col style={{ width: '5%' }} />
                         <col style={{ width: '5%' }} />
-                        <col style={{ width: '33%' }} />
+                        <col style={{ width: '32%' }} />
                         <col style={{ width: '6%' }} />
                         <col style={{ width: '14%' }} />
                       </colgroup>
@@ -1663,7 +1663,12 @@ export default function AdminDashboard() {
                             <tr key={e.id} style={{ borderBottom: '1px solid #eee', background: isConfirmingDelete ? '#fff5f5' : '' }}
                               onMouseEnter={ev => { if (!isConfirmingDelete) hoverRow(ev, true) }}
                               onMouseLeave={ev => { if (!isConfirmingDelete) hoverRow(ev, false) }}>
-                              <td style={{ padding: '0.75rem', color: '#555', whiteSpace: 'nowrap' }}>{fmtDate(e.work_date)}</td>
+                              {/* No nowrap here — table-layout: fixed means an
+                                  overflowing nowrap date doesn't push the column
+                                  wider, it just paints over the Job cell next to
+                                  it. Wrapping onto two lines if it's ever tight
+                                  is the safe failure mode. */}
+                              <td style={{ padding: '0.75rem', color: '#555' }}>{fmtDate(e.work_date)}</td>
                               <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#666' }}>{e.jobs?.customers?.name ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#888' }}>{e.jobs?.vessels?.name ?? '—'}</td>
