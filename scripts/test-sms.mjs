@@ -604,6 +604,26 @@ await scenario('photo tagging', phone(32), [
   ['old card clips, looking for a spare', [{ absent: 'Which job' }, { absent: 'job number' }]],
 ])
 
+// 32b. A photo sent without a job report must still land in the Conversation
+// log, not just get saved to gear_photos silently. The whole photo-only path
+// used to never touch sms_submissions at all — the photo saved fine but
+// vanished from SMS Review's Conversation view. Confirmed in production, Jim
+// Jardine, 2026-08-28 ("sent a photo... no record of it showed up in the
+// conversation log"). Checked against the still-open submission from the
+// scenario above (a job report was already logged on this phone, so there's
+// something to attach the photo message to).
+{
+  console.log(`\n▶ photo logged in conversation`)
+  const subRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/sms_submissions?from_phone=eq.${phone(32)}&select=raw_messages&order=updated_at.desc&limit=1`,
+    { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Accept-Profile': 'Cores' } }
+  )
+  const [sub] = await subRes.json().catch(() => [])
+  const loggedPhoto = (sub?.raw_messages || []).some(m => m.direction === 'in' && m.text?.startsWith('[photo'))
+  if (loggedPhoto) { console.log('  ✓ passed'); passed++ }
+  else { console.log('  ✗ no [photo] entry found in raw_messages'); failed++ }
+}
+
 // 33. Low-stock caption on a photo — deterministic (no Claude call for photos),
 // must not break the normal "got the photo" reply/job tagging
 await cleanupTestTech()
