@@ -298,6 +298,22 @@ export default function GearPhotos() {
   async function remove(photo) {
     if (!confirm('Delete this photo? This removes the file and its record permanently.')) return
     setSavingId(photo.id)
+    // job_supplies.source_photo_id is ON DELETE SET NULL, not CASCADE — deleting
+    // just the photo silently detaches (not removes) any supply line it produced,
+    // including ones already applied to the timesheet, leaving an orphaned charge
+    // with no photo and no timesheet entry behind it (confirmed in production,
+    // Jim Jardine, 2026-08-28). Clean those up too, same as everywhere else this
+    // codebase touches job_supplies: unbilled ones are safe to delete outright;
+    // a billed one is real billing history, so it's left alone (still linked to
+    // this photo id — harmless once the photo record is gone).
+    const { data: linkedSupplies, error: lookupError } = await supabase.schema('Cores').from('job_supplies')
+      .select('id, billed_at').eq('source_photo_id', photo.id)
+    if (lookupError) { alert('Error checking linked supplies: ' + lookupError.message); setSavingId(null); return }
+    const unbilledIds = (linkedSupplies || []).filter(s => !s.billed_at).map(s => s.id)
+    if (unbilledIds.length > 0) {
+      const { error: supplyError } = await supabase.schema('Cores').from('job_supplies').delete().in('id', unbilledIds)
+      if (supplyError) { alert('Error removing linked supply lines: ' + supplyError.message); setSavingId(null); return }
+    }
     const { error: storageError } = await supabase.storage.from('gear-photos').remove([photo.storage_path])
     if (storageError) { alert('Error deleting file: ' + storageError.message); setSavingId(null); return }
     const { error } = await supabase.schema('Cores').from('gear_photos').delete().eq('id', photo.id)
