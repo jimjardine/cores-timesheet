@@ -862,7 +862,7 @@ export default function SmsReview({ onApproved } = {}) {
                         }}>
                           {m.text}
                           <div style={{ fontSize: '0.7rem', color: '#999', marginTop: 2 }}>
-                            {m.direction === 'in' ? `Worker (${sub.from_phone})` : 'System'} · {m.ts ? new Date(m.ts).toLocaleTimeString() : ''}
+                            {m.direction === 'in' ? (sub.employee_id ? employeeName(sub.employee_id) : `Unknown (${sub.from_phone})`) : 'System'} · {m.ts ? new Date(m.ts).toLocaleTimeString() : ''}
                           </div>
                         </div>
                       ))}
