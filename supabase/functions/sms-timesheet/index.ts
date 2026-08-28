@@ -15,6 +15,7 @@ const HELP_TEXT = `Cores Timesheets — commands:
 • PHONE# — phone directory
 • PHOTO — gear photos
 • TIMESHEET — what's logged for a day
+• DAY OFF — mark today as off
 • REJECT — delete today's entry
 • NOTE — leave a note not tied to a job
 • SUPPLIES — log parts used
@@ -91,6 +92,12 @@ Add a day for another date: "TS yesterday", "TS monday".`,
   ts: '', // alias, filled in below
 
   template: '', // alias, filled in below
+
+  dayoff: `DAY OFF — mark today as off
+
+Text "day off" and today's marked as intentionally not worked — no hours,
+no job, nothing for the office to review. Keeps it from showing up as a
+missed report. Only covers today; text it again on another day you're off.`,
 
   reject: `REJECT — delete an entry
 
@@ -1286,6 +1293,39 @@ Deno.serve(async (req: Request) => {
     if (photoCount) lines.push(`Photos: ${photoCount}`)
 
     const r = lines.join('\n')
+    return isTwilio ? twiML(r) : jsonReply({ reply: r })
+  }
+
+  // ── Day off ("day off") ──
+  // Deterministic keyword, no Claude call, no office review needed — there's
+  // nothing to check (no hours, no job). A positive "I'm intentionally not
+  // working today" signal instead of silence, so it doesn't read as a missed
+  // report in Submission Status. Guarded on no-media so a photo captioned
+  // "day off" still gets saved as a photo below, and on a known employee —
+  // an unrecognized number still needs a human to match it, same as any
+  // other text from that number.
+  if (msgLower === 'day off' && mediaUrls.length === 0 && employeeId) {
+    const { data: existing } = await supabase
+      .from('timesheet_entries').select('id')
+      .eq('employee_id', employeeId).eq('work_date', today).eq('is_day_off', true)
+      .limit(1)
+    let r: string
+    if (existing && existing.length > 0) {
+      r = `Already marked ${friendlyDate(today)} as a day off${employeeName ? ', ' + employeeName.split(' ')[0] : ''}.`
+    } else {
+      const { error } = await supabase.from('timesheet_entries').insert({
+        employee_id: employeeId, work_date: today, job_id: null,
+        hours: 0, ot_hours: 0, description: 'Day off',
+        per_diem: 0, is_day_off: true, entry_source: 'sms',
+      })
+      r = error
+        // Unique index race (see migration) reads as a duplicate-key error —
+        // someone else's concurrent "day off" already landed, which is fine.
+        ? (error.message?.includes('duplicate key')
+            ? `Already marked ${friendlyDate(today)} as a day off${employeeName ? ', ' + employeeName.split(' ')[0] : ''}.`
+            : `Couldn't save that — contact the office if this keeps happening.`)
+        : `Got it${employeeName ? ' ' + employeeName.split(' ')[0] : ''} — marked ${friendlyDate(today)} as a day off.`
+    }
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 

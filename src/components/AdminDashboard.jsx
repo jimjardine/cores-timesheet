@@ -1669,7 +1669,7 @@ export default function AdminDashboard() {
                                   it. Wrapping onto two lines if it's ever tight
                                   is the safe failure mode. */}
                               <td style={{ padding: '0.75rem', color: '#555' }}>{fmtDate(e.work_date)}</td>
-                              <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? '—'}</td>
+                              <td style={{ padding: '0.75rem', ...linkStyle }}>{e.jobs?.job_number ?? (e.is_day_off ? 'Day off' : e.is_stat_pay ? 'Stat pay' : '—')}</td>
                               <td style={{ padding: '0.75rem', color: '#666' }}>{e.jobs?.customers?.name ?? '—'}</td>
                               <td style={{ padding: '0.75rem', color: '#888' }}>{e.jobs?.vessels?.name ?? '—'}</td>
                               <td style={{ padding: '0.75rem', textAlign: 'center', color: '#2d6a38', fontWeight: 600 }}>{fmtHours(reg)}</td>

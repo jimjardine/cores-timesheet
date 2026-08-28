@@ -57,6 +57,7 @@ export default function EmployeeHome({ employee }) {
   const daySubIdsRef = useRef({})
   const insertLocksRef = useRef({})
   const baseEntriesRef = useRef({})
+  const [markingDayOffFor, setMarkingDayOffFor] = useState(null)
   const [noteFor, setNoteFor] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
@@ -163,6 +164,29 @@ export default function EmployeeHome({ employee }) {
     baseEntriesRef.current[ymd] = daySub?.entries || []
     setLogFor(ymd)
     setError('')
+  }
+
+  // Same insert the SMS "day off" keyword does — a positive "intentionally
+  // not working" signal, not a missing report. entry_source 'sms' (not
+  // 'self') since it's auto-accepted with nothing to review, matching how
+  // the texted-in path stamps it, and keeps it locked/office-owned like
+  // everything else here rather than reopening the self-entry edit path
+  // that was removed for good reason (2026-08-27).
+  async function markDayOff(ymd) {
+    if (!confirm('Mark this day as off?')) return
+    setMarkingDayOffFor(ymd)
+    setError('')
+    const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
+      employee_id: employee.id, work_date: ymd, job_id: null,
+      hours: 0, ot_hours: 0, description: 'Day off',
+      per_diem: 0, is_day_off: true, entry_source: 'sms',
+    })
+    // Unique index race (see migration) — a text and a tap landing at the
+    // same moment reads as a duplicate-key error, which just means it's
+    // already marked. Not a real failure.
+    if (error && !error.message?.includes('duplicate key')) { setError(error.message); setMarkingDayOffFor(null); return }
+    await load({ silent: true })
+    setMarkingDayOffFor(null)
   }
 
   // A texted-in day keeps a full back-and-forth in raw_messages, rendered as
@@ -582,8 +606,11 @@ export default function EmployeeHome({ employee }) {
               // A gray "tap to..." hint line reads as informational text, not
               // as something to press — a real button here instead of just a
               // clickable hint (the guys kept asking Jim how to start a day).
-              <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginBottom: '0.6rem' }}
-                onClick={() => openLog(ymd)}>+ Add Job Info</button>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.6rem' }}>
+                <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => openLog(ymd)}>+ Add Job Info</button>
+                <button className="emp-btn emp-btn-secondary emp-btn-small" disabled={markingDayOffFor === ymd}
+                  onClick={() => markDayOff(ymd)}>{markingDayOffFor === ymd ? 'Marking…' : 'Day Off'}</button>
+              </div>
             )}
 
             {dayEntries.length === 0 && !daySub && <div className="emp-empty">No hours logged</div>}
@@ -600,7 +627,7 @@ export default function EmployeeHome({ employee }) {
                   <div className="emp-job-info">
                     <div className="emp-job-number">
                       <span title="Approved — office only" style={{ marginRight: '0.3rem' }}>🔒</span>
-                      {e.jobs?.job_number || (e.is_stat_pay ? 'Stat pay' : '—')}
+                      {e.jobs?.job_number || (e.is_day_off ? 'Day off' : e.is_stat_pay ? 'Stat pay' : '—')}
                       {ot > 0 && <span className="emp-chip emp-chip-ot">OT {fmtHours(ot)}</span>}
                     </div>
                     {e.description && <div className="emp-job-desc">{e.description}</div>}
