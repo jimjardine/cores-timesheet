@@ -68,7 +68,7 @@ export default function GearPhotos() {
       // from every report with no error).
       supabase.schema('Cores').from('jobs').select('id, job_number, description, status, vessels(name)'),
       supabase.schema('Cores').from('employees').select('id, name'),
-      supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity, applied_at, applied_by').not('source_photo_id', 'is', null),
+      supabase.schema('Cores').from('job_supplies').select('id, source_photo_id, supply_name, quantity, applied_at, applied_by, billed_at').not('source_photo_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date'),
       supabase.schema('Cores').from('sms_submissions').select('employee_id, work_date').in('status', ['submitted', 'collecting']),
     ])
@@ -138,8 +138,45 @@ export default function GearPhotos() {
   }
 
   // Toggle: clicking the already-selected type clears it back to unclassified.
+  // Moving a photo OFF Supply doesn't touch the supply lines it already
+  // produced on its own — the Supply Used editor is gated on photo_type ===
+  // 'supply' (see the render below), so retagging just hides that whole
+  // section while an already-applied line quietly keeps charging the job.
+  // Confirmed in production, Jim Jardine, 2026-08-28: retagged a photo from
+  // Supply to Reference and its applied line "still remained on the
+  // timesheet" with no warning at all. Now: leaving Supply with lines already
+  // attached to this photo warns first, then pulls the unbilled ones off the
+  // timesheet (deleted) same as everywhere else this codebase treats an
+  // unbilled job_supplies row as safe to remove outright — a billed line is
+  // real invoicing history and is left alone, still linked to this photo.
   async function savePhotoType(photo, value) {
     const next = photo.photo_type === value ? null : value
+    if (photo.photo_type === 'supply' && next !== 'supply') {
+      const rows = suppliesByPhoto[photo.id] || []
+      const billed = rows.filter(r => r.billed_at)
+      const removable = rows.filter(r => !r.billed_at)
+      if (removable.length > 0 || billed.length > 0) {
+        const onTimesheet = removable.filter(r => r.applied_at)
+        const draftOnly = removable.filter(r => !r.applied_at)
+        const lines = removable.map(r => `"${r.supply_name}" (×${Number(r.quantity)})`).join(', ')
+        let msg = ''
+        if (onTimesheet.length > 0) {
+          msg = `This photo has ${onTimesheet.length > 1 ? 'supply lines' : 'a supply line'} already on the timesheet: ${lines}.\n\nChanging this photo's type will pull ${onTimesheet.length > 1 ? 'them' : 'it'} off the timesheet.`
+        } else if (draftOnly.length > 0) {
+          msg = `This photo has ${draftOnly.length > 1 ? 'draft supply lines' : 'a draft supply line'} not yet on the timesheet: ${lines}.\n\nChanging this photo's type will discard ${draftOnly.length > 1 ? 'them' : 'it'}.`
+        }
+        if (billed.length > 0) {
+          msg += `${msg ? '\n\n' : ''}${billed.length} already-billed line${billed.length > 1 ? 's' : ''} will be left as-is (real billing history).`
+        }
+        if (msg && !confirm(`${msg}\n\nContinue?`)) return
+      }
+      if (removable.length > 0) {
+        const { error: supplyError } = await supabase.schema('Cores').from('job_supplies')
+          .delete().in('id', removable.map(r => r.id))
+        if (supplyError) { alert("Couldn't remove this photo's supply lines: " + supplyError.message); return }
+        setSuppliesByPhoto(m => ({ ...m, [photo.id]: (m[photo.id] || []).filter(r => r.billed_at) }))
+      }
+    }
     setSavingId(photo.id)
     const { error } = await supabase.schema('Cores').from('gear_photos')
       .update({ photo_type: next })
@@ -264,7 +301,7 @@ export default function GearPhotos() {
     // Re-read rather than patching local state by hand — several rows can
     // change per save, and this keeps the card honest about what's stored.
     const { data: fresh } = await supabase.schema('Cores').from('job_supplies')
-      .select('id, source_photo_id, supply_name, quantity, applied_at, applied_by')
+      .select('id, source_photo_id, supply_name, quantity, applied_at, applied_by, billed_at')
       .eq('source_photo_id', photo.id)
     setSuppliesByPhoto(m => ({ ...m, [photo.id]: fresh || [] }))
     setNewLines(d => { const n = { ...d }; delete n[photo.id]; return n })
