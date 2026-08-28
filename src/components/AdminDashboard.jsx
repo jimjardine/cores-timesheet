@@ -400,6 +400,23 @@ export default function AdminDashboard() {
     // If that was the employee's last real entry in the pay week, the auto
     // stat-pay entries for that week are no longer earned — remove them
     await cleanupStatPay(entry.employee_id, entry.work_date)
+    // An SMS-sourced entry traces back to a real texted-in submission — if
+    // this was the last entry from that submission, deleting it (instead of
+    // using Revert to Pending) would otherwise leave that submission stuck
+    // at status='approved' forever with no real entry behind it: invisible
+    // in both Pending and Approved in any useful way, and with no path back
+    // to reopening it. Confirmed in production, Jim Jardine, 2026-08-28 —
+    // found 5 of these already sitting orphaned.
+    if (entry.source_submission_id) {
+      const { data: siblingEntries } = await supabase.schema('Cores').from('timesheet_entries')
+        .select('id').eq('source_submission_id', entry.source_submission_id)
+      if (!siblingEntries || siblingEntries.length === 0) {
+        const { error: rejectError } = await supabase.schema('Cores').from('sms_submissions')
+          .update({ status: 'rejected', rejection_reason: 'Approved entry deleted directly from Timesheets tab' })
+          .eq('id', entry.source_submission_id)
+        if (rejectError) alert(`Entry deleted, but couldn't close out its source submission: ${rejectError.message}`)
+      }
+    }
     setConfirmDeleteId(null)
     await loadTimesheets()
   }
