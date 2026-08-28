@@ -1484,6 +1484,37 @@ Deno.serve(async (req: Request) => {
       : photoContext
       ? `Got the photo${firstName ? ' ' + firstName : ''} — logged to ${photoContext}.`
       : `Got the photo${firstName ? ' ' + firstName : ''}.`
+
+    // Log this exchange in the conversation thread too — this whole photo-only
+    // path saves straight to Gear Photos and returns without ever touching
+    // sms_submissions, so a photo sent without a job report vanished from SMS
+    // Review's Conversation view even though it was safely saved. Confirmed in
+    // production, Jim Jardine, 2026-08-28 ("sent a photo... no record of it
+    // showed up in the conversation log"). Matched by phone (not employeeId,
+    // which is still null here for an anonymous/shared-phone conversation using
+    // "This is X" — that override only applies further down in the Claude-parse
+    // path, past this branch's early return) and work_date, same as the report-
+    // save flow's own submission lookup. Best-effort — if nothing's open for the
+    // day there's nothing to log it against, same as before this fix.
+    {
+      const { data: openSubs } = await supabase
+        .from('sms_submissions').select('id, raw_messages')
+        .eq('from_phone', fromPhone).eq('work_date', today)
+        .in('status', ['collecting', 'submitted'])
+        .order('created_at', { ascending: false }).limit(1)
+      if (openSubs?.length) {
+        const prevMsgs: any[] = openSubs[0].raw_messages || []
+        await supabase.from('sms_submissions').update({
+          raw_messages: [
+            ...prevMsgs,
+            { text: note ? `[photo] ${note}` : '[photo]', direction: 'in', ts: new Date().toISOString() },
+            { text: reply, direction: 'out', ts: new Date().toISOString() },
+          ],
+          updated_at: new Date().toISOString(),
+        }).eq('id', openSubs[0].id)
+      }
+    }
+
     return isTwilio ? twiML(reply) : jsonReply({ reply })
   }
 
