@@ -563,16 +563,28 @@ export default function GearPhotos() {
                       })}
                       {lines.map((l, i) => (
                         <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                          <input type="checkbox" checked={l.checked} disabled={busy}
-                            title="Tick and save to put it on the timesheet"
-                            onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, checked: e.target.checked } : x))}
-                            style={{ width: '1rem', height: '1rem', flexShrink: 0, cursor: 'pointer' }} />
+                          {/* No checkbox here — a pending line always applies when saved
+                              (defaults to checked:true and nothing here ever changes that
+                              now that the checkbox is gone). A line she doesn't want gets
+                              removed outright instead of unchecked, which is what "✕" is
+                              for — the checkbox only ever meant something for an
+                              already-saved row (below), where on/off the timesheet is a
+                              real distinction worth keeping. */}
                           <input type="number" min="0" step="1" value={l.quantity} disabled={busy}
                             onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, quantity: e.target.value } : x))}
                             style={qtyStyle} />
                           <input value={l.supply_name} placeholder="Description" disabled={busy}
                             onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, supply_name: e.target.value } : x))}
                             style={descStyle} />
+                          {/* Drops a line that isn't saved to the timesheet yet — before
+                              this, the only way to get rid of an unwanted line (e.g. the
+                              auto-filled draft from a caption that isn't a real supply)
+                              was untagging the whole photo, wiping every other line on it
+                              too. Reported by Jim, 2026-08-28. */}
+                          <button type="button" onClick={() => setLines(lines.filter((_, xi) => xi !== i))}
+                            disabled={busy} title="Remove this line"
+                            style={{ flexShrink: 0, padding: '0.2rem 0.5rem', border: '1px solid #fcc', background: '#fee', color: '#c0392b', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                          >✕</button>
                         </div>
                       ))}
                       <div style={{ display: 'flex', gap: '0.3rem' }}>
