@@ -1161,9 +1161,9 @@ export default function SmsReview({ onApproved } = {}) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ fontSize: '0.75rem', color: '#888', textAlign: 'left' }}>
-                  <th style={{ fontWeight: 600, paddingBottom: 2 }}>Supply</th>
-                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Qty</th>
                   <th style={{ fontWeight: 600, paddingBottom: 2, width: 90 }}>Job #</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2, width: 70 }}>Qty</th>
+                  <th style={{ fontWeight: 600, paddingBottom: 2 }}>Supply</th>
                   <th style={{ width: 30 }} />
                 </tr>
               </thead>
@@ -1175,22 +1175,6 @@ export default function SmsReview({ onApproved } = {}) {
                   )]
                   return (
                     <tr key={i}>
-                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
-                        <input
-                          value={s.supply_name}
-                          onChange={ev => setSupplyField(i, 'supply_name', ev.target.value)}
-                          placeholder="Fill in supply name"
-                          style={inp}
-                        />
-                      </td>
-                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
-                        <input
-                          type="number" min="0" step="0.5"
-                          value={s.quantity}
-                          onChange={ev => setSupplyField(i, 'quantity', ev.target.value)}
-                          style={inp}
-                        />
-                      </td>
                       <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
                         <select
                           value={s.job_number}
@@ -1205,6 +1189,22 @@ export default function SmsReview({ onApproved } = {}) {
                             <option value={s.job_number}>{s.job_number}</option>
                           )}
                         </select>
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          type="number" min="0" step="0.5"
+                          value={s.quantity}
+                          onChange={ev => setSupplyField(i, 'quantity', ev.target.value)}
+                          style={inp}
+                        />
+                      </td>
+                      <td style={{ padding: '0.15rem 0.25rem 0.15rem 0' }}>
+                        <input
+                          value={s.supply_name}
+                          onChange={ev => setSupplyField(i, 'supply_name', ev.target.value)}
+                          placeholder="Fill in supply name"
+                          style={inp}
+                        />
                       </td>
                       <td>
                         <button
