@@ -1265,8 +1265,8 @@ export default function Reports() {
                             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
                               <thead>
                                 <tr style={{ borderBottom: '1px solid #ddd' }}>
-                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#888', width: '80px' }}>Qty</th>
+                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
                                   <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Description</th>
                                   <th className="no-print" style={{ width: '90px', textAlign: 'center', fontSize: '0.8rem', color: '#888' }}>Billed</th>
                                   <th className="no-print" style={{ width: '70px' }}></th>
@@ -1277,18 +1277,7 @@ export default function Reports() {
                                 {group.items.map(s => {
                                   const sourcePhoto = s.source_photo_id ? gearPhotos.find(p => p.id === s.source_photo_id) : null
                                   return (
-                                  <tr key={s.id}>
-                                    <td style={{ padding: '0.25rem 0.5rem' }}>
-                                      <input value={s.supply_name || ''}
-                                        onChange={e => updateSupplyField(s.id, 'supply_name', e.target.value)}
-                                        onBlur={() => saveSupplyField(s, 'supply_name')}
-                                        className="print-input"
-                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
-                                      {sourcePhoto && (
-                                        <span onClick={() => setPhotoLightbox(sourcePhoto)} className="no-print"
-                                          style={{ fontSize: '0.75rem', color: '#0066cc', cursor: 'pointer' }}>📷 from photo</span>
-                                      )}
-                                    </td>
+                                  <tr key={s.id} style={{ verticalAlign: 'top' }}>
                                     <td style={{ padding: '0.25rem 0.5rem' }}>
                                       <input type="number" step="0.01" value={s.quantity ?? ''}
                                         onChange={e => updateSupplyField(s.id, 'quantity', e.target.value)}
@@ -1297,9 +1286,21 @@ export default function Reports() {
                                         style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem', textAlign: 'center' }} />
                                     </td>
                                     <td style={{ padding: '0.25rem 0.5rem' }}>
+                                      <input value={s.supply_name || ''}
+                                        onChange={e => updateSupplyField(s.id, 'supply_name', e.target.value)}
+                                        onBlur={() => saveSupplyField(s, 'supply_name')}
+                                        className="print-input"
+                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                                      {sourcePhoto && (
+                                        <span onClick={() => setPhotoLightbox(sourcePhoto)} className="no-print"
+                                          style={{ display: 'block', marginTop: '0.15rem', fontSize: '0.75rem', color: '#0066cc', cursor: 'pointer' }}>📷 from photo</span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '0.25rem 0.5rem' }}>
                                       <input value={s.description || ''}
                                         onChange={e => updateSupplyField(s.id, 'description', e.target.value)}
                                         onBlur={() => saveSupplyField(s, 'description')}
+                                        placeholder="Optional note for the invoice/print"
                                         className="print-input"
                                         style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
                                     </td>
