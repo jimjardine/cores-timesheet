@@ -86,7 +86,7 @@ export default function SmsReview({ onApproved } = {}) {
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date').gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
-      supabase.schema('Cores').from('job_supplies').select('employee_id, work_date, supply_name, quantity, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
+      supabase.schema('Cores').from('job_supplies').select('id, employee_id, work_date, supply_name, quantity, job_id, billed_at, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
@@ -145,6 +145,48 @@ export default function SmsReview({ onApproved } = {}) {
   // employee/day, independent of whatever's parsed into sub.supplies.
   const appliedSuppliesFor = (employeeId, workDate) =>
     appliedSupplies.filter(s => s.employee_id === employeeId && s.work_date === workDate)
+
+  // These are real job_supplies rows, already on the timesheet — editing them
+  // here is a direct update, not the draft-then-Approve flow sub.supplies
+  // goes through. Same pattern as Reports' Supplies tab (the other place
+  // these get edited), so a change here shows up there too and vice versa.
+  // Editable regardless of this submission's status — a Gear Photos supply
+  // isn't gated behind approving this particular text (see Aug 28 2026:
+  // Jim wanted a photo-sourced supply treated the same as a texted one —
+  // visible and fixable right here, not read-only until reopened elsewhere).
+  const [appliedSupplyEdits, setAppliedSupplyEdits] = useState({}) // { [id]: { supply_name, quantity, job_id } }
+  const [appliedSupplySaveStatus, setAppliedSupplySaveStatus] = useState({}) // { [id]: 'saving' | 'saved' | 'error' }
+
+  function updateAppliedSupplyField(id, field, value) {
+    setAppliedSupplyEdits(p => ({ ...p, [id]: { ...p[id], [field]: value } }))
+  }
+
+  async function saveAppliedSupplyField(supply, field) {
+    const edit = appliedSupplyEdits[supply.id]
+    if (!edit || !(field in edit)) return
+    if (field === 'quantity' && !(Number(edit.quantity) > 0)) { alert('Quantity must be greater than 0'); return }
+    const value = field === 'quantity' ? Number(edit.quantity) : edit[field]
+    setAppliedSupplySaveStatus(s => ({ ...s, [supply.id]: 'saving' }))
+    const { error } = await supabase.schema('Cores').from('job_supplies').update({ [field]: value }).eq('id', supply.id)
+    if (error) {
+      alert(`Couldn't save change: ${error.message}`)
+      setAppliedSupplySaveStatus(s => ({ ...s, [supply.id]: 'error' }))
+      return
+    }
+    setAppliedSupplies(prev => prev.map(s => s.id === supply.id ? {
+      ...s, [field]: value,
+      ...(field === 'job_id' ? { jobs: jobs.find(j => j.id === value) ? { job_number: jobs.find(j => j.id === value).job_number } : null } : {}),
+    } : s))
+    setAppliedSupplySaveStatus(s => ({ ...s, [supply.id]: 'saved' }))
+    setTimeout(() => setAppliedSupplySaveStatus(s => (s[supply.id] === 'saved' ? { ...s, [supply.id]: undefined } : s)), 2000)
+  }
+
+  async function deleteAppliedSupply(supply) {
+    if (!confirm(`Remove "${supply.supply_name}" (qty ${Number(supply.quantity)}) from the timesheet?`)) return
+    const { error } = await supabase.schema('Cores').from('job_supplies').delete().eq('id', supply.id)
+    if (error) { alert(`Delete failed: ${error.message}`); return }
+    setAppliedSupplies(prev => prev.filter(s => s.id !== supply.id))
+  }
 
   const toggle = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
@@ -825,22 +867,72 @@ export default function SmsReview({ onApproved } = {}) {
 
                 {/* Supplies already saved from a Gear Photos card — shown regardless of
                     this submission's status, since they're real job_supplies rows that
-                    exist independent of approval. Read-only here; edit them back on the
-                    photo they came from. */}
+                    exist independent of approval. Editable right here, same as a texted
+                    supply — a photo-sourced line shouldn't need a trip to Gear Photos or
+                    Reports just to fix a typo or wrong job (Jim Jardine, 2026-08-28: "the
+                    boys need to be able to see what is applied to the timesheet not just
+                    after it's approved" and it should be "treated the same way" as a
+                    texted-in consumable). Saves straight to job_supplies on blur/change —
+                    same pattern as Reports' Supplies tab, the other place these get edited. */}
                 {appliedSuppliesFor(sub.employee_id, sub.work_date).length > 0 && (
                   <div style={{ marginBottom: '0.75rem' }}>
                     <div style={{ fontSize: '0.8rem', color: '#2a7a2a', fontWeight: 600, marginBottom: '0.3rem' }}>
-                      ✓ Already saved to the timesheet (from Gear Photos)
+                      ✓ Already on the timesheet (from Gear Photos)
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                      <thead>
+                        <tr style={{ background: '#eef4ee' }}>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left' }}>Supply</th>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'right', width: 70 }}>Qty</th>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 100 }}>Job #</th>
+                          <th style={{ width: 30 }} />
+                        </tr>
+                      </thead>
                       <tbody>
-                        {appliedSuppliesFor(sub.employee_id, sub.work_date).map((s, i) => (
-                          <tr key={i} style={{ borderTop: '1px solid #eee' }}>
-                            <td style={{ padding: '0.35rem 0.6rem', fontWeight: 600 }}>{s.supply_name}</td>
-                            <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', width: 55 }}>×{s.quantity}</td>
-                            <td style={{ padding: '0.35rem 0.6rem', width: 70, color: '#888' }}>{s.jobs?.job_number || '—'}</td>
-                          </tr>
-                        ))}
+                        {appliedSuppliesFor(sub.employee_id, sub.work_date).map((s) => {
+                          const edit = appliedSupplyEdits[s.id] || {}
+                          const status = appliedSupplySaveStatus[s.id]
+                          return (
+                            <tr key={s.id} style={{ borderTop: '1px solid #eee' }}>
+                              <td style={{ padding: '0.35rem 0.6rem' }}>
+                                <input
+                                  value={edit.supply_name ?? s.supply_name}
+                                  onChange={ev => updateAppliedSupplyField(s.id, 'supply_name', ev.target.value)}
+                                  onBlur={() => saveAppliedSupplyField(s, 'supply_name')}
+                                  style={{ ...inp, fontWeight: 600 }}
+                                />
+                              </td>
+                              <td style={{ padding: '0.35rem 0.6rem' }}>
+                                <input
+                                  type="number" min="0" step="0.5"
+                                  value={edit.quantity ?? s.quantity}
+                                  onChange={ev => updateAppliedSupplyField(s.id, 'quantity', ev.target.value)}
+                                  onBlur={() => saveAppliedSupplyField(s, 'quantity')}
+                                  style={{ ...inp, textAlign: 'right', padding: '0.3rem 0.35rem' }}
+                                />
+                              </td>
+                              <td style={{ padding: '0.35rem 0.6rem' }}>
+                                <select
+                                  value={edit.job_id ?? s.job_id ?? ''}
+                                  onChange={ev => { updateAppliedSupplyField(s.id, 'job_id', ev.target.value); setTimeout(() => saveAppliedSupplyField(s, 'job_id'), 0) }}
+                                  style={{ ...inp, padding: '0.3rem 0.2rem' }}
+                                >
+                                  <option value="">—</option>
+                                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                                </select>
+                              </td>
+                              <td style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap' }}>
+                                {status === 'saving' && <span style={{ fontSize: '0.75rem', color: '#888' }}>saving…</span>}
+                                {status === 'saved' && <span style={{ fontSize: '0.75rem', color: '#2a7a2a' }}>✓ saved</span>}
+                                <button
+                                  onClick={() => deleteAppliedSupply(s)}
+                                  title="Remove from timesheet"
+                                  style={{ border: 'none', background: 'transparent', color: '#c00', cursor: 'pointer', fontSize: '1rem', padding: '0.2rem', marginLeft: '0.3rem' }}
+                                >✕</button>
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
