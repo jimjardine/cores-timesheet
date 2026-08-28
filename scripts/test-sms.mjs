@@ -112,6 +112,15 @@ async function cleanupTestTech() {
     `${SUPABASE_URL}/rest/v1/gear_photos?employee_id=eq.${TEST_TECH_ID}`,
     { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
   )
+  // Test Tech is meant to carry zero timesheet_entries ever ("OT math starts
+  // clean every run" — see the file header) — every other producer of
+  // Test Tech's data goes through sms_submissions first, but "day off"
+  // writes straight to timesheet_entries. Left uncleaned here, it'd violate
+  // that invariant for every scenario after it in the same run.
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/timesheet_entries?employee_id=eq.${TEST_TECH_ID}`,
+    { method: 'DELETE', headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}`, 'Content-Profile': 'Cores' } }
+  )
 }
 
 async function cleanupPhone(fromPhone) {
@@ -234,6 +243,19 @@ await scenario('all in one by phone', TEST_PHONE, [
     'Total 8hrs',
     ...NO_NAG,
   ]],
+])
+
+// 3b. "day off" — deterministic keyword, only recognized by phone (same as
+// JOBS/TS/PHONE#, no name-override support), so this has to use TEST_PHONE
+// directly rather than a generic phone() + "This is Test".
+await cleanupTestTech()
+await scenario('day off keyword', TEST_PHONE, [
+  ['Day off', ['Got it Test', 'day off']],
+])
+await cleanupTestTech()
+await scenario('day off keyword — already marked', TEST_PHONE, [
+  ['day off', ['Got it Test', 'day off']],
+  ['day off', ['Already marked', 'day off']],
 ])
 
 // 4. Day-start in-time only: acknowledged, never asks which job
