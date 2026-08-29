@@ -86,7 +86,7 @@ export default function SmsReview({ onApproved } = {}) {
       supabase.schema('Cores').from('employees').select('id, name, active'),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('timesheet_entries').select('employee_id, work_date').gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
-      supabase.schema('Cores').from('job_supplies').select('id, employee_id, work_date, supply_name, quantity, job_id, billed_at, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
+      supabase.schema('Cores').from('job_supplies').select('id, employee_id, work_date, supply_name, quantity, job_id, billed_at, source_photo_id, jobs(job_number)').not('applied_at', 'is', null).is('sms_submission_id', null).gte('work_date', ninetyDaysAgo.toISOString().slice(0, 10)),
     ])
     setSubmissions(subs || [])
     setJobs(j || [])
@@ -882,9 +882,10 @@ export default function SmsReview({ onApproved } = {}) {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
                       <thead>
                         <tr style={{ background: '#eef4ee' }}>
-                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left' }}>Supply</th>
-                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'right', width: 70 }}>Qty</th>
                           <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 100 }}>Job #</th>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'right', width: 70 }}>Qty</th>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left' }}>Supply</th>
+                          <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', width: 60, color: '#888' }}>Photo</th>
                           <th style={{ width: 30 }} />
                         </tr>
                       </thead>
@@ -892,15 +893,18 @@ export default function SmsReview({ onApproved } = {}) {
                         {appliedSuppliesFor(sub.employee_id, sub.work_date).map((s) => {
                           const edit = appliedSupplyEdits[s.id] || {}
                           const status = appliedSupplySaveStatus[s.id]
+                          const sourcePhoto = s.source_photo_id ? gearPhotos.find(p => p.id === s.source_photo_id) : null
                           return (
                             <tr key={s.id} style={{ borderTop: '1px solid #eee' }}>
                               <td style={{ padding: '0.35rem 0.6rem' }}>
-                                <input
-                                  value={edit.supply_name ?? s.supply_name}
-                                  onChange={ev => updateAppliedSupplyField(s.id, 'supply_name', ev.target.value)}
-                                  onBlur={() => saveAppliedSupplyField(s, 'supply_name')}
-                                  style={{ ...inp, fontWeight: 600 }}
-                                />
+                                <select
+                                  value={edit.job_id ?? s.job_id ?? ''}
+                                  onChange={ev => { updateAppliedSupplyField(s.id, 'job_id', ev.target.value); setTimeout(() => saveAppliedSupplyField(s, 'job_id'), 0) }}
+                                  style={{ ...inp, padding: '0.3rem 0.2rem' }}
+                                >
+                                  <option value="">—</option>
+                                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                                </select>
                               </td>
                               <td style={{ padding: '0.35rem 0.6rem' }}>
                                 <input
@@ -912,14 +916,20 @@ export default function SmsReview({ onApproved } = {}) {
                                 />
                               </td>
                               <td style={{ padding: '0.35rem 0.6rem' }}>
-                                <select
-                                  value={edit.job_id ?? s.job_id ?? ''}
-                                  onChange={ev => { updateAppliedSupplyField(s.id, 'job_id', ev.target.value); setTimeout(() => saveAppliedSupplyField(s, 'job_id'), 0) }}
-                                  style={{ ...inp, padding: '0.3rem 0.2rem' }}
-                                >
-                                  <option value="">—</option>
-                                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
-                                </select>
+                                <input
+                                  value={edit.supply_name ?? s.supply_name}
+                                  onChange={ev => updateAppliedSupplyField(s.id, 'supply_name', ev.target.value)}
+                                  onBlur={() => saveAppliedSupplyField(s, 'supply_name')}
+                                  style={{ ...inp, fontWeight: 600 }}
+                                />
+                              </td>
+                              <td style={{ padding: '0.35rem 0.6rem' }}>
+                                {sourcePhoto ? (
+                                  <span
+                                    onClick={() => setPhotoLightbox(sourcePhoto)}
+                                    style={{ color: '#0066cc', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem' }}
+                                  >📷 view</span>
+                                ) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}
                               </td>
                               <td style={{ padding: '0.35rem 0.6rem', whiteSpace: 'nowrap' }}>
                                 {status === 'saving' && <span style={{ fontSize: '0.75rem', color: '#888' }}>saving…</span>}
