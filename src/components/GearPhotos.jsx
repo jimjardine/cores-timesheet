@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import MediaThumb from './MediaThumb'
 import MediaViewer from './MediaViewer'
@@ -16,6 +17,11 @@ const fmtSize = (bytes) => bytes ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : '�
 const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 export default function GearPhotos() {
+  // Deep link from elsewhere (e.g. the Supplies report's "from photo" link)
+  // — ?photo=<id> scrolls to and highlights that one card instead of making
+  // her hunt for it in a list of 179.
+  const [searchParams] = useSearchParams()
+  const highlightPhotoId = searchParams.get('photo')
   const [photos, setPhotos]     = useState([])
   const [jobs, setJobs]         = useState([])
   const [employees, setEmployees] = useState([])
@@ -44,8 +50,6 @@ export default function GearPhotos() {
   const [newLines, setNewLines] = useState({})
   // Local edits to an already-saved row, keyed by row id, flushed on Save.
   const [rowEdits, setRowEdits] = useState({})
-  // Checkbox overrides, keyed by row id — absent means "same as stored".
-  const [checkedRows, setCheckedRows] = useState({})
   const [savingPhotoId, setSavingPhotoId] = useState(null)
   // `${employee_id}|${work_date}` for every day that already has a real
   // timesheet entry. job_supplies has no FK to timesheet_entries — a supply
@@ -86,6 +90,13 @@ export default function GearPhotos() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Runs once the target card is actually in the DOM — a plain [] dep would
+  // fire before `photos` has loaded, when the grid is still empty.
+  useEffect(() => {
+    if (!highlightPhotoId || loading) return
+    document.getElementById(`gear-photo-${highlightPhotoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [highlightPhotoId, loading])
 
   const employeeName = (id) => employees.find(e => e.id === id)?.name || null
   const hasEntryForPhoto = (photo) => photo.employee_id && entryDays.has(`${photo.employee_id}|${photo.work_date}`)
@@ -186,11 +197,6 @@ export default function GearPhotos() {
     setSavingId(null)
   }
 
-  // Whether a line is ticked to go on the timesheet. Persisted rows default to
-  // whatever they already are (applied = ticked), so opening a card and saving
-  // without touching anything is a no-op rather than a mass un-apply.
-  const isChecked = (row) => checkedRows[row.id] ?? !!row.applied_at
-
   // A pending (texted-in, not-yet-approved) submission is enough to save a
   // supply against — she doesn't have to wait for admin approval to log
   // what's in a photo. It just won't show in the Edit Entry modal's
@@ -208,18 +214,16 @@ export default function GearPhotos() {
     return `${name} doesn't have a timesheet entry for ${date} yet — supplies can't be saved until hours are logged for that day.`
   }
 
-  // The not-yet-saved lines for a card — a fresh photo defaults to one line
-  // pre-filled from the tech's note, shown before she's touched anything.
-  // Shared between the render and the save so accepting that default and
-  // hitting Save immediately actually saves it, instead of silently saving
-  // nothing because newLines[photo.id] was never set by an onChange.
-  const linesForPhoto = (photo) => {
-    const rows = suppliesByPhoto[photo.id] || []
-    const pending = newLines[photo.id]
-    return pending ?? (rows.length === 0
-      ? [{ key: 'l0', supply_name: photo.note || '', quantity: '1', checked: true }]
-      : [])
-  }
+  // The not-yet-saved lines for a card. No auto-default here on purpose —
+  // an earlier version pre-filled one line automatically whenever a photo
+  // had zero saved rows, meant for a fresh photo she'd never touched. But
+  // "zero rows" is also exactly what a photo looks like right after its one
+  // real line gets deleted elsewhere (e.g. SMS Review) — the auto-default
+  // would silently reappear, pre-filled with the same note text, looking
+  // like the just-deleted entry never actually left. "+ Add line" already
+  // prefills from the note (see the button below), so nothing is lost by
+  // requiring that explicit click instead of guessing.
+  const linesForPhoto = (photo) => newLines[photo.id] ?? []
 
   // The one write for the whole card: every ticked line ends up on the
   // timesheet, every unticked one doesn't. Unticking an already-applied line
@@ -234,11 +238,11 @@ export default function GearPhotos() {
 
     // Guard against logging the same consumable twice for the same job/day —
     // once from this photo, once already from elsewhere (typically the tech's
-    // own text report saying the same thing). Only lines actually about to go
-    // on the timesheet are worth checking; an unticked line isn't applying.
+    // own text report saying the same thing). Every line listed on the card
+    // is going on the timesheet, so all of them are worth checking.
     const namesGoingOn = [
-      ...pending.filter(l => l.checked).map(l => l.supply_name.trim()),
-      ...rows.filter(row => isChecked(row) && (rowEdits[row.id]?.supply_name ?? row.supply_name).trim())
+      ...pending.map(l => l.supply_name.trim()),
+      ...rows.filter(row => (rowEdits[row.id]?.supply_name ?? row.supply_name).trim())
         .map(row => (rowEdits[row.id]?.supply_name ?? row.supply_name).trim()),
     ]
     if (namesGoingOn.length > 0 && photo.job_id) {
@@ -266,7 +270,6 @@ export default function GearPhotos() {
     }
 
     const stamp = { applied_at: new Date().toISOString(), applied_by: getAdminName() }
-    const cleared = { applied_at: null, applied_by: null }
     setSavingPhotoId(photo.id)
 
     const inserts = pending.map(l => ({
@@ -276,7 +279,7 @@ export default function GearPhotos() {
       supply_name: l.supply_name.trim(),
       quantity: Number(l.quantity) > 0 ? Number(l.quantity) : 1,
       source_photo_id: photo.id,
-      ...(l.checked ? stamp : cleared),
+      ...stamp,
     }))
     if (inserts.length > 0) {
       const { error } = await supabase.schema('Cores').from('job_supplies').insert(inserts)
@@ -288,12 +291,14 @@ export default function GearPhotos() {
       const supply_name = (edit?.supply_name ?? row.supply_name).trim()
       if (!supply_name) continue
       const quantity = Number(edit?.quantity ?? row.quantity) > 0 ? Number(edit?.quantity ?? row.quantity) : 1
-      const checked = isChecked(row)
       const wasApplied = !!row.applied_at
-      const unchanged = supply_name === row.supply_name && quantity === Number(row.quantity) && checked === wasApplied
+      // Self-heals any row left over from before the checkbox was removed
+      // (saved but never applied) — every row on the card is on the
+      // timesheet now, so a save always stamps it if it isn't already.
+      const unchanged = supply_name === row.supply_name && quantity === Number(row.quantity) && wasApplied
       if (unchanged) continue
       const { error } = await supabase.schema('Cores').from('job_supplies')
-        .update({ supply_name, quantity, ...(checked ? (wasApplied ? {} : stamp) : cleared) })
+        .update({ supply_name, quantity, ...(wasApplied ? {} : stamp) })
         .eq('id', row.id)
       if (error) { alert('Error saving: ' + error.message); setSavingPhotoId(null); return }
     }
@@ -310,12 +315,20 @@ export default function GearPhotos() {
       for (const r of rows) delete n[r.id]
       return n
     })
-    setCheckedRows(c => {
-      const n = { ...c }
-      for (const r of rows) delete n[r.id]
-      return n
-    })
     setSavingPhotoId(null)
+  }
+
+  // Removes an already-saved supply line outright — the only way to take
+  // something off the timesheet now that there's no on/off checkbox (every
+  // row listed on the card is, by definition, on the timesheet). A billed
+  // line is real invoicing history and isn't offered this button at all,
+  // same protection savePhotoType already gives billed lines above.
+  async function deleteSupplyRow(row) {
+    if (!confirm(`Remove "${row.supply_name}" (qty ${Number(row.quantity)}) from this job's supplies?`)) return
+    const { error } = await supabase.schema('Cores').from('job_supplies').delete().eq('id', row.id)
+    if (error) { alert('Error removing: ' + error.message); return }
+    setSuppliesByPhoto(m => ({ ...m, [row.source_photo_id]: (m[row.source_photo_id] || []).filter(r => r.id !== row.id) }))
+    setRowEdits(d => { const n = { ...d }; delete n[row.id]; return n })
   }
 
   async function saveNote(photo) {
@@ -455,8 +468,13 @@ export default function GearPhotos() {
         {visible.map(photo => {
           const matchedJob = jobs.find(j => j.job_number.toUpperCase() === (photo.ship_or_job || '').toUpperCase())
           const name = employeeName(photo.employee_id)
+          const isHighlighted = photo.id === highlightPhotoId
           return (
-            <div key={photo.id} style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+            <div key={photo.id} id={`gear-photo-${photo.id}`}
+              style={{
+                border: isHighlighted ? '2px solid #0066cc' : '1px solid #ddd', borderRadius: 8, overflow: 'hidden', background: '#fff',
+                boxShadow: isHighlighted ? '0 0 0 3px rgba(0,102,204,0.2)' : 'none',
+              }}>
               <div
                 onClick={() => setLightbox(photo)}
                 style={{ aspectRatio: '4 / 3', background: '#f0f0f0', cursor: 'pointer', overflow: 'hidden' }}
@@ -557,7 +575,6 @@ export default function GearPhotos() {
                   // creating a real duplicate row for the same photo.
                   const hasNewContent = lines.some(l => l.supply_name.trim())
                   const hasRowEdits = rows.some(row => {
-                    if (isChecked(row) !== !!row.applied_at) return true
                     const edit = rowEdits[row.id]
                     if (!edit) return false
                     return edit.supply_name.trim() !== row.supply_name || Number(edit.quantity) !== Number(row.quantity)
@@ -581,21 +598,15 @@ export default function GearPhotos() {
                         </div>
                       )}
                       {rows.map(row => {
-                        // Ticked, applied, no pending edit — this row is already on
-                        // the timesheet and there's nothing left to do with it here.
-                        // A live checkbox + editable fields looked identical to a
-                        // still-unsaved line; shown instead as plain, greyed-out
-                        // text. Click it to unlock — for a typo fix or to take it
-                        // back off the timesheet.
-                        const locked = !!row.applied_at && isChecked(row) && !rowEdits[row.id]
-                        if (locked) {
+                        // Billed lines are real invoicing history — no ✕ here,
+                        // same protection savePhotoType gives them above.
+                        if (row.billed_at) {
                           return (
                             <div key={row.id}
-                              onClick={() => setRowEdits(d => ({ ...d, [row.id]: { supply_name: row.supply_name, quantity: String(row.quantity) } }))}
-                              title="On the timesheet — click to edit or remove"
-                              style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.4rem', color: '#999', background: '#f5f5f5', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+                              title="Already billed — left as-is"
+                              style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.4rem', color: '#999', background: '#f5f5f5', borderRadius: 4, fontSize: '0.8rem' }}
                             >
-                              <span>{row.quantity} × {row.supply_name}</span>
+                              <span>{row.quantity} × {row.supply_name} (billed)</span>
                             </div>
                           )
                         }
@@ -603,26 +614,19 @@ export default function GearPhotos() {
                         const set = (patch) => setRowEdits(d => ({ ...d, [row.id]: { ...v, ...patch } }))
                         return (
                           <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <input type="checkbox" checked={isChecked(row)} disabled={busy}
-                              title={row.applied_at ? 'On the timesheet — untick and save to take it off' : 'Tick and save to put it on the timesheet'}
-                              onChange={e => setCheckedRows(c => ({ ...c, [row.id]: e.target.checked }))}
-                              style={{ width: '1rem', height: '1rem', flexShrink: 0, cursor: 'pointer' }} />
                             <input type="number" min="0" step="1" value={v.quantity} disabled={busy}
                               onChange={e => set({ quantity: e.target.value })} style={qtyStyle} />
                             <input value={v.supply_name} placeholder="Description" disabled={busy}
                               onChange={e => set({ supply_name: e.target.value })} style={descStyle} />
+                            <button type="button" onClick={() => deleteSupplyRow(row)}
+                              disabled={busy} title="Remove from this job's supplies"
+                              style={{ flexShrink: 0, padding: '0.2rem 0.5rem', border: '1px solid #fcc', background: '#fee', color: '#c0392b', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                            >✕</button>
                           </div>
                         )
                       })}
                       {lines.map((l, i) => (
                         <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                          {/* No checkbox here — a pending line always applies when saved
-                              (defaults to checked:true and nothing here ever changes that
-                              now that the checkbox is gone). A line she doesn't want gets
-                              removed outright instead of unchecked, which is what "✕" is
-                              for — the checkbox only ever meant something for an
-                              already-saved row (below), where on/off the timesheet is a
-                              real distinction worth keeping. */}
                           <input type="number" min="0" step="1" value={l.quantity} disabled={busy}
                             onChange={e => setLines(lines.map((x, xi) => xi === i ? { ...x, quantity: e.target.value } : x))}
                             style={qtyStyle} />
@@ -642,7 +646,7 @@ export default function GearPhotos() {
                       ))}
                       <div style={{ display: 'flex', gap: '0.3rem' }}>
                         <button
-                          onClick={() => setLines([...lines, { key: `l${Date.now()}`, supply_name: '', quantity: '1', checked: true }])}
+                          onClick={() => setLines([...lines, { key: `l${Date.now()}`, supply_name: photo.note || '', quantity: '1' }])}
                           disabled={busy}
                           style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.78rem', border: '1px dashed #0066cc', background: '#fff', color: '#0066cc', borderRadius: 4, cursor: 'pointer' }}
                         >+ Add line</button>
