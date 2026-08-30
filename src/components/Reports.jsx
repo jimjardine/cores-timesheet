@@ -40,6 +40,16 @@ export default function Reports() {
   const [employees, setEmployees] = useState([])
   const [entries, setEntries] = useState([])
   const [supplies, setSupplies] = useState([])
+  const [postedDays, setPostedDays] = useState({}) // `${employee_id}|${work_date}` -> { posted_at, posted_by }
+  const [expandedSupplyRows, setExpandedSupplyRows] = useState(new Set())
+  function toggleSupplyRow(id) {
+    setExpandedSupplyRows(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   const [gearPhotos, setGearPhotos] = useState([])
   const [photoGroup, setPhotoGroup] = useState(null)
   const [photoLightbox, setPhotoLightbox] = useState(null)
@@ -65,7 +75,6 @@ export default function Reports() {
   const [suppliesJobFilterIds, setSuppliesJobFilterIds] = useState([])
   const [suppliesEmployeeFilterIds, setSuppliesEmployeeFilterIds] = useState([])
   const [suppliesBilledFilter, setSuppliesBilledFilter] = useState('unbilled') // 'all' | 'billed' | 'unbilled'
-  const [suppliesGroupBy, setSuppliesGroupBy] = useState('date') // 'job' | 'date'
 
   // Column sort — { [tabKey]: { col, dir } }
   const [tableSort, setTableSort] = useState({})
@@ -148,7 +157,7 @@ export default function Reports() {
 
   async function loadAll() {
     setLoading(true)
-    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes, pendingRes] = await Promise.all([
+    const [jobsRes, custRes, vesselRes, empRes, entriesRes, configRes, holidaysRes, suppliesRes, gearPhotosRes, pendingRes, postedRes] = await Promise.all([
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*').order('name'),
@@ -161,6 +170,7 @@ export default function Reports() {
       supabase.schema('Cores').from('job_supplies').select('*, employees(id, name)').not('applied_at', 'is', null).order('work_date', { ascending: false }),
       supabase.schema('Cores').from('gear_photos').select('id, job_id, storage_path, employee_id, work_date, created_at').not('job_id', 'is', null),
       supabase.schema('Cores').from('sms_submissions').select('id', { count: 'exact', head: true }).in('status', ['submitted', 'collecting']),
+      supabase.schema('Cores').from('daily_summary_posted').select('employee_id, work_date, posted_at, posted_by'),
     ])
     setJobs(jobsRes.data || [])
     setCustomers(custRes.data || [])
@@ -169,6 +179,7 @@ export default function Reports() {
     setEntries(entriesRes.data || [])
     setSupplies(suppliesRes.data || [])
     setGearPhotos(gearPhotosRes.data || [])
+    setPostedDays(Object.fromEntries((postedRes.data || []).map(r => [`${r.employee_id}|${r.work_date}`, { posted_at: r.posted_at, posted_by: r.posted_by }])))
     setPayrollConfig(Object.fromEntries((configRes.data || []).map(r => [r.key, Number(r.value)])))
     setStatHolidays(new Set((holidaysRes.data || []).map(r => r.holiday_date)))
     setPendingSubmissionCount(pendingRes.count || 0)
@@ -254,34 +265,17 @@ export default function Reports() {
     acc[s.job_id].push(s)
     return acc
   }, {})
-  // Grouped display, top level switches between Job and Date via suppliesGroupBy
-  const suppliesTopGroups = (() => {
-    const level1KeyFn = suppliesGroupBy === 'date' ? (s => s.work_date) : (s => s.job_id)
-    const byLevel1 = suppliesTabList.reduce((acc, s) => {
-      const k = level1KeyFn(s)
-      if (!acc[k]) acc[k] = []
-      acc[k].push(s)
-      return acc
-    }, {})
-    const level1Keys = Object.keys(byLevel1).sort((a, b) =>
-      suppliesGroupBy === 'date' ? b.localeCompare(a) : (jobsById[a]?.job_number || '').localeCompare(jobsById[b]?.job_number || '')
-    )
-    return level1Keys.map(k => {
-      const rows = byLevel1[k]
-      const subgroups = rows.reduce((acc, s) => {
-        const subKey = suppliesGroupBy === 'date' ? `${s.job_id}|${s.employee_id}` : `${s.employee_id}|${s.work_date}`
-        if (!acc[subKey]) acc[subKey] = { job_id: s.job_id, employee: s.employees, employee_id: s.employee_id, work_date: s.work_date, items: [] }
-        acc[subKey].items.push(s)
-        return acc
-      }, {})
-      const sortedSubgroups = Object.values(subgroups).sort((a, b) =>
-        suppliesGroupBy === 'date'
-          ? (jobsById[a.job_id]?.job_number || '').localeCompare(jobsById[b.job_id]?.job_number || '') || (a.employee?.name || '').localeCompare(b.employee?.name || '')
-          : b.work_date.localeCompare(a.work_date) || (a.employee?.name || '').localeCompare(b.employee?.name || '')
-      )
-      return { key: k, job: suppliesGroupBy === 'job' ? jobsById[k] : null, workDate: suppliesGroupBy === 'date' ? k : null, subgroups: sortedSubgroups }
-    })
-  })()
+  // Flat, one-row-per-item table — sortable via the same tableSort/renderSortTh
+  // convention as the other Reports tabs.
+  const suppliesColumns = [
+    { key: 'date', cmp: (a, b) => a.work_date.localeCompare(b.work_date) },
+    { key: 'employee', cmp: (a, b) => (a.employees?.name || '').localeCompare(b.employees?.name || '') },
+    { key: 'job', cmp: (a, b) => (jobsById[a.job_id]?.job_number || '').localeCompare(jobsById[b.job_id]?.job_number || '') },
+    { key: 'qty', cmp: (a, b) => Number(a.quantity) - Number(b.quantity) },
+    { key: 'supply', cmp: (a, b) => (a.supply_name || '').localeCompare(b.supply_name || '') },
+    { key: 'billed', cmp: (a, b) => (a.billed_at ? 1 : 0) - (b.billed_at ? 1 : 0) },
+  ]
+  const sortedSuppliesTabList = sortRows('supplies', suppliesTabList, suppliesColumns, (a, b) => b.work_date.localeCompare(a.work_date))
 
   const [supplySaveStatus, setSupplySaveStatus] = useState({}) // { [id]: 'saving' | 'saved' | 'error' }
 
@@ -304,13 +298,6 @@ export default function Reports() {
     }
     setSupplySaveStatus(s => ({ ...s, [supply.id]: 'saved' }))
     setTimeout(() => setSupplySaveStatus(s => (s[supply.id] === 'saved' ? { ...s, [supply.id]: undefined } : s)), 2000)
-  }
-
-  async function deleteSupply(supply) {
-    if (!confirm(`Delete "${supply.supply_name}" (qty ${Number(supply.quantity)})?`)) return
-    const { error } = await supabase.schema('Cores').from('job_supplies').delete().eq('id', supply.id)
-    if (error) { alert(`Delete failed: ${error.message}`); return }
-    setSupplies(prev => prev.filter(s => s.id !== supply.id))
   }
 
   // Marks a supply as charged to the customer (or reverses that) — same
@@ -1181,24 +1168,8 @@ export default function Reports() {
             </div>
           </div>
 
-          <div className="no-print" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', fontSize: '0.85rem' }}>
-            <span style={{ color: '#888' }}>Group by:</span>
-            {[{ key: 'job', label: 'Job' }, { key: 'date', label: 'Date' }].map(o => (
-              <span key={o.key}
-                onClick={() => setSuppliesGroupBy(o.key)}
-                style={{
-                  padding: '0.2rem 0.6rem', borderRadius: '4px', cursor: 'pointer', userSelect: 'none',
-                  fontWeight: suppliesGroupBy === o.key ? 700 : 400,
-                  color: suppliesGroupBy === o.key ? '#0066cc' : '#555',
-                  background: suppliesGroupBy === o.key ? '#eaf2fc' : 'transparent',
-                }}>
-                {o.label}{suppliesGroupBy === o.key ? ' ▾' : ''}
-              </span>
-            ))}
-          </div>
-
           <div className="no-print" style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#888' }}>
-            Edits save automatically when you click out of a field — watch for the "✓ Saved" note on the right of each row.
+            Click a row to see its photo and Sage-posting status. Edits save automatically when you click out of a field — watch for the "✓ Saved" note on the right of each row.
           </div>
 
           <div className="print-only" style={{ display: 'none', marginBottom: '1.5rem' }}>
@@ -1206,118 +1177,119 @@ export default function Reports() {
             <div style={{ color: '#555', fontSize: '0.9rem' }}>Cores Worldwide — {dateLabel}{dateFrom && dateTo ? ` (${dateFrom} – ${dateTo})` : ''}</div>
           </div>
 
-          {suppliesTopGroups.length === 0 ? (
+          {sortedSuppliesTabList.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: '#999', background: '#f9f9f9', borderRadius: '6px' }}>No supplies recorded for this period</div>
           ) : (
-            suppliesTopGroups.map(topGroup => (
-                  <div key={topGroup.key} className="supplies-job-group" style={{ ...card, marginBottom: '1.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                      {suppliesGroupBy === 'date' ? (
-                        <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>
-                          {new Date(topGroup.workDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                        </span>
-                      ) : (
-                        <>
-                          <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{topGroup.job?.job_number || 'Unknown Job'}</span>
-                          <span style={{ color: '#aaa' }}>·</span>
-                          <span>{topGroup.job?.customers?.name}</span>
-                          <span style={{ color: '#aaa' }}>·</span>
-                          <span style={{ color: '#555' }}>{topGroup.job?.vessels?.name}</span>
-                        </>
-                      )}
-                    </div>
-                    {topGroup.subgroups
-                      .map(group => {
-                        const photos = gearPhotos.filter(p => p.job_id === group.job_id && p.employee_id === group.employee_id && p.work_date === group.work_date)
-                        const groupKey = `${group.job_id}-${group.employee_id}-${group.work_date}`
-                        return (
-                          <div key={groupKey} className="supplies-subgroup" style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
-                              <span>
-                                {suppliesGroupBy === 'date'
-                                  ? `${jobsById[group.job_id]?.job_number || 'Unknown Job'} — ${group.employee?.name || 'Unknown'}`
-                                  : `${group.employee?.name || 'Unknown'} — ${new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}`}
-                              </span>
-                              <span style={{ color: '#999', fontWeight: 400, fontSize: '0.85rem' }}>
-                                {group.items.length} item{group.items.length === 1 ? '' : 's'}{photos.length > 0 ? ` · 📷 ${photos.length}` : ''}
-                              </span>
-                            </div>
-                            <div className="supplies-detail">
-                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
-                              <thead>
-                                <tr style={{ borderBottom: '1px solid #ddd' }}>
-                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#888', width: '80px' }}>Qty</th>
-                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Supply</th>
-                                  <th style={{ padding: '0.3rem 0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#888' }}>Description</th>
-                                  <th className="no-print" style={{ width: '90px', textAlign: 'center', fontSize: '0.8rem', color: '#888' }}>Billed</th>
-                                  <th className="no-print" style={{ width: '70px' }}></th>
-                                  <th className="no-print" style={{ width: '40px' }}></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {group.items.map(s => {
-                                  const sourcePhoto = s.source_photo_id ? gearPhotos.find(p => p.id === s.source_photo_id) : null
-                                  return (
-                                  <tr key={s.id} style={{ verticalAlign: 'top' }}>
-                                    <td style={{ padding: '0.25rem 0.5rem' }}>
-                                      <input type="number" step="0.01" value={s.quantity ?? ''}
-                                        onChange={e => updateSupplyField(s.id, 'quantity', e.target.value)}
-                                        onBlur={() => saveSupplyField(s, 'quantity')}
-                                        className="print-input"
-                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem', textAlign: 'center' }} />
-                                    </td>
-                                    <td style={{ padding: '0.25rem 0.5rem' }}>
-                                      <input value={s.supply_name || ''}
-                                        onChange={e => updateSupplyField(s.id, 'supply_name', e.target.value)}
-                                        onBlur={() => saveSupplyField(s, 'supply_name')}
-                                        className="print-input"
-                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
-                                      {sourcePhoto && (
-                                        <span onClick={() => setPhotoLightbox(sourcePhoto)} className="no-print"
-                                          style={{ display: 'block', marginTop: '0.15rem', fontSize: '0.75rem', color: '#0066cc', cursor: 'pointer' }}>📷 from photo</span>
-                                      )}
-                                    </td>
-                                    <td style={{ padding: '0.25rem 0.5rem' }}>
-                                      <input value={s.description || ''}
-                                        onChange={e => updateSupplyField(s.id, 'description', e.target.value)}
-                                        onBlur={() => saveSupplyField(s, 'description')}
-                                        placeholder="Optional note for the invoice/print"
-                                        className="print-input"
-                                        style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
-                                    </td>
-                                    <td className="no-print" style={{ textAlign: 'center' }}>
-                                      <input type="checkbox" checked={!!s.billed_at} onChange={() => toggleBilled(s)}
-                                        title={s.billed_at ? `Billed ${s.billed_at.substring(0, 10)}${s.billed_by ? ' by ' + s.billed_by : ''}` : 'Not billed'}
-                                        style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }} />
-                                    </td>
-                                    <td className="no-print" style={{ textAlign: 'center', fontSize: '0.75rem' }}>
-                                      {supplySaveStatus[s.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
-                                      {supplySaveStatus[s.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
-                                      {supplySaveStatus[s.id] === 'error' && <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ Failed</span>}
-                                    </td>
-                                    <td className="no-print" style={{ textAlign: 'center' }}>
-                                      <button onClick={() => deleteSupply(s)} style={{ padding: '0.25rem 0.5rem', background: '#fee', border: '1px solid #fcc', borderRadius: '4px', cursor: 'pointer', color: '#c0392b', fontSize: '0.8rem' }}>✕</button>
-                                    </td>
-                                  </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                            {photos.length > 0 && (
-                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                {photos.map(p => (
-                                  <div key={p.id} style={{ width: '120px', cursor: 'pointer' }} onClick={() => setPhotoLightbox(p)}>
-                                    <MediaThumb src={gearPhotoUrl(p.storage_path)} alt="" style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: '4px', border: '1px solid #eee', display: 'block' }} />
-                                  </div>
-                                ))}
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                  <th className="no-print" style={{ width: '28px' }}></th>
+                  {renderSortTh('supplies', 'date', 'Date')}
+                  {renderSortTh('supplies', 'employee', 'Employee')}
+                  {renderSortTh('supplies', 'job', 'Job #')}
+                  {renderSortTh('supplies', 'qty', 'Qty', 'center')}
+                  {renderSortTh('supplies', 'supply', 'Supply')}
+                  <th style={{ padding: '0.75rem', textAlign: 'left' }}>Description</th>
+                  <th className="no-print" style={{ width: '90px' }}></th>
+                  {renderSortTh('supplies', 'billed', 'Billed', 'center')}
+                  <th className="no-print" style={{ width: '70px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedSuppliesTabList.map(s => {
+                  const job = jobsById[s.job_id]
+                  const sourcePhoto = s.source_photo_id ? gearPhotos.find(p => p.id === s.source_photo_id) : null
+                  const groupPhotos = gearPhotos.filter(p => p.job_id === s.job_id && p.employee_id === s.employee_id && p.work_date === s.work_date)
+                  const posted = postedDays[`${s.employee_id}|${s.work_date}`]
+                  const expanded = expandedSupplyRows.has(s.id)
+                  return (
+                    <React.Fragment key={s.id}>
+                      <tr style={{ borderBottom: expanded ? 'none' : '1px solid #eee', ...clickRow }}
+                          onClick={() => toggleSupplyRow(s.id)} onMouseEnter={e => hoverRow(e, true)} onMouseLeave={e => hoverRow(e, false)}>
+                        <td className="no-print" style={{ padding: '0.75rem 0 0.75rem 0.75rem', color: '#999', fontSize: '0.75rem' }}>{expanded ? '▾' : '▸'}</td>
+                        <td style={{ padding: '0.75rem', whiteSpace: 'nowrap' }}>
+                          {new Date(s.work_date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td style={{ padding: '0.75rem' }}>{s.employees?.name || 'Unknown'}</td>
+                        <td style={{ padding: '0.75rem' }} title={[job?.customers?.name, job?.vessels?.name].filter(Boolean).join(' · ')}>
+                          {job?.job_number || 'Unknown Job'}
+                        </td>
+                        <td style={{ padding: '0.5rem', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <input type="number" step="0.01" value={s.quantity ?? ''}
+                            onChange={e => updateSupplyField(s.id, 'quantity', e.target.value)}
+                            onBlur={() => saveSupplyField(s, 'quantity')}
+                            className="print-input"
+                            style={{ width: '60px', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem', textAlign: 'center' }} />
+                        </td>
+                        <td style={{ padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
+                          <input value={s.supply_name || ''}
+                            onChange={e => updateSupplyField(s.id, 'supply_name', e.target.value)}
+                            onBlur={() => saveSupplyField(s, 'supply_name')}
+                            className="print-input"
+                            style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                        </td>
+                        <td style={{ padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
+                          <input value={s.description || ''}
+                            onChange={e => updateSupplyField(s.id, 'description', e.target.value)}
+                            onBlur={() => saveSupplyField(s, 'description')}
+                            placeholder="Optional note for the invoice/print"
+                            className="print-input"
+                            style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem' }} />
+                        </td>
+                        <td className="no-print" style={{ padding: '0.5rem', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                          {sourcePhoto && (
+                            <span onClick={() => navigate(`/dashboard/photos?photo=${sourcePhoto.id}`)}
+                              style={{ fontSize: '0.75rem', color: '#0066cc', cursor: 'pointer' }}>📷 from photo</span>
+                          )}
+                        </td>
+                        <td className="no-print" style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={!!s.billed_at} onChange={() => toggleBilled(s)}
+                            title={s.billed_at ? `Billed ${s.billed_at.substring(0, 10)}${s.billed_by ? ' by ' + s.billed_by : ''}` : 'Not billed'}
+                            style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }} />
+                        </td>
+                        <td className="no-print" style={{ textAlign: 'center', fontSize: '0.75rem' }}>
+                          {supplySaveStatus[s.id] === 'saving' && <span style={{ color: '#999' }}>Saving…</span>}
+                          {supplySaveStatus[s.id] === 'saved' && <span style={{ color: '#2a7a2a', fontWeight: 600 }}>✓ Saved</span>}
+                          {supplySaveStatus[s.id] === 'error' && <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ Failed</span>}
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="no-print" style={{ borderBottom: '1px solid #eee', background: '#fafbfc' }}>
+                          <td></td>
+                          <td colSpan={9} style={{ padding: '0.75rem 0.75rem 1rem' }}>
+                            <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                              <div>
+                                <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.35rem' }}>Timesheet status</div>
+                                <span style={{
+                                  padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600,
+                                  background: posted ? '#e6f4ea' : '#fff3cd', color: posted ? '#2d6a38' : '#8a6d1f',
+                                }}>
+                                  {posted
+                                    ? `Posted to Sage${posted.posted_at ? ' · ' + new Date(posted.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}${posted.posted_by ? ' by ' + posted.posted_by : ''}`
+                                    : 'Pending — not yet posted to Sage'}
+                                </span>
                               </div>
-                            )}
+                              {groupPhotos.length > 0 && (
+                                <div>
+                                  <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.35rem' }}>Photos ({groupPhotos.length})</div>
+                                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    {groupPhotos.map(p => (
+                                      <div key={p.id} style={{ width: '110px', cursor: 'pointer' }} onClick={() => setPhotoLightbox(p)}>
+                                        <MediaThumb src={gearPhotoUrl(p.storage_path)} alt="" style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: '4px', border: '1px solid #eee', display: 'block' }} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )
-                      })}
-                  </div>
-            ))
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
           )}
         </div>
       )}
