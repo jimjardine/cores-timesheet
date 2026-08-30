@@ -120,6 +120,18 @@ export default function MediaViewer({ src, alt = '', style }) {
     }
     function onGestureEnd(e) { e.preventDefault(); gestureScaleRef.current = null }
 
+    // Windows Chrome/Edge trackpad-pinch and Ctrl+mouse-wheel both fire as
+    // wheel events with ctrlKey:true, and preventDefault() on them does stop
+    // the browser's native page zoom — but only for wheel events that reach
+    // an element with a non-passive listener. The lightbox this sits in has
+    // a full-viewport backdrop around the image (padding, letterboxing on
+    // non-square photos) that has no listener at all, so the cursor only
+    // has to be a few pixels off the image for Ctrl+wheel to fall through
+    // uncaught and trigger native zoom on the whole page. Blocking it at
+    // the window level, for as long as the lightbox is mounted, closes that
+    // gap without needing every caller's backdrop markup to know about it.
+    function onWindowWheel(e) { if (e.ctrlKey) e.preventDefault() }
+
     el.addEventListener('wheel', onWheel, { passive: false })
     el.addEventListener('touchstart', onTouchStart, { passive: false })
     el.addEventListener('touchmove', onTouchMove, { passive: false })
@@ -128,6 +140,7 @@ export default function MediaViewer({ src, alt = '', style }) {
     el.addEventListener('gesturestart', onGestureStart, { passive: false })
     el.addEventListener('gesturechange', onGestureChange, { passive: false })
     el.addEventListener('gestureend', onGestureEnd, { passive: false })
+    window.addEventListener('wheel', onWindowWheel, { passive: false })
     return () => {
       el.removeEventListener('wheel', onWheel)
       el.removeEventListener('touchstart', onTouchStart)
@@ -137,6 +150,7 @@ export default function MediaViewer({ src, alt = '', style }) {
       el.removeEventListener('gesturestart', onGestureStart)
       el.removeEventListener('gesturechange', onGestureChange)
       el.removeEventListener('gestureend', onGestureEnd)
+      window.removeEventListener('wheel', onWindowWheel)
     }
   }, [isVideo])
 
