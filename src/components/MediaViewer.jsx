@@ -30,6 +30,7 @@ export default function MediaViewer({ src, alt = '', style }) {
   const containerRef = useRef(null)
   const dragRef = useRef(null)   // { startX, startY, origX, origY } while a drag is in progress
   const pinchRef = useRef(null)  // { startDist, startScale } while a two-finger pinch is in progress
+  const gestureScaleRef = useRef(null) // scale at gesturestart, while a Safari trackpad pinch is in progress
   const stateRef = useRef({ scale, pos })
   stateRef.current = { scale, pos }
 
@@ -103,17 +104,39 @@ export default function MediaViewer({ src, alt = '', style }) {
       if (e.touches.length === 0) { dragRef.current = null; setDragging(false) }
     }
 
+    // Safari trackpad pinch never fires wheel events at all — it fires these
+    // proprietary (WebKit-only) gesture events instead, which is exactly what
+    // wheel/touch listeners above can't catch. Without this, a Safari desktop
+    // trackpad pinch falls straight through to the browser's own native page
+    // zoom: the lightbox visibly enlarges past the viewport with no way to
+    // pan it (native zoom on a position:fixed lightbox can't be scrolled into
+    // view — same underlying issue as the mobile case described up top),
+    // and the only way out is closing the lightbox entirely. Chrome/Firefox
+    // never fire these events, so this is a no-op there — safe to always add.
+    function onGestureStart(e) { e.preventDefault(); gestureScaleRef.current = stateRef.current.scale }
+    function onGestureChange(e) {
+      e.preventDefault()
+      zoomTo((gestureScaleRef.current ?? stateRef.current.scale) * e.scale, { x: e.clientX, y: e.clientY })
+    }
+    function onGestureEnd(e) { e.preventDefault(); gestureScaleRef.current = null }
+
     el.addEventListener('wheel', onWheel, { passive: false })
     el.addEventListener('touchstart', onTouchStart, { passive: false })
     el.addEventListener('touchmove', onTouchMove, { passive: false })
     el.addEventListener('touchend', onTouchEnd, { passive: false })
     el.addEventListener('touchcancel', onTouchEnd, { passive: false })
+    el.addEventListener('gesturestart', onGestureStart, { passive: false })
+    el.addEventListener('gesturechange', onGestureChange, { passive: false })
+    el.addEventListener('gestureend', onGestureEnd, { passive: false })
     return () => {
       el.removeEventListener('wheel', onWheel)
       el.removeEventListener('touchstart', onTouchStart)
       el.removeEventListener('touchmove', onTouchMove)
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('gesturestart', onGestureStart)
+      el.removeEventListener('gesturechange', onGestureChange)
+      el.removeEventListener('gestureend', onGestureEnd)
     }
   }, [isVideo])
 
