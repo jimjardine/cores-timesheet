@@ -66,15 +66,6 @@ export default function Reports() {
   const [suppliesEmployeeFilterIds, setSuppliesEmployeeFilterIds] = useState([])
   const [suppliesBilledFilter, setSuppliesBilledFilter] = useState('unbilled') // 'all' | 'billed' | 'unbilled'
   const [suppliesGroupBy, setSuppliesGroupBy] = useState('date') // 'job' | 'date'
-  const [expandedSupplyGroups, setExpandedSupplyGroups] = useState(new Set())
-  function toggleSupplyGroup(key) {
-    setExpandedSupplyGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
 
   // Column sort — { [tabKey]: { col, dir } }
   const [tableSort, setTableSort] = useState({})
@@ -1239,14 +1230,9 @@ export default function Reports() {
                       .map(group => {
                         const photos = gearPhotos.filter(p => p.job_id === group.job_id && p.employee_id === group.employee_id && p.work_date === group.work_date)
                         const groupKey = `${group.job_id}-${group.employee_id}-${group.work_date}`
-                        const isExpanded = expandedSupplyGroups.has(groupKey)
                         return (
                           <div key={groupKey} className="supplies-subgroup" style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
-                            <div
-                              className="no-print"
-                              onClick={() => toggleSupplyGroup(groupKey)}
-                              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: '#333', marginBottom: '0.5rem', cursor: 'pointer', userSelect: 'none' }}>
-                              <span style={{ color: '#888', fontSize: '0.8rem', width: '0.8rem' }}>{isExpanded ? '▾' : '▸'}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
                               <span>
                                 {suppliesGroupBy === 'date'
                                   ? `${jobsById[group.job_id]?.job_number || 'Unknown Job'} — ${group.employee?.name || 'Unknown'}`
@@ -1256,12 +1242,7 @@ export default function Reports() {
                                 {group.items.length} item{group.items.length === 1 ? '' : 's'}{photos.length > 0 ? ` · 📷 ${photos.length}` : ''}
                               </span>
                             </div>
-                            <div className="print-only" style={{ display: 'none', fontWeight: 600, color: '#333', marginBottom: '0.5rem' }}>
-                              {suppliesGroupBy === 'date'
-                                ? `${jobsById[group.job_id]?.job_number || 'Unknown Job'} — ${group.employee?.name || 'Unknown'}`
-                                : `${group.employee?.name || 'Unknown'} — ${new Date(group.work_date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}`}
-                            </div>
-                            <div className="supplies-detail" style={{ display: isExpanded ? 'block' : 'none' }}>
+                            <div className="supplies-detail">
                             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
                               <thead>
                                 <tr style={{ borderBottom: '1px solid #ddd' }}>
