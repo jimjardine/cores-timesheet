@@ -1047,6 +1047,41 @@ export default function AdminDashboard() {
     link.click()
   }
 
+  // Flat, one-row-per-job-entry CSV — Date/Employee/Job#/RegHrs/OTHrs/PD/Posted?
+  // Deliberately separate from handleExport's grouped Detail/Summary/Total
+  // report: that one's shaped for payroll review, this one's shaped for
+  // dropping straight into another spreadsheet or system. Respects the same
+  // filters (date range, employee, single-day drill-down) as the rest of
+  // this tab.
+  function handleSimpleExport() {
+    const toExport = selectedDate
+      ? filteredEntries.filter(e => e.work_date === selectedDate)
+      : filteredEntries
+    const sorted = [...toExport].sort((a, b) =>
+      a.work_date.localeCompare(b.work_date) ||
+      (a.employees?.name || '').localeCompare(b.employees?.name || '') ||
+      (a.sort_order ?? 1) - (b.sort_order ?? 1)
+    )
+    const csvRow = cols => cols.map(c => c === '' || c == null ? '' : String(c).includes(',') ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')
+    const rows = [csvRow(['Date', 'Employee', 'Job #', 'Reg Hrs', 'OT Hrs', 'PD', 'Posted?'])]
+    sorted.forEach(e => {
+      const posted = !!postedDays[postedKey(e.employee_id, e.work_date)]
+      rows.push(csvRow([
+        e.work_date,
+        e.employees?.name || 'Unknown',
+        e.jobs?.job_number || (e.is_day_off ? 'Day off' : e.is_stat_pay ? 'Stat pay' : ''),
+        fmtHours(listOtMap[e.id]?.reg ?? 0),
+        fmtHours(listOtMap[e.id]?.ot ?? 0),
+        e.per_diem || 0,
+        posted ? 'Yes' : 'No',
+      ]))
+    })
+    const link = document.createElement('a')
+    link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'))
+    link.download = selectedDate ? `timesheets-simple-${selectedDate}.csv` : 'timesheets-simple.csv'
+    link.click()
+  }
+
   async function printTimesheetFor(emp, workDate) {
     const dayEntries = entries.filter(e => e.employee_id === emp.id && e.work_date === workDate)
       .sort((a, b) => (a.sort_order ?? 1) - (b.sort_order ?? 1))
@@ -1637,6 +1672,8 @@ export default function AdminDashboard() {
                       Include summaries
                     </label>
                     <button onClick={handleExport} style={{ padding: '0.35rem 0.9rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Export CSV</button>
+                    <button onClick={handleSimpleExport} title="Flat CSV: Date, Employee, Job #, Reg Hrs, OT Hrs, PD, Posted?"
+                      style={{ padding: '0.35rem 0.9rem', background: '#fff', color: '#2d6a38', border: '1px solid #2d6a38', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Simple CSV</button>
                     {selectedDate && (
                       <button onClick={handlePrintTimesheet} style={{ padding: '0.35rem 0.9rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}>Print Timesheet</button>
                     )}
@@ -1777,6 +1814,8 @@ export default function AdminDashboard() {
                   </label>
                   <button onClick={() => setManualEntry(true)} style={{ padding: '0.45rem 1rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>+ Add Manual Entry</button>
                   <button onClick={handleExport} style={{ padding: '0.45rem 1rem', background: '#2d6a38', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Export CSV</button>
+                  <button onClick={handleSimpleExport} title="Flat CSV: Date, Employee, Job #, Reg Hrs, OT Hrs, PD, Posted?"
+                    style={{ padding: '0.45rem 1rem', background: '#fff', color: '#2d6a38', border: '1px solid #2d6a38', borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem' }}>Simple CSV</button>
                   <button onClick={handlePrintAllTimesheets} disabled={printingAll || timesheetRows.length === 0}
                     style={{ padding: '0.45rem 1rem', background: printingAll ? '#99b8d9' : '#0066cc', color: 'white', border: 'none', borderRadius: '4px', cursor: printingAll ? 'default' : 'pointer', fontSize: '0.9rem' }}>
                     {printingAll ? `Printing ${printAllProgress?.done ?? 0}/${printAllProgress?.total ?? 0}…` : `Print All PDFs (${timesheetRows.length})`}
