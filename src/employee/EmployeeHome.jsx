@@ -7,6 +7,7 @@ import { fmtHours } from '../utils/format'
 import { fetchDailyOTContext, computeDailyOTSplit, computeSubmissionTiming } from '../utils/entrySave'
 import JobPicker from './JobPicker'
 import MediaThumb from '../components/MediaThumb'
+import MediaViewer from '../components/MediaViewer'
 import './employee.css'
 
 const blankDraftLine = () => ({ job_id: '', hours: '', description: '' })
@@ -65,6 +66,7 @@ export default function EmployeeHome({ employee }) {
   const [photoFor, setPhotoFor] = useState(null)
   const [photoJobId, setPhotoJobId] = useState('')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [photoLightbox, setPhotoLightbox] = useState(null)
   const [error, setError] = useState('')
 
   const weekEnd = addDays(weekStart, 6)
@@ -539,37 +541,6 @@ export default function EmployeeHome({ employee }) {
                   )}
                 </div>
 
-                {/* Most photos are of a specific job, so this lives right beside
-                    "+ Add another job" instead of down with the day-level Note —
-                    a tech is usually already looking at the job they want to
-                    attach it to. */}
-                {photoFor === ymd && (
-                  <div style={{ marginTop: '0.5rem' }}>
-                    <div className="emp-field">
-                      <label>Job this photo is for (optional)</label>
-                      <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
-                      {photoJobId && (
-                        <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
-                          onClick={() => setPhotoJobId('')}>Clear job</button>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
-                        {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
-                        {/* display:none (or visibility:hidden) on a file input silently blocks the
-                            native picker from opening on iOS Safari when triggered via a wrapping
-                            label — has to stay "visible" (just invisible/off-screen) for tapping the
-                            label to work. capture="environment" is left off so the OS offers both
-                            camera and library, matching what "Take / choose photo or video" promises. */}
-                        <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
-                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
-                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
-                      </label>
-                      <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.6rem', marginTop: '0.9rem' }}>
                   <button className="emp-btn emp-btn-secondary" disabled={savingLog} onClick={closeLog}>Save Entry</button>
                   <button className="emp-btn" disabled={savingLog} onClick={() => submitDay(ymd)}>Submit day</button>
@@ -599,9 +570,27 @@ export default function EmployeeHome({ employee }) {
               // add to or modify it. Reported by Jim, 2026-08-27: tapping
               // this let anyone reopen an approved day and add another job
               // to it after the fact.
-              <div className="emp-hint" style={{ marginBottom: '0.6rem' }}>
-                {`Already logged${dayEntries[0]?.time_in ? ` — In ${fmtTimeShort(dayEntries[0].time_in)} · Out ${dayEntries[0].stated_time_out ? fmtTimeShort(dayEntries[0].stated_time_out) : '—'}` : ''}`}
-              </div>
+              //
+              // "+ Photo" is still offered here, deliberately separate from
+              // that lockout — attaching a photo doesn't touch hours or
+              // create a duplicate entry, it only inserts a gear_photos row,
+              // so it doesn't reopen the class of bug the lockout above
+              // exists to prevent. Reported by Jim, 2026-09-02: with no
+              // affordance here, an approved day had no way to attach a
+              // photo at all once logged.
+              <>
+                <div className="emp-hint" style={{ marginBottom: '0.6rem' }}>
+                  {`Already logged${dayEntries[0]?.time_in ? ` — In ${fmtTimeShort(dayEntries[0].time_in)} · Out ${dayEntries[0].stated_time_out ? fmtTimeShort(dayEntries[0].stated_time_out) : '—'}` : ''}`}
+                </div>
+                {photoFor !== ymd && (
+                  <button className="emp-btn emp-btn-secondary emp-btn-small" style={{ marginBottom: '0.6rem' }}
+                    onClick={() => {
+                      setPhotoFor(ymd)
+                      setPhotoJobId(dayEntries.length === 1 ? (dayEntries[0].job_id || '') : '')
+                      setError('')
+                    }}>+ Photo</button>
+                )}
+              </>
             ) : (
               // A gray "tap to..." hint line reads as informational text, not
               // as something to press — a real button here instead of just a
@@ -610,6 +599,36 @@ export default function EmployeeHome({ employee }) {
                 <button className="emp-btn emp-btn-secondary emp-btn-small" onClick={() => openLog(ymd)}>+ Add Job Info</button>
                 <button className="emp-btn emp-btn-secondary emp-btn-small" disabled={markingDayOffFor === ymd}
                   onClick={() => markDayOff(ymd)}>{markingDayOffFor === ymd ? 'Marking…' : 'Day Off'}</button>
+              </div>
+            )}
+
+            {/* Shared by every branch above (editing, approved, empty) — flat
+                photoFor/photoJobId state, not nested inside any one branch,
+                so "+ Photo" works the same regardless of the day's status. */}
+            {photoFor === ymd && (
+              <div style={{ marginTop: '0.5rem', marginBottom: '0.6rem' }}>
+                <div className="emp-field">
+                  <label>Job this photo is for (optional)</label>
+                  <JobPicker jobs={jobs} value={photoJobId} onChange={(job) => setPhotoJobId(job.id)} placeholder="No job — office will sort it out" />
+                  {photoJobId && (
+                    <button type="button" className="emp-inline-link" style={{ marginTop: '0.3rem', fontSize: '0.8rem' }}
+                      onClick={() => setPhotoJobId('')}>Clear job</button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <label className="emp-btn" style={{ position: 'relative', overflow: 'hidden', opacity: uploadingPhoto ? 0.5 : 1, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}>
+                    {uploadingPhoto ? 'Uploading…' : 'Take / choose photo or video'}
+                    {/* display:none (or visibility:hidden) on a file input silently blocks the
+                        native picker from opening on iOS Safari when triggered via a wrapping
+                        label — has to stay "visible" (just invisible/off-screen) for tapping the
+                        label to work. capture="environment" is left off so the OS offers both
+                        camera and library, matching what "Take / choose photo or video" promises. */}
+                    <input type="file" accept="image/*,video/*" disabled={uploadingPhoto}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: uploadingPhoto ? 'not-allowed' : 'pointer' }}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(ymd, f) }} />
+                  </label>
+                  <button className="emp-btn emp-btn-secondary" onClick={() => { setPhotoFor(null); setPhotoJobId('') }}>Cancel</button>
+                </div>
               </div>
             )}
 
@@ -646,8 +665,10 @@ export default function EmployeeHome({ employee }) {
             {dayPhotos.length > 0 && (
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                 {dayPhotos.map(p => (
-                  <MediaThumb key={p.id} src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
-                    style={{ width: '3.2rem', height: '3.2rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }} />
+                  <div key={p.id} onClick={() => setPhotoLightbox(p)} style={{ cursor: 'pointer' }}>
+                    <MediaThumb src={gearPhotoUrl(p.storage_path)} alt={p.ship_or_job || 'photo'}
+                      style={{ width: '3.2rem', height: '3.2rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd', display: 'block' }} />
+                  </div>
                 ))}
               </div>
             )}
@@ -718,6 +739,24 @@ export default function EmployeeHome({ employee }) {
           </div>
         )
       })}
+
+      {photoLightbox && (
+        <div
+          onClick={() => setPhotoLightbox(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem', cursor: 'zoom-out',
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ maxWidth: '100%', maxHeight: '100%' }}>
+            <MediaViewer
+              src={gearPhotoUrl(photoLightbox.storage_path)}
+              alt={photoLightbox.ship_or_job || 'photo'}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }}
+            />
+          </div>
+        </div>
+      )}
 
     </div>
   )
