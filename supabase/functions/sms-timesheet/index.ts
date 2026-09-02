@@ -817,8 +817,20 @@ CONTEXT: Earlier in this conversation we asked the worker what consumables/suppl
     'content-type': 'application/json',
   }
 
+  // Backoff kept short on purpose — Twilio only waits ~15s for this webhook's
+  // synchronous response before it gives up and delivers nothing to the tech,
+  // no matter what we eventually return. The original 4s+10s backoff (14s of
+  // pure sleep, before any of the 3 request round-trips or the rest of the
+  // function's own work) blew straight through that budget during a real
+  // Anthropic overload on 2026-09-02: the function completed and returned a
+  // valid TwiML reply, but Twilio had already timed out and Aidan Gardin got
+  // nothing at all — confirmed by him texting a fast, non-Claude command
+  // (JOBS) minutes later and getting a normal reply, so the channel itself
+  // was fine. Still two retries, just leaving real headroom for the rest of
+  // the request. See the parseWithClaude catch site below for the other half
+  // of this fix — an async safety-net send for when we still miss the window.
   let res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
-  for (const waitMs of [4000, 10000]) {
+  for (const waitMs of [1500, 3000]) {
     if (res.status !== 429 && res.status !== 529) break
     await new Promise(r => setTimeout(r, waitMs))
     res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: payload })
@@ -899,6 +911,13 @@ Deno.serve(async (req: Request) => {
   let msgBody = ''
   let mediaUrls: string[] = []
   let messageSid = ''
+  // Whether the inbound message came in over WhatsApp vs plain SMS — needed
+  // only for the async safety-net send below (see parseWithClaude's catch),
+  // since that goes out via the outbound REST API instead of a TwiML reply
+  // and has to pick the right channel itself. The synchronous TwiML path
+  // doesn't need this: Twilio always replies on whichever channel the
+  // inbound message arrived on.
+  let isWhatsAppChannel = false
   const isTwilio = (req.headers.get('content-type') || '').includes('application/x-www-form-urlencoded')
 
   try {
@@ -909,7 +928,9 @@ Deno.serve(async (req: Request) => {
       // Log-only for now — see logTwilioSignatureCheck's comment for the enforcement plan.
       await logTwilioSignatureCheck(req, formParams)
 
-      fromPhone = normalizePhone(form.get('From') as string || '')
+      const rawFrom = (form.get('From') as string || '')
+      isWhatsAppChannel = rawFrom.startsWith('whatsapp:')
+      fromPhone = normalizePhone(rawFrom)
       msgBody = (form.get('Body') as string || '').trim()
       // Twilio's own id for this exact delivery attempt — SmsMessageSid is the
       // older field name for the same value, kept as a fallback for whichever
@@ -1666,6 +1687,28 @@ Deno.serve(async (req: Request) => {
   } catch (_e) {
     console.error('parseWithClaude failed:', _e instanceof Error ? _e.message : String(_e))
     const r = "Couldn't read that one. Reply HELP for the format, or text the office directly."
+    // Safety net for the exact failure mode that left Aidan Gardin's text
+    // (2026-09-02) totally unanswered: parseWithClaude only reaches this
+    // catch after burning real time on retries, and a slow-enough Anthropic
+    // outage can still eat Twilio's ~15s webhook window even with the
+    // shortened backoff above — at which point Twilio delivers nothing no
+    // matter what this function returns (confirmed that day: this function
+    // completed and returned a valid TwiML reply, but the tech never
+    // received it). Fires a second, independent reply through Twilio's
+    // outbound REST API — decoupled from this response's timing entirely —
+    // so a genuine timeout doesn't leave the tech in total silence.
+    // Backgrounded via waitUntil so it can't delay the response we're
+    // already about to send; occasionally doubling up this one fallback
+    // message is a far better failure mode than the tech hearing nothing.
+    if (isTwilio && fromPhone) {
+      const to = toWhatsAppE164(fromPhone)
+      const sendSafetyNet = async () => {
+        const result = isWhatsAppChannel ? await sendTwilioWhatsApp(to, r) : await sendTwilioSMS(to, r)
+        if (!result.ok) console.error('safety-net send failed:', result.error)
+      }
+      // @ts-ignore — EdgeRuntime is a Supabase/Deno Deploy global for background tasks, not in the standard lib types.
+      EdgeRuntime.waitUntil(sendSafetyNet())
+    }
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
 
