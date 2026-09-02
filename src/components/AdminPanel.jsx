@@ -3,6 +3,11 @@ import { marked } from 'marked'
 import { supabase } from '../supabaseClient'
 import { fmtHours } from '../utils/format'
 import AuditLog from './AuditLog'
+import MediaThumb from './MediaThumb'
+import VesselEngines from './VesselEngines'
+
+const gearPhotoUrl = (path) => supabase.storage.from('gear-photos').getPublicUrl(path).data.publicUrl
+const workOrderDocUrl = (path) => supabase.storage.from('work-order-docs').getPublicUrl(path).data.publicUrl
 
 const inputStyle = { padding: '0.45rem 0.7rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }
 const btnPrimary = { padding: '0.45rem 1.1rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem' }
@@ -94,6 +99,15 @@ export default function AdminPanel() {
   const [jobEntries, setJobEntries] = useState({}) // { [jobId]: entries[] }
   const [vesselContacts, setVesselContacts] = useState([])
   const [modalContacts, setModalContacts] = useState([]) // contacts being edited in vessel modal
+  // Staged File objects for the vessel-photo / work-order-doc upload — held
+  // here rather than uploaded on choose, since a brand-new vessel/job has no
+  // id yet to build a storage path from. Uploaded in save(), after the
+  // record itself has an id (existing or freshly inserted).
+  const [vesselPhotoFile, setVesselPhotoFile] = useState(null)
+  const [removeVesselPhoto, setRemoveVesselPhoto] = useState(false)
+  const [workOrderFile, setWorkOrderFile] = useState(null)
+  const [removeWorkOrderFile, setRemoveWorkOrderFile] = useState(false)
+  const [engineModal, setEngineModal] = useState(null) // vessel record, or null
 
   useEffect(() => { loadAll() }, [])
 
@@ -149,8 +163,12 @@ export default function AdminPanel() {
         { role: 'Superintendent', name: '', phone: '' },
         { role: 'Captain', name: '', phone: '' },
       ])
+      setVesselPhotoFile(null)
+      setRemoveVesselPhoto(false)
     } else if (type === 'job') {
-      setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open', work_order_number: record?.work_order_number || '' })
+      setFields({ job_number: record?.job_number || '', customer_id: record?.customer_id || '', vessel_id: record?.vessel_id || '', description: record?.description || '', status: record?.status || 'open', work_order_number: record?.work_order_number || '', work_order_link: record?.work_order_link || '' })
+      setWorkOrderFile(null)
+      setRemoveWorkOrderFile(false)
     } else if (type === 'employee') {
       setFields({ name: record?.name || '', phone: record?.phone || '', whatsapp_phone: record?.whatsapp_phone || '', email: record?.email || '', active: record != null ? String(record.active) : 'true', role: record?.role || 'technician' })
     } else if (type === 'entry') {
@@ -183,6 +201,21 @@ export default function AdminPanel() {
           valid.map((c, i) => ({ vessel_id: vesselId, role: c.role || 'Contact', name: c.name || null, phone: c.phone || null, sort_order: i }))
         )
         if (insError) { alert(`Vessel saved but contacts failed to save — re-enter them: ${insError.message}`); setSaving(false); return }
+      }
+      // Photo upload/removal — deferred until here since a brand-new vessel
+      // has no id (and so no storage path to upload into) until the insert
+      // above completes.
+      if (removeVesselPhoto && record?.photo_storage_path) {
+        await supabase.storage.from('gear-photos').remove([record.photo_storage_path])
+        await supabase.schema('Cores').from('vessels').update({ photo_storage_path: null }).eq('id', vesselId)
+      }
+      if (vesselPhotoFile) {
+        const ext = (vesselPhotoFile.name.split('.').pop() || 'jpg').toLowerCase()
+        const path = `vessels/${vesselId}/${Date.now()}.${ext}`
+        const { error: upErr } = await supabase.storage.from('gear-photos').upload(path, vesselPhotoFile, { contentType: vesselPhotoFile.type || 'image/jpeg' })
+        if (upErr) { alert(`Vessel saved but photo failed to upload: ${upErr.message}`); setSaving(false); return }
+        const { error: photoErr } = await supabase.schema('Cores').from('vessels').update({ photo_storage_path: path }).eq('id', vesselId)
+        if (photoErr) { alert(`Vessel saved but photo link failed to save: ${photoErr.message}`); setSaving(false); return }
       }
     } else if (type === 'employee') {
       const empPayload = {
@@ -229,10 +262,31 @@ export default function AdminPanel() {
         if (payload.status === 'closed' && record?.status !== 'closed') payload.closed_at = new Date().toISOString()
         if (payload.status === 'open') payload.closed_at = null
       }
-      const { error } = record
-        ? await supabase.schema('Cores').from(`${type}s`).update(payload).eq('id', record.id)
-        : await supabase.schema('Cores').from(`${type}s`).insert(payload)
-      if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
+      let recordId = record?.id
+      if (record) {
+        const { error } = await supabase.schema('Cores').from(`${type}s`).update(payload).eq('id', record.id)
+        if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
+      } else {
+        const { data, error } = await supabase.schema('Cores').from(`${type}s`).insert(payload).select().single()
+        if (error) { alert(`Save failed: ${error.message}`); setSaving(false); return }
+        recordId = data?.id
+      }
+      // Work order file upload/removal — job-only, deferred until here for the
+      // same reason as the vessel photo above (a brand-new job has no id yet).
+      if (type === 'job' && recordId) {
+        if (removeWorkOrderFile && record?.work_order_file_path) {
+          await supabase.storage.from('work-order-docs').remove([record.work_order_file_path])
+          await supabase.schema('Cores').from('jobs').update({ work_order_file_path: null }).eq('id', recordId)
+        }
+        if (workOrderFile) {
+          const ext = (workOrderFile.name.split('.').pop() || 'pdf').toLowerCase()
+          const path = `jobs/${recordId}/${Date.now()}.${ext}`
+          const { error: upErr } = await supabase.storage.from('work-order-docs').upload(path, workOrderFile, { contentType: workOrderFile.type || 'application/pdf' })
+          if (upErr) { alert(`Job saved but work order file failed to upload: ${upErr.message}`); setSaving(false); return }
+          const { error: fileErr } = await supabase.schema('Cores').from('jobs').update({ work_order_file_path: path }).eq('id', recordId)
+          if (fileErr) { alert(`Job saved but work order file link failed to save: ${fileErr.message}`); setSaving(false); return }
+        }
+      }
     }
 
     await loadAll()
@@ -756,6 +810,7 @@ export default function AdminPanel() {
                         </span>
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                        <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem', marginRight: '0.4rem' }} onClick={() => setEngineModal(v)}>Engines</button>
                         <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('vessel', v)}>Edit</button>
                       </td>
                     </tr>
@@ -914,6 +969,23 @@ export default function AdminPanel() {
           </Field>
           <Field label="Notes"><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...f('notes')} /></Field>
 
+          <Field label="Photo">
+            {vesselPhotoFile ? (
+              <div style={{ fontSize: '0.85rem', color: '#555' }}>{vesselPhotoFile.name} — will upload on save</div>
+            ) : modal.record?.photo_storage_path && !removeVesselPhoto ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <MediaThumb src={gearPhotoUrl(modal.record.photo_storage_path)} alt=""
+                  style={{ width: '4.5rem', height: '3.4rem', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }} />
+                <button type="button" style={{ ...btnSecondary, fontSize: '0.78rem', padding: '0.25rem 0.6rem' }}
+                  onClick={() => setRemoveVesselPhoto(true)}>Remove</button>
+              </div>
+            ) : removeVesselPhoto ? (
+              <div style={{ fontSize: '0.85rem', color: '#c0392b' }}>Photo will be removed on save</div>
+            ) : null}
+            <input type="file" accept="image/*" style={{ marginTop: '0.5rem' }}
+              onChange={e => { const file = e.target.files?.[0]; if (file) { setVesselPhotoFile(file); setRemoveVesselPhoto(false) } }} />
+          </Field>
+
           {/* Contacts */}
           <div style={{ marginTop: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
@@ -1021,6 +1093,26 @@ export default function AdminPanel() {
               </div>
             )}
           </Field>
+          <Field label="Work Order File">
+            {workOrderFile ? (
+              <div style={{ fontSize: '0.85rem', color: '#555' }}>{workOrderFile.name} — will upload on save</div>
+            ) : modal.record?.work_order_file_path && !removeWorkOrderFile ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <a href={workOrderDocUrl(modal.record.work_order_file_path)} target="_blank" rel="noreferrer" style={{ fontSize: '0.85rem', color: '#0066cc' }}>
+                  View current file
+                </a>
+                <button type="button" style={{ ...btnSecondary, fontSize: '0.78rem', padding: '0.25rem 0.6rem' }}
+                  onClick={() => setRemoveWorkOrderFile(true)}>Remove</button>
+              </div>
+            ) : removeWorkOrderFile ? (
+              <div style={{ fontSize: '0.85rem', color: '#c0392b' }}>File will be removed on save</div>
+            ) : null}
+            <input type="file" accept="application/pdf,image/*" style={{ marginTop: '0.5rem' }}
+              onChange={e => { const file = e.target.files?.[0]; if (file) { setWorkOrderFile(file); setRemoveWorkOrderFile(false) } }} />
+          </Field>
+          <Field label="Work Order Link (if it's stored elsewhere instead)">
+            <input style={inputStyle} placeholder="https://…" {...f('work_order_link')} />
+          </Field>
           <Field label="Description"><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '70px' }} {...f('description')} /></Field>
           {modal.record && (
             <Field label="Status">
@@ -1120,6 +1212,10 @@ export default function AdminPanel() {
             </button>
           </div>
         </Modal>
+      )}
+
+      {engineModal && (
+        <VesselEngines vessel={engineModal} jobs={jobs} onClose={() => setEngineModal(null)} />
       )}
     </div>
   )
