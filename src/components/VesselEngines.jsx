@@ -8,7 +8,22 @@ const btnSecondary = { padding: '0.4rem 0.9rem', background: '#fff', color: '#55
 const btnSmall = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #ccc', background: '#fff', borderRadius: '4px', cursor: 'pointer' }
 const btnDanger = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #e0b0b0', background: '#fff', color: '#c0392b', borderRadius: '4px', cursor: 'pointer' }
 
-const blankEngine = () => ({ engine_type: '', label: '', manufacturer: '', model: '', serial_number: '', arrangement_number: '', cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', status: 'active', notes: '' })
+// engine_type is the engine's application, not just main/auxiliary — Jim's
+// correction after seeing the first pass: "label is TYPE... Main, aux,
+// genset, emergency" (plus 'spare', seen in the real data — e.g. Strait
+// Falcon's spare engine). Still plain text (no CHECK/enum), same posture as
+// jobs.status/vessels.status elsewhere in this schema.
+const ENGINE_TYPES = [
+  { value: '', label: 'Unspecified' },
+  { value: 'main', label: 'Main' },
+  { value: 'auxiliary', label: 'Auxiliary' },
+  { value: 'genset', label: 'Genset' },
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'spare', label: 'Spare' },
+]
+const ENGINE_TYPE_LABELS = Object.fromEntries(ENGINE_TYPES.filter(t => t.value).map(t => [t.value, t.label]))
+
+const blankEngine = () => ({ engine_type: '', side: '', manufacturer: '', model: '', serial_number: '', arrangement_number: '', cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', status: 'active', notes: '' })
 const blankComponent = () => ({ position_label: '', component_type_id: '', serial_number: '', install_date: '', notes: '' })
 const blankServiceEntry = () => ({ service_date: '', description: '', hours_at_service: '', performed_by: '', work_order_id: '' })
 
@@ -43,7 +58,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: e } = await supabase.schema('Cores').from('engines').select('*').eq('vessel_id', vessel.id).order('label')
+    const { data: e } = await supabase.schema('Cores').from('engines').select('*').eq('vessel_id', vessel.id).order('created_at')
     const engineList = e || []
     setEngines(engineList)
     const engineIds = engineList.map(x => x.id)
@@ -71,7 +86,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
     const payload = {
       vessel_id: vessel.id,
       engine_type: newEngine.engine_type || null,
-      label: newEngine.label.trim() || null,
+      side: newEngine.side || null,
       manufacturer: newEngine.manufacturer || null,
       model: newEngine.model || null,
       serial_number: newEngine.serial_number || null,
@@ -95,7 +110,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   function startEditEngine(engine) {
     setEditingEngineId(engine.id)
     setEngineDraft({
-      engine_type: engine.engine_type || '', label: engine.label || '', manufacturer: engine.manufacturer || '',
+      engine_type: engine.engine_type || '', side: engine.side || '', manufacturer: engine.manufacturer || '',
       model: engine.model || '', serial_number: engine.serial_number || '', arrangement_number: engine.arrangement_number || '',
       cylinder_count: engine.cylinder_count ?? '', kw: engine.kw ?? '', install_date: engine.install_date || '',
       hours: engine.hours ?? '', hours_updated_at: engine.hours_updated_at || '', status: engine.status, notes: engine.notes || '',
@@ -105,7 +120,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   async function saveEngineEdit(engineId) {
     setSaving(true)
     const payload = {
-      engine_type: engineDraft.engine_type || null, label: engineDraft.label.trim() || null,
+      engine_type: engineDraft.engine_type || null, side: engineDraft.side || null,
       manufacturer: engineDraft.manufacturer || null, model: engineDraft.model || null,
       serial_number: engineDraft.serial_number || null, arrangement_number: engineDraft.arrangement_number || null,
       cylinder_count: engineNumField(engineDraft.cylinder_count),
@@ -121,7 +136,8 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   }
 
   async function deleteEngine(engine) {
-    if (!confirm(`Delete "${engine.label || engine.manufacturer || 'this engine'}"? This also deletes its components and service log.`)) return
+    const desc = [engine.engine_type && ENGINE_TYPE_LABELS[engine.engine_type], engine.manufacturer].filter(Boolean).join(' ') || 'this engine'
+    if (!confirm(`Delete "${desc}"? This also deletes its components and service log.`)) return
     const { error } = await supabase.schema('Cores').from('engines').delete().eq('id', engine.id)
     if (error) { alert('Error deleting engine: ' + error.message); return }
     load()
@@ -248,11 +264,13 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                     {isEditing ? (
                       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
                         <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'engine_type')}>
-                          <option value="">Unspecified</option>
-                          <option value="main">Main</option>
-                          <option value="auxiliary">Auxiliary</option>
+                          {ENGINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
-                        <input style={inputStyle} placeholder="Label (PME, P Gen, Spare…)" {...engineField(engineDraft, setEngineDraft, 'label')} />
+                        <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'side')}>
+                          <option value="">Unspecified side</option>
+                          <option value="port">Port</option>
+                          <option value="starboard">Starboard</option>
+                        </select>
                         <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'status')}>
                           <option value="active">Active</option>
                           <option value="removed">Removed</option>
@@ -272,10 +290,12 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                       <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedEngineId(isExpanded ? null : engine.id)}>
                         <div style={{ fontWeight: 700, fontSize: '1rem' }}>
                           <span style={{ color: '#aaa', fontSize: '0.85rem', marginRight: '0.4rem' }}>{isExpanded ? '▾' : '▸'}</span>
-                          {engine.label || <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>No label</span>}
+                          {engine.engine_type
+                            ? ENGINE_TYPE_LABELS[engine.engine_type]
+                            : <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>Unspecified type</span>}
+                          {engine.side && <span style={{ fontWeight: 400 }}> · {engine.side === 'port' ? 'Port' : 'Starboard'}</span>}
                           <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.82rem' }}>
-                            {engine.engine_type === 'main' ? 'Main engine' : engine.engine_type === 'auxiliary' ? 'Auxiliary' : ''}
-                            {engine.status !== 'active' ? ` · ${engine.status}` : ''}
+                            {engine.status !== 'active' ? engine.status : ''}
                           </span>
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem' }}>
@@ -434,12 +454,14 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
             {addingEngine ? (
               <div style={{ border: '1px dashed #0066cc', borderRadius: '6px', padding: '1rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'engine_type')}>
-                    <option value="">Unspecified</option>
-                    <option value="main">Main</option>
-                    <option value="auxiliary">Auxiliary</option>
+                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'engine_type')} autoFocus>
+                    {ENGINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
-                  <input style={inputStyle} placeholder="Label (PME, P Gen, Spare…)" {...engineField(newEngine, setNewEngine, 'label')} autoFocus />
+                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'side')}>
+                    <option value="">Unspecified side</option>
+                    <option value="port">Port</option>
+                    <option value="starboard">Starboard</option>
+                  </select>
                   <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'status')}>
                     <option value="active">Active</option>
                     <option value="removed">Removed</option>
