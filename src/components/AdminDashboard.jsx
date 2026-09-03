@@ -1619,7 +1619,7 @@ export default function AdminDashboard() {
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
               <MultiSelectDropdown
-                options={[...employees].sort((a, b) =>
+                options={employees.filter(e => e.active || filterEmployeeIds.includes(e.id)).sort((a, b) =>
                   (a.name || '').split(' ').pop().localeCompare((b.name || '').split(' ').pop(), undefined, { sensitivity: 'base' }))}
                 selectedIds={filterEmployeeIds}
                 onChange={ids => { setFilterEmployeeIds(ids); setSelectedEmp(null); setSelectedDate(null) }}
@@ -1981,7 +1981,7 @@ export default function AdminDashboard() {
                     transition: 'all 0.15s',
                   }}>{label}</button>
                 ))}
-                <PersonPicker employees={employees} value={subEmployeeFilter} onChange={setSubEmployeeFilter} />
+                <PersonPicker employees={employees.filter(e => e.active || e.id === subEmployeeFilter)} value={subEmployeeFilter} onChange={setSubEmployeeFilter} />
               </div>
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                 <span style={{ color: '#2d6a38', fontWeight: 600 }}>{totalApproved} approved</span>
