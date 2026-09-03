@@ -1376,7 +1376,7 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem' }}>Employee</label>
-                <PersonPicker employees={employees} value={editFields.employee_id || ''} allowClear={false}
+                <PersonPicker employees={employees.filter(e => e.active || e.id === editFields.employee_id)} value={editFields.employee_id || ''} allowClear={false}
                   onChange={id => setEditFields(f => ({ ...f, employee_id: id }))} inputStyle={inputStyle} />
               </div>
               <div>
@@ -1498,7 +1498,7 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: '#555', marginBottom: '0.3rem', fontWeight: 600 }}>Employee</label>
-                <PersonPicker employees={employees} value={manualFields.employee_id || ''} allowClear={false}
+                <PersonPicker employees={employees.filter(e => e.active || e.id === manualFields.employee_id)} value={manualFields.employee_id || ''} allowClear={false}
                   placeholder="— select —" onChange={id => applyManualFieldChange({ employee_id: id })} inputStyle={inputStyle} />
               </div>
               <div>
