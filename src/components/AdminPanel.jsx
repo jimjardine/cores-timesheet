@@ -92,6 +92,8 @@ export default function AdminPanel() {
   const [vesselStatusFilter, setVesselStatusFilter] = useState('active')
   const [jobSearch, setJobSearch] = useState('')
   const [engineSearch, setEngineSearch] = useState('')
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [vesselSearch, setVesselSearch] = useState('')
   const [sortCol, setSortCol] = useState('job_number')
   const [sortDir, setSortDir] = useState('asc')
   const [expandedId, setExpandedId] = useState(null)
@@ -400,10 +402,13 @@ export default function AdminPanel() {
     })
   })()
 
-  const visibleVessels = vessels.filter(v =>
-    (!customerFilter || v.customer_id === customerFilter) &&
-    (vesselStatusFilter === 'all' || (v.status || 'active') === vesselStatusFilter)
-  )
+  const visibleVessels = vessels.filter(v => {
+    if (customerFilter && v.customer_id !== customerFilter) return false
+    if (vesselStatusFilter !== 'all' && (v.status || 'active') !== vesselStatusFilter) return false
+    const q = vesselSearch.trim().toLowerCase()
+    if (!q) return true
+    return [v.name, v.vessel_type, v.customers?.name].some(val => (val || '').toLowerCase().includes(q))
+  })
 
   const visibleEngines = (() => {
     const q = engineSearch.trim().toLowerCase()
@@ -634,7 +639,18 @@ export default function AdminPanel() {
       {/* ── Customers ── */}
       {section === 'customers' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <input
+                value={customerSearch} onChange={e => setCustomerSearch(e.target.value)}
+                placeholder="Search customer, contact, email…"
+                style={{ ...inputStyle, flex: 1, maxWidth: '380px' }}
+              />
+              {customerSearch && (
+                <button onClick={() => setCustomerSearch('')} style={{ ...btnSecondary, fontSize: '0.82rem', padding: '0.35rem 0.7rem' }}>Clear</button>
+              )}
+              <button style={{ ...btnPrimary, marginLeft: 'auto' }} onClick={() => openModal('customer')}>+ New Customer</button>
+            </div>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
               {['active', 'inactive', 'all'].map(s => (
                 <button key={s} style={pill(customerStatusFilter === s)} onClick={() => setCustomerStatusFilter(s)}>
@@ -642,7 +658,6 @@ export default function AdminPanel() {
                 </button>
               ))}
             </div>
-            <button style={btnPrimary} onClick={() => openModal('customer')}>+ New Customer</button>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -658,6 +673,11 @@ export default function AdminPanel() {
             <tbody>
               {customers
                 .filter(c => customerStatusFilter === 'all' || (c.status || 'active') === customerStatusFilter)
+                .filter(c => {
+                  const q = customerSearch.trim().toLowerCase()
+                  if (!q) return true
+                  return [c.name, c.contact_name, c.contact_email].some(v => (v || '').toLowerCase().includes(q))
+                })
                 .map(c => {
                 const custJobs = jobs.filter(j => j.customer_id === c.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
                 const isExpanded = expandedId === c.id
@@ -766,7 +786,18 @@ export default function AdminPanel() {
       {/* ── Vessels ── */}
       {section === 'vessels' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <input
+                value={vesselSearch} onChange={e => setVesselSearch(e.target.value)}
+                placeholder="Search vessel, type, customer…"
+                style={{ ...inputStyle, flex: 1, maxWidth: '380px' }}
+              />
+              {vesselSearch && (
+                <button onClick={() => setVesselSearch('')} style={{ ...btnSecondary, fontSize: '0.82rem', padding: '0.35rem 0.7rem' }}>Clear</button>
+              )}
+              <button style={{ ...btnPrimary, marginLeft: 'auto' }} onClick={() => openModal('vessel')}>+ New Vessel</button>
+            </div>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
                 style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem' }}>
@@ -781,7 +812,6 @@ export default function AdminPanel() {
                 ))}
               </div>
             </div>
-            <button style={btnPrimary} onClick={() => openModal('vessel')}>+ New Vessel</button>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
