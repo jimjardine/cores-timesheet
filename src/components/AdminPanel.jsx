@@ -747,7 +747,11 @@ export default function AdminPanel() {
                                           {v.name}
                                           {v.vessel_type && <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.8rem' }}>{v.vessel_type}</span>}
                                           {vEngineCount > 0 && (
-                                            <span style={{ marginLeft: '0.75rem', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#eaf1fc', color: '#2761b0' }}>
+                                            <span
+                                              onClick={e => { e.stopPropagation(); setEngineModal(v) }}
+                                              title="View engines"
+                                              style={{ marginLeft: '0.75rem', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#eaf1fc', color: '#2761b0', cursor: 'pointer' }}
+                                            >
                                               {vEngineCount} engine{vEngineCount !== 1 ? 's' : ''}
                                             </span>
                                           )}
