@@ -59,6 +59,7 @@ export default function AdminPanel() {
   const [customers, setCustomers] = useState([])
   const [vessels, setVessels] = useState([])
   const [jobs, setJobs] = useState([])
+  const [engines, setEngines] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [employees, setEmployees] = useState([])
@@ -90,6 +91,7 @@ export default function AdminPanel() {
   const [customerStatusFilter, setCustomerStatusFilter] = useState('active')
   const [vesselStatusFilter, setVesselStatusFilter] = useState('active')
   const [jobSearch, setJobSearch] = useState('')
+  const [engineSearch, setEngineSearch] = useState('')
   const [sortCol, setSortCol] = useState('job_number')
   const [sortDir, setSortDir] = useState('asc')
   const [expandedId, setExpandedId] = useState(null)
@@ -124,13 +126,14 @@ export default function AdminPanel() {
 
   async function loadAll() {
     setLoading(true)
-    const [c, v, j, l, vc, em] = await Promise.all([
+    const [c, v, j, l, vc, em, en] = await Promise.all([
       supabase.schema('Cores').from('customers').select('*').order('name'),
       supabase.schema('Cores').from('vessels').select('*, customers(name)').order('name'),
       supabase.schema('Cores').from('jobs').select('*, customers(name), vessels(name)').order('job_number'),
       supabase.schema('Cores').from('job_status_logs').select('*').order('created_at'),
       supabase.schema('Cores').from('vessel_contacts').select('*').order('sort_order'),
       supabase.schema('Cores').from('employees').select('*').order('name'),
+      supabase.schema('Cores').from('engines').select('*, engine_types(name), vessels(name, customers(name))').order('created_at'),
     ])
     const loadErrors = [
       ['customers', c.error],
@@ -139,6 +142,7 @@ export default function AdminPanel() {
       ['job status logs', l.error],
       ['vessel contacts', vc.error],
       ['employees', em.error],
+      ['engines', en.error],
     ].filter(([, err]) => err)
     if (loadErrors.length > 0) {
       alert(`Failed to load ${loadErrors.map(([label]) => label).join(', ')}: ${loadErrors[0][1].message}`)
@@ -149,6 +153,7 @@ export default function AdminPanel() {
     setJobLogs(l.data || [])
     setVesselContacts(vc.data || [])
     setEmployees(em.data || [])
+    setEngines(en.data || [])
     setLoading(false)
   }
 
@@ -400,6 +405,17 @@ export default function AdminPanel() {
     (vesselStatusFilter === 'all' || (v.status || 'active') === vesselStatusFilter)
   )
 
+  const visibleEngines = (() => {
+    const q = engineSearch.trim().toLowerCase()
+    return engines.filter(e => {
+      if (customerFilter && vessels.find(v => v.id === e.vessel_id)?.customer_id !== customerFilter) return false
+      if (vesselFilter && e.vessel_id !== vesselFilter) return false
+      if (!q) return true
+      return [e.vessels?.name, e.vessels?.customers?.name, e.engine_types?.name, e.manufacturer, e.model, e.serial_number, e.arrangement_number]
+        .some(v => (v || '').toLowerCase().includes(q))
+    })
+  })()
+
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa' }}>Loading...</div>
 
   return (
@@ -433,7 +449,7 @@ export default function AdminPanel() {
       )}
 
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '2rem' }}>
-        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['jobs', 'Jobs'], ['employees', 'Employees'], ['audit', 'Audit Log']].map(([key, label]) => (
+        {[['customers', 'Customers'], ['vessels', 'Vessels'], ['engines', 'Engines'], ['jobs', 'Jobs'], ['employees', 'Employees'], ['audit', 'Audit Log']].map(([key, label]) => (
           <button key={key} style={tabStyle(key)} onClick={() => setSection(key)}>{label}</button>
         ))}
       </div>
@@ -775,6 +791,7 @@ export default function AdminPanel() {
                 <th style={thStyle}>Customer</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Open</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Closed</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Engines</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}></th>
               </tr>
@@ -783,6 +800,7 @@ export default function AdminPanel() {
               {visibleVessels.map(v => {
                 const openJobs   = jobs.filter(j => j.vessel_id === v.id && j.status === 'open')
                 const closedJobs = jobs.filter(j => j.vessel_id === v.id && j.status === 'closed')
+                const vesselEngines = engines.filter(e => e.vessel_id === v.id)
                 const vesselJobs = jobs.filter(j => j.vessel_id === v.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
                 const isExpanded = expandedId === v.id
                 return (
@@ -804,6 +822,11 @@ export default function AdminPanel() {
                           ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#f0f0f0', color: '#888' }}>{closedJobs.length}</span>
                           : <span style={{ color: '#ddd' }}>—</span>}
                       </td>
+                      <td style={{ ...tdStyle, textAlign: 'center' }} onClick={e => { e.stopPropagation(); setEngineModal(v) }}>
+                        {vesselEngines.length > 0
+                          ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#eaf1fc', color: '#2761b0', cursor: 'pointer' }}>{vesselEngines.length}</span>
+                          : <span style={{ color: '#ddd' }}>—</span>}
+                      </td>
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
                         <span style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600, background: v.status === 'active' ? '#e6f4ea' : '#f0f0f0', color: v.status === 'active' ? '#2d6a38' : '#888' }}>
                           {v.status || 'active'}
@@ -818,7 +841,7 @@ export default function AdminPanel() {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
+                        <td colSpan={7} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
                           {v.notes && (
                             <div style={{ padding: '0.75rem 2rem', fontSize: '0.85rem', color: '#555', whiteSpace: 'pre-wrap', borderBottom: '1px solid #e8eef8' }}>
                               <strong style={{ color: '#888', fontWeight: 700 }}>Notes: </strong>{v.notes}
@@ -856,6 +879,81 @@ export default function AdminPanel() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Engines ── */}
+      {section === 'engines' && (
+        <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <input
+                value={engineSearch} onChange={e => setEngineSearch(e.target.value)}
+                placeholder="Search vessel, customer, type, manufacturer, model, serial #…"
+                style={{ ...inputStyle, flex: 1, maxWidth: '420px' }}
+              />
+              {engineSearch && (
+                <button onClick={() => setEngineSearch('')} style={{ ...btnSecondary, fontSize: '0.82rem', padding: '0.35rem 0.7rem' }}>Clear</button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setVesselFilter('') }}
+                style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.875rem' }}>
+                <option value="">All customers</option>
+                {customers.filter(c => c.status === 'active').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select value={vesselFilter} onChange={e => setVesselFilter(e.target.value)}
+                style={{ padding: '0.4rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.875rem' }}>
+                <option value="">All vessels</option>
+                {vessels
+                  .filter(v => v.status === 'active' && (!customerFilter || v.customer_id === customerFilter))
+                  .map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+              <span style={{ marginLeft: 'auto', fontSize: '0.82rem', color: '#aaa' }}>
+                {visibleEngines.length} engine{visibleEngines.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+          </div>
+
+          {visibleEngines.length === 0 ? (
+            <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa', border: '1px solid #eee', borderRadius: '6px' }}>No engines found.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Customer</th>
+                  <th style={thStyle}>Vessel</th>
+                  <th style={thStyle}>Type</th>
+                  <th style={thStyle}>Side</th>
+                  <th style={thStyle}>Manufacturer</th>
+                  <th style={thStyle}>Model</th>
+                  <th style={thStyle}>Serial #</th>
+                  <th style={thStyle}>Arrangement #</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleEngines.map(e => (
+                  <tr key={e.id} style={{ background: e.terminated_date ? '#fafafa' : '' }}>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.vessels?.customers?.name || '—'}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{e.vessels?.name || '—'}</td>
+                    <td style={{ ...tdStyle, color: '#555' }}>
+                      {e.engine_types?.name || <span style={{ fontStyle: 'italic', color: '#bbb' }}>Unspecified</span>}
+                    </td>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.side ? (e.side === 'port' ? 'Port' : 'Starboard') : '—'}</td>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.manufacturer || '—'}</td>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.model || '—'}</td>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.serial_number || '—'}</td>
+                    <td style={{ ...tdStyle, color: '#555' }}>{e.arrangement_number || '—'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }}
+                        onClick={() => setEngineModal({ id: e.vessel_id, name: e.vessels?.name })}>Open</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -1217,7 +1315,7 @@ export default function AdminPanel() {
       )}
 
       {engineModal && (
-        <VesselEngines vessel={engineModal} jobs={jobs} onClose={() => setEngineModal(null)} />
+        <VesselEngines vessel={engineModal} jobs={jobs} onClose={() => { setEngineModal(null); loadAll() }} />
       )}
     </div>
   )
