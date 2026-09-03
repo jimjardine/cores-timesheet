@@ -8,10 +8,24 @@ const btnSecondary = { padding: '0.4rem 0.9rem', background: '#fff', color: '#55
 const btnSmall = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #ccc', background: '#fff', borderRadius: '4px', cursor: 'pointer' }
 const btnDanger = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #e0b0b0', background: '#fff', color: '#c0392b', borderRadius: '4px', cursor: 'pointer' }
 
+// Small caption above a field — placeholders alone go blank once a field
+// actually has a value, which was the whole complaint (Jim: "it's not super
+// clear once they have data in them"). Sized down from AdminPanel.jsx's
+// Field component to fit this denser card UI.
+function LabeledField({ label, children, style }) {
+  return (
+    <div style={style}>
+      <label style={{ display: 'block', fontSize: '0.72rem', color: '#888', marginBottom: '0.2rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
 const blankEngine = () => ({
   engine_type_id: '', side: '', manufacturer: '', model: '', arrangement_number: '', serial_number: '',
-  cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', terminated_date: '',
-  is_modified: false, modification_description: '', modification_date: '', notes: '',
+  cylinder_count: '', kw: '', install_date: '', terminated_date: '', notes: '',
 })
 const blankComponent = () => ({ position_label: '', component_type_id: '', serial_number: '', install_date: '', notes: '' })
 const blankServiceEntry = () => ({ service_date: '', description: '', hours_at_service: '', performed_by: '', work_order_id: '' })
@@ -73,9 +87,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
 
   function engineNumField(v) { return v === '' ? null : Number(v) }
 
-  // Shared between add and edit — description/date only mean anything when
-  // the checkbox is actually on, so don't carry stale values if it gets
-  // unchecked after being filled in.
+  // Shared between add and edit.
   function engineFields(d) {
     return {
       engine_type_id: d.engine_type_id || null,
@@ -87,12 +99,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
       cylinder_count: engineNumField(d.cylinder_count),
       kw: engineNumField(d.kw),
       install_date: d.install_date || null,
-      hours: engineNumField(d.hours),
-      hours_updated_at: d.hours_updated_at || null,
       terminated_date: d.terminated_date || null,
-      is_modified: !!d.is_modified,
-      modification_description: d.is_modified ? (d.modification_description || null) : null,
-      modification_date: d.is_modified ? (d.modification_date || null) : null,
       notes: d.notes || null,
     }
   }
@@ -113,9 +120,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
       engine_type_id: engine.engine_type_id || '', side: engine.side || '', manufacturer: engine.manufacturer || '',
       model: engine.model || '', arrangement_number: engine.arrangement_number || '', serial_number: engine.serial_number || '',
       cylinder_count: engine.cylinder_count ?? '', kw: engine.kw ?? '', install_date: engine.install_date || '',
-      hours: engine.hours ?? '', hours_updated_at: engine.hours_updated_at || '', terminated_date: engine.terminated_date || '',
-      is_modified: engine.is_modified || false, modification_description: engine.modification_description || '',
-      modification_date: engine.modification_date || '', notes: engine.notes || '',
+      terminated_date: engine.terminated_date || '', notes: engine.notes || '',
     })
   }
 
@@ -257,39 +262,47 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                 <div key={engine.id} style={{ border: '1px solid #ddd', borderRadius: '6px', marginBottom: '1rem', overflow: 'hidden' }}>
                   <div style={{ padding: '0.9rem 1.1rem', background: '#f8f9fa', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
                     {isEditing ? (
-                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                        <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
-                          value={engineDraft.engine_type_id}
-                          onChange={id => setEngineDraft(d => ({ ...d, engine_type_id: id }))}
-                          onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
-                        <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'side')}>
-                          <option value="">Unspecified side</option>
-                          <option value="port">Port</option>
-                          <option value="starboard">Starboard</option>
-                        </select>
-                        <input style={inputStyle} placeholder="Manufacturer" {...engineField(engineDraft, setEngineDraft, 'manufacturer')} />
-                        <input style={inputStyle} placeholder="Model" {...engineField(engineDraft, setEngineDraft, 'model')} />
-                        <input style={inputStyle} placeholder="Arrangement #" {...engineField(engineDraft, setEngineDraft, 'arrangement_number')} />
-                        <input style={inputStyle} placeholder="Serial number" {...engineField(engineDraft, setEngineDraft, 'serial_number')} />
-                        <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(engineDraft, setEngineDraft, 'cylinder_count')} />
-                        <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(engineDraft, setEngineDraft, 'kw')} />
-                        <input style={inputStyle} type="date" placeholder="Install date" {...engineField(engineDraft, setEngineDraft, 'install_date')} />
-                        <input style={inputStyle} type="number" step="0.1" placeholder="Hours" {...engineField(engineDraft, setEngineDraft, 'hours')} />
-                        <input style={inputStyle} type="date" placeholder="Hours as of" {...engineField(engineDraft, setEngineDraft, 'hours_updated_at')} />
-                        <input style={inputStyle} type="date" placeholder="Terminated date" title="Terminated date" {...engineField(engineDraft, setEngineDraft, 'terminated_date')} />
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', gridColumn: '1 / -1', fontSize: '0.85rem', color: '#555' }}>
-                          <input type="checkbox" checked={!!engineDraft.is_modified}
-                            onChange={e => setEngineDraft(d => ({ ...d, is_modified: e.target.checked }))} />
-                          Modified from stock
-                        </label>
-                        {engineDraft.is_modified && (
-                          <>
-                            <input style={{ ...inputStyle, gridColumn: '1 / 3' }} placeholder="What was modified (e.g. oversized piston liner)"
-                              {...engineField(engineDraft, setEngineDraft, 'modification_description')} />
-                            <input style={inputStyle} type="date" placeholder="Date done" title="Date done" {...engineField(engineDraft, setEngineDraft, 'modification_date')} />
-                          </>
-                        )}
-                        <textarea style={{ ...inputStyle, gridColumn: '1 / -1', minHeight: '50px', resize: 'vertical' }} placeholder="Notes" {...engineField(engineDraft, setEngineDraft, 'notes')} />
+                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem' }}>
+                        <LabeledField label="Engine Type">
+                          <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
+                            value={engineDraft.engine_type_id}
+                            onChange={id => setEngineDraft(d => ({ ...d, engine_type_id: id }))}
+                            onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
+                        </LabeledField>
+                        <LabeledField label="Side">
+                          <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'side')}>
+                            <option value="">Unspecified</option>
+                            <option value="port">Port</option>
+                            <option value="starboard">Starboard</option>
+                          </select>
+                        </LabeledField>
+                        <LabeledField label="Manufacturer">
+                          <input style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'manufacturer')} />
+                        </LabeledField>
+                        <LabeledField label="Model">
+                          <input style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'model')} />
+                        </LabeledField>
+                        <LabeledField label="Arrangement #">
+                          <input style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'arrangement_number')} />
+                        </LabeledField>
+                        <LabeledField label="Serial Number">
+                          <input style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'serial_number')} />
+                        </LabeledField>
+                        <LabeledField label="Cylinders">
+                          <input style={inputStyle} type="number" {...engineField(engineDraft, setEngineDraft, 'cylinder_count')} />
+                        </LabeledField>
+                        <LabeledField label="kW">
+                          <input style={inputStyle} type="number" step="0.1" {...engineField(engineDraft, setEngineDraft, 'kw')} />
+                        </LabeledField>
+                        <LabeledField label="Install Date">
+                          <input style={inputStyle} type="date" {...engineField(engineDraft, setEngineDraft, 'install_date')} />
+                        </LabeledField>
+                        <LabeledField label="Terminated Date">
+                          <input style={inputStyle} type="date" {...engineField(engineDraft, setEngineDraft, 'terminated_date')} />
+                        </LabeledField>
+                        <LabeledField label="Notes" style={{ gridColumn: '1 / -1' }}>
+                          <textarea style={{ ...inputStyle, minHeight: '50px', resize: 'vertical' }} {...engineField(engineDraft, setEngineDraft, 'notes')} />
+                        </LabeledField>
                       </div>
                     ) : (
                       <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedEngineId(isExpanded ? null : engine.id)}>
@@ -298,21 +311,16 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                           {engineTypeById[engine.engine_type_id]
                             || <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>Unspecified type</span>}
                           {engine.side && <span style={{ fontWeight: 400 }}> · {engine.side === 'port' ? 'Port' : 'Starboard'}</span>}
-                          <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.82rem' }}>
-                            {engine.terminated_date ? `terminated ${engine.terminated_date}` : ''}
-                            {engine.is_modified ? (engine.terminated_date ? ' · modified' : 'modified') : ''}
-                          </span>
+                          {engine.terminated_date && (
+                            <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.82rem' }}>
+                              terminated {engine.terminated_date}
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem' }}>
                           {[engine.manufacturer, engine.model, engine.serial_number && `S/N ${engine.serial_number}`, engine.arrangement_number && `Arr# ${engine.arrangement_number}`, engine.kw && `${engine.kw} kW`, engine.cylinder_count && `${engine.cylinder_count} cyl`]
                             .filter(Boolean).join(' · ') || 'No details yet'}
-                          {engine.hours != null && ` · ${engine.hours}h${engine.hours_updated_at ? ` as of ${engine.hours_updated_at}` : ''}`}
                         </div>
-                        {engine.is_modified && engine.modification_description && (
-                          <div style={{ fontSize: '0.8rem', color: '#a06b00', marginTop: '0.2rem' }}>
-                            🔧 {engine.modification_description}{engine.modification_date ? ` (${engine.modification_date})` : ''}
-                          </div>
-                        )}
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
@@ -463,36 +471,44 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
 
             {addingEngine ? (
               <div style={{ border: '1px dashed #0066cc', borderRadius: '6px', padding: '1rem', marginBottom: '1rem' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
-                    value={newEngine.engine_type_id}
-                    onChange={id => setNewEngine(d => ({ ...d, engine_type_id: id }))}
-                    onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
-                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'side')}>
-                    <option value="">Unspecified side</option>
-                    <option value="port">Port</option>
-                    <option value="starboard">Starboard</option>
-                  </select>
-                  <input style={inputStyle} placeholder="Manufacturer" {...engineField(newEngine, setNewEngine, 'manufacturer')} />
-                  <input style={inputStyle} placeholder="Model" {...engineField(newEngine, setNewEngine, 'model')} />
-                  <input style={inputStyle} placeholder="Arrangement #" {...engineField(newEngine, setNewEngine, 'arrangement_number')} />
-                  <input style={inputStyle} placeholder="Serial number" {...engineField(newEngine, setNewEngine, 'serial_number')} />
-                  <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(newEngine, setNewEngine, 'cylinder_count')} />
-                  <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(newEngine, setNewEngine, 'kw')} />
-                  <input style={inputStyle} type="date" placeholder="Install date" {...engineField(newEngine, setNewEngine, 'install_date')} />
-                  <input style={inputStyle} type="date" placeholder="Terminated date" title="Terminated date" {...engineField(newEngine, setNewEngine, 'terminated_date')} />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', gridColumn: '1 / -1', fontSize: '0.85rem', color: '#555' }}>
-                    <input type="checkbox" checked={!!newEngine.is_modified}
-                      onChange={e => setNewEngine(d => ({ ...d, is_modified: e.target.checked }))} />
-                    Modified from stock
-                  </label>
-                  {newEngine.is_modified && (
-                    <>
-                      <input style={{ ...inputStyle, gridColumn: '1 / 3' }} placeholder="What was modified (e.g. oversized piston liner)"
-                        {...engineField(newEngine, setNewEngine, 'modification_description')} />
-                      <input style={inputStyle} type="date" placeholder="Date done" title="Date done" {...engineField(newEngine, setNewEngine, 'modification_date')} />
-                    </>
-                  )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                  <LabeledField label="Engine Type">
+                    <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
+                      value={newEngine.engine_type_id}
+                      onChange={id => setNewEngine(d => ({ ...d, engine_type_id: id }))}
+                      onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
+                  </LabeledField>
+                  <LabeledField label="Side">
+                    <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'side')}>
+                      <option value="">Unspecified</option>
+                      <option value="port">Port</option>
+                      <option value="starboard">Starboard</option>
+                    </select>
+                  </LabeledField>
+                  <LabeledField label="Manufacturer">
+                    <input style={inputStyle} {...engineField(newEngine, setNewEngine, 'manufacturer')} />
+                  </LabeledField>
+                  <LabeledField label="Model">
+                    <input style={inputStyle} {...engineField(newEngine, setNewEngine, 'model')} />
+                  </LabeledField>
+                  <LabeledField label="Arrangement #">
+                    <input style={inputStyle} {...engineField(newEngine, setNewEngine, 'arrangement_number')} />
+                  </LabeledField>
+                  <LabeledField label="Serial Number">
+                    <input style={inputStyle} {...engineField(newEngine, setNewEngine, 'serial_number')} />
+                  </LabeledField>
+                  <LabeledField label="Cylinders">
+                    <input style={inputStyle} type="number" {...engineField(newEngine, setNewEngine, 'cylinder_count')} />
+                  </LabeledField>
+                  <LabeledField label="kW">
+                    <input style={inputStyle} type="number" step="0.1" {...engineField(newEngine, setNewEngine, 'kw')} />
+                  </LabeledField>
+                  <LabeledField label="Install Date">
+                    <input style={inputStyle} type="date" {...engineField(newEngine, setNewEngine, 'install_date')} />
+                  </LabeledField>
+                  <LabeledField label="Terminated Date">
+                    <input style={inputStyle} type="date" {...engineField(newEngine, setNewEngine, 'terminated_date')} />
+                  </LabeledField>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                   <button style={btnSecondary} onClick={() => { setAddingEngine(false); setNewEngine(blankEngine()) }} disabled={saving}>Cancel</button>
