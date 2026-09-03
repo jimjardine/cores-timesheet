@@ -412,16 +412,28 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                         {engineServiceLog.map(s => {
                           const isEditingS = editingServiceId === s.id
                           return isEditingS ? (
-                            <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr auto', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
-                              <input style={inputStyle} type="date" {...engineField(serviceDraft, setServiceDraft, 'service_date')} />
-                              <input style={inputStyle} placeholder="What was done" {...engineField(serviceDraft, setServiceDraft, 'description')} />
-                              <input style={inputStyle} type="number" step="0.1" placeholder="Hours" {...engineField(serviceDraft, setServiceDraft, 'hours_at_service')} />
-                              <input style={inputStyle} placeholder="Performed by" {...engineField(serviceDraft, setServiceDraft, 'performed_by')} />
-                              <select style={inputStyle} {...engineField(serviceDraft, setServiceDraft, 'work_order_id')}>
-                                <option value="">— no work order —</option>
-                                {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
-                              </select>
-                              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                            <div key={s.id} style={{ marginBottom: '0.75rem', padding: '0.6rem', background: '#f8f9fa', borderRadius: '4px' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                <LabeledField label="Date">
+                                  <input style={inputStyle} type="date" {...engineField(serviceDraft, setServiceDraft, 'service_date')} />
+                                </LabeledField>
+                                <LabeledField label="Hours">
+                                  <input style={inputStyle} type="number" step="0.1" {...engineField(serviceDraft, setServiceDraft, 'hours_at_service')} />
+                                </LabeledField>
+                                <LabeledField label="Performed By">
+                                  <input style={inputStyle} {...engineField(serviceDraft, setServiceDraft, 'performed_by')} />
+                                </LabeledField>
+                                <LabeledField label="Job #">
+                                  <select style={inputStyle} {...engineField(serviceDraft, setServiceDraft, 'work_order_id')}>
+                                    <option value="">— no job # —</option>
+                                    {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                                  </select>
+                                </LabeledField>
+                              </div>
+                              <LabeledField label="What Was Done">
+                                <input style={inputStyle} {...engineField(serviceDraft, setServiceDraft, 'description')} />
+                              </LabeledField>
+                              <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
                                 <button style={btnSmall} onClick={() => setEditingServiceId(null)} disabled={saving}>Cancel</button>
                                 <button style={{ ...btnPrimary, padding: '0.25rem 0.6rem', fontSize: '0.78rem' }} onClick={() => saveServiceEdit(s.id)} disabled={saving}>Save</button>
                               </div>
@@ -433,7 +445,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                                 {s.description && <span> — {s.description}</span>}
                                 {s.hours_at_service != null && <span style={{ color: '#666' }}> · {s.hours_at_service}h</span>}
                                 {s.performed_by && <span style={{ color: '#666' }}> · {s.performed_by}</span>}
-                                {s.jobs?.job_number && <span style={{ color: '#999' }}> · WO {s.jobs.job_number}</span>}
+                                {s.jobs?.job_number && <span style={{ color: '#999' }}> · Job# {s.jobs.job_number}</span>}
                               </div>
                               <div style={{ display: 'flex', gap: '0.3rem' }}>
                                 <button style={btnSmall} onClick={() => startEditServiceEntry(s)}>Edit</button>
@@ -443,16 +455,28 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                           )
                         })}
                         {addingServiceFor === engine.id && (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr 1fr auto', gap: '0.4rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                            <input style={inputStyle} type="date" {...engineField(newServiceEntry, setNewServiceEntry, 'service_date')} />
-                            <input style={inputStyle} placeholder="What was done" {...engineField(newServiceEntry, setNewServiceEntry, 'description')} />
-                            <input style={inputStyle} type="number" step="0.1" placeholder="Hours" {...engineField(newServiceEntry, setNewServiceEntry, 'hours_at_service')} />
-                            <input style={inputStyle} placeholder="Performed by" {...engineField(newServiceEntry, setNewServiceEntry, 'performed_by')} />
-                            <select style={inputStyle} {...engineField(newServiceEntry, setNewServiceEntry, 'work_order_id')}>
-                              <option value="">— no work order —</option>
-                              {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
-                            </select>
-                            <div style={{ display: 'flex', gap: '0.3rem' }}>
+                          <div style={{ marginTop: '0.5rem', padding: '0.6rem', background: '#f8f9fa', borderRadius: '4px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                              <LabeledField label="Date">
+                                <input style={inputStyle} type="date" {...engineField(newServiceEntry, setNewServiceEntry, 'service_date')} />
+                              </LabeledField>
+                              <LabeledField label="Hours">
+                                <input style={inputStyle} type="number" step="0.1" {...engineField(newServiceEntry, setNewServiceEntry, 'hours_at_service')} />
+                              </LabeledField>
+                              <LabeledField label="Performed By">
+                                <input style={inputStyle} {...engineField(newServiceEntry, setNewServiceEntry, 'performed_by')} />
+                              </LabeledField>
+                              <LabeledField label="Job #">
+                                <select style={inputStyle} {...engineField(newServiceEntry, setNewServiceEntry, 'work_order_id')}>
+                                  <option value="">— no job # —</option>
+                                  {jobs.map(j => <option key={j.id} value={j.id}>{j.job_number}</option>)}
+                                </select>
+                              </LabeledField>
+                            </div>
+                            <LabeledField label="What Was Done">
+                              <input style={inputStyle} {...engineField(newServiceEntry, setNewServiceEntry, 'description')} />
+                            </LabeledField>
+                            <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
                               <button style={btnSmall} onClick={() => setAddingServiceFor(null)} disabled={saving}>Cancel</button>
                               <button style={{ ...btnPrimary, padding: '0.25rem 0.6rem', fontSize: '0.78rem' }} onClick={() => saveNewServiceEntry(engine.id)} disabled={saving}>Add</button>
                             </div>

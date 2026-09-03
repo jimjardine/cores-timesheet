@@ -665,6 +665,8 @@ export default function AdminPanel() {
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Contact</th>
                 <th style={thStyle}>Email</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Vessels</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Engines</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Jobs</th>
                 <th style={thStyle}>Status</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}></th>
@@ -680,6 +682,8 @@ export default function AdminPanel() {
                 })
                 .map(c => {
                 const custJobs = jobs.filter(j => j.customer_id === c.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
+                const custVesselIds = vessels.filter(v => v.customer_id === c.id).map(v => v.id)
+                const custEngineCount = engines.filter(e => custVesselIds.includes(e.vessel_id)).length
                 const isExpanded = expandedId === c.id
                 return (
                   <React.Fragment key={c.id}>
@@ -691,6 +695,16 @@ export default function AdminPanel() {
                       </td>
                       <td style={{ ...tdStyle, color: '#555' }}>{c.contact_name || '—'}</td>
                       <td style={{ ...tdStyle, color: '#555' }}>{c.contact_email || '—'}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>
+                        {custVesselIds.length > 0
+                          ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#f0f0f0', color: '#555' }}>{custVesselIds.length}</span>
+                          : <span style={{ color: '#ddd' }}>—</span>}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'center' }}>
+                        {custEngineCount > 0
+                          ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#eaf1fc', color: '#2761b0' }}>{custEngineCount}</span>
+                          : <span style={{ color: '#ddd' }}>—</span>}
+                      </td>
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
                         {custJobs.length > 0
                           ? <span style={{ padding: '0.15rem 0.55rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 600, background: '#e8eef8', color: '#0055aa' }}>{custJobs.length}</span>
@@ -710,7 +724,7 @@ export default function AdminPanel() {
                       const shopJobs = jobs.filter(j => j.customer_id === c.id && !j.vessel_id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
                       return (
                         <tr>
-                          <td colSpan={6} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
+                          <td colSpan={8} style={{ padding: 0, background: '#f8faff', borderBottom: '1px solid #dde8f8' }}>
                             {c.notes && (
                               <div style={{ padding: '0.75rem 2rem', fontSize: '0.85rem', color: '#555', whiteSpace: 'pre-wrap', borderBottom: '1px solid #e8eef8' }}>
                                 <strong style={{ color: '#888', fontWeight: 700 }}>Notes: </strong>{c.notes}
