@@ -1207,7 +1207,7 @@ export default function SmsReview({ onApproved } = {}) {
             <h3 style={{ marginTop: 0 }}>Edit Submission</h3>
 
             <label style={lbl}>Employee</label>
-            <PersonPicker employees={employees} value={editFields.employee_id || ''} clearLabel="— Unknown —"
+            <PersonPicker employees={employees.filter(e => e.active || e.id === editFields.employee_id)} value={editFields.employee_id || ''} clearLabel="— Unknown —"
               onChange={id => setEditFields(p => ({ ...p, employee_id: id }))} inputStyle={inp} />
 
             <label style={lbl}>Work Date</label>
