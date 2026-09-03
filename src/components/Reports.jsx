@@ -1086,7 +1086,7 @@ export default function Reports() {
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Employee:</label>
               <MultiSelectDropdown
-                options={employees.filter(e => !hideEmptyOptions || entries.some(en => en.employee_id === e.id))}
+                options={employees.filter(e => (e.active || employeeFilterIds.includes(e.id)) && (!hideEmptyOptions || entries.some(en => en.employee_id === e.id)))}
                 selectedIds={employeeFilterIds} onChange={setEmployeeFilterIds}
                 placeholder="None selected" allLabel="All employees" />
             </div>
@@ -1137,7 +1137,7 @@ export default function Reports() {
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <label style={{ color: '#555' }}>Tech:</label>
               <MultiSelectDropdown
-                options={employees.filter(e => employeeIdsWithSupplies.has(e.id))}
+                options={employees.filter(e => (e.active || suppliesEmployeeFilterIds.includes(e.id)) && employeeIdsWithSupplies.has(e.id))}
                 selectedIds={suppliesEmployeeFilterIds} onChange={setSuppliesEmployeeFilterIds}
                 placeholder="All techs" allLabel="All techs" minWidth={180} />
             </div>

@@ -414,7 +414,7 @@ export default function GearPhotos() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
           <PersonPicker
-            employees={employees.slice().sort((a, b) => a.name.localeCompare(b.name))}
+            employees={employees.filter(e => e.active || e.id === employeeFilter).sort((a, b) => a.name.localeCompare(b.name))}
             value={employeeFilter}
             onChange={id => { setEmployeeFilter(id); setEmployeeFilterQuery('') }}
             onQueryChange={q => { setEmployeeFilterQuery(q); if (q.trim()) setEmployeeFilter('') }}
