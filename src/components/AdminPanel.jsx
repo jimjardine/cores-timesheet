@@ -738,6 +738,7 @@ export default function AdminPanel() {
                                 {custVessels.map(v => {
                                   const vExpanded = expandedVesselId === v.id
                                   const vJobs = jobs.filter(j => j.vessel_id === v.id && (jobStatusFilter === 'all' || j.status === jobStatusFilter))
+                                  const vEngineCount = engines.filter(e => e.vessel_id === v.id).length
                                   return (
                                     <React.Fragment key={v.id}>
                                       <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedVesselId(vExpanded ? null : v.id)}>
@@ -745,6 +746,11 @@ export default function AdminPanel() {
                                           <span style={{ marginRight: '0.4rem', color: '#aaa', fontSize: '0.8rem' }}>{vExpanded ? '▾' : '▸'}</span>
                                           {v.name}
                                           {v.vessel_type && <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.8rem' }}>{v.vessel_type}</span>}
+                                          {vEngineCount > 0 && (
+                                            <span style={{ marginLeft: '0.75rem', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 600, background: '#eaf1fc', color: '#2761b0' }}>
+                                              {vEngineCount} engine{vEngineCount !== 1 ? 's' : ''}
+                                            </span>
+                                          )}
                                           <span style={{ marginLeft: '0.75rem', fontWeight: 400, color: '#aaa', fontSize: '0.78rem' }}>{vJobs.length} job{vJobs.length !== 1 ? 's' : ''}</span>
                                         </td>
                                       </tr>
