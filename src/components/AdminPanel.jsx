@@ -810,8 +810,10 @@ export default function AdminPanel() {
                         </span>
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                        <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem', marginRight: '0.4rem' }} onClick={() => setEngineModal(v)}>Engines</button>
-                        <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('vessel', v)}>Edit</button>
+                        <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                          <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => setEngineModal(v)}>Engines</button>
+                          <button style={{ ...btnSecondary, fontSize: '0.8rem', padding: '0.25rem 0.7rem' }} onClick={() => openModal('vessel', v)}>Edit</button>
+                        </div>
                       </td>
                     </tr>
                     {isExpanded && (
