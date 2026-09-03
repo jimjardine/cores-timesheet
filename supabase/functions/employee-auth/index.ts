@@ -103,8 +103,36 @@ async function sendTwilioWhatsApp(to: string, body: string): Promise<{ ok: boole
 }
 
 const OTP_TTL_MINUTES = 10
+// Short and self-expiring on purpose — the crew isn't tech-savvy, and a
+// mistyped PIN or code shouldn't hold anyone out of logging their hours for
+// long. "Forgot your PIN?" already bypasses this instantly regardless (see
+// set_pin below), so this wait is only ever the fallback for someone who
+// doesn't reach for that. The real deterrent against a genuine attacker is
+// the separate IP-based circuit breaker further down, not a long per-account
+// lockout.
 const MAX_PIN_ATTEMPTS = 5
-const LOCKOUT_MINUTES = 15
+const LOCKOUT_MINUTES = 2
+const MAX_OTP_ATTEMPTS = 5
+const OTP_LOCKOUT_MINUTES = 2
+
+// ── IP-based circuit breaker ──────────────────────────────────────────────
+// Catches attack-shaped traffic the per-employee lockouts above don't: an
+// attacker spreading guesses across many employees, or just hammering the
+// endpoint at volume. Separate from, not a replacement for, the per-employee
+// lockouts — this is deliberately a blunt, longer block since it should only
+// ever trip for genuinely abnormal traffic, never normal crew use.
+const IP_WINDOW_MINUTES = 5
+const IP_MAX_ATTEMPTS = 20
+const IP_LOCKOUT_MINUTES = 30
+// Jim's own phone — texted once per new IP block (not once per blocked
+// request during the whole cooldown) so he knows about an attack in near
+// real time without getting spammed mid-attack.
+const SECURITY_ALERT_PHONE = '5068667302'
+
+function clientIpFrom(req: Request): string {
+  const fwd = req.headers.get('x-forwarded-for') || ''
+  return fwd.split(',')[0].trim() || 'unknown'
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -130,6 +158,29 @@ Deno.serve(async (req: Request) => {
     return jsonReply({ ok: false, error: 'Invalid JSON body' }, 400)
   }
 
+  // ── IP circuit breaker — checked before anything else for a guessable
+  // action, so a blocked IP never even reaches an employee lookup. ──
+  const clientIp = clientIpFrom(req)
+  const isGuessableAction = json.action === 'login' || json.action === 'set_pin'
+
+  async function recordIpFailure() {
+    const { data } = await supabase.rpc('record_ip_auth_failure', {
+      p_ip: clientIp, p_window_minutes: IP_WINDOW_MINUTES, p_max_attempts: IP_MAX_ATTEMPTS, p_lockout_minutes: IP_LOCKOUT_MINUTES,
+    }).single()
+    if (data?.is_new_block) {
+      const until = new Date(data.new_blocked_until).toLocaleString('en-CA', { timeZone: 'America/Halifax', hour: 'numeric', minute: '2-digit' })
+      await sendTwilioSms(SECURITY_ALERT_PHONE,
+        `⚠️ Cores Timesheet: IP ${clientIp} blocked after ${data.new_fail_count} failed login/PIN attempts in ${IP_WINDOW_MINUTES} min. Blocked until ${until} AT.`)
+    }
+  }
+
+  if (isGuessableAction) {
+    const { data: throttle } = await supabase.from('auth_ip_throttle').select('blocked_until').eq('ip', clientIp).maybeSingle()
+    if (throttle?.blocked_until && new Date(throttle.blocked_until) > new Date()) {
+      return jsonReply({ ok: false, error: 'Too many attempts. Try again later.' })
+    }
+  }
+
   const phone = normalizePhone(json.phone || '')
   if (!phone) return jsonReply({ ok: false, error: 'Phone number required' }, 400)
 
@@ -144,6 +195,15 @@ Deno.serve(async (req: Request) => {
   if (json.action === 'request_otp') {
     const employee = await findActiveEmployee()
     if (!employee) return jsonReply({ ok: false, error: 'No account found for that phone number.' })
+
+    // Blocks re-requesting a fresh code as a way to dodge an active OTP
+    // lockout below — otherwise the lockout on set_pin would be trivial to
+    // route around by just asking for a new code each time.
+    const { data: existingAuth } = await supabase.from('employee_auth').select('otp_locked_until').eq('employee_id', employee.id).maybeSingle()
+    if (existingAuth?.otp_locked_until && new Date(existingAuth.otp_locked_until) > new Date()) {
+      const minsLeft = Math.ceil((new Date(existingAuth.otp_locked_until).getTime() - Date.now()) / 60000)
+      return jsonReply({ ok: false, error: `Too many attempts. Try again in ${minsLeft} min.` })
+    }
 
     const otp = randomOtp()
     const otpHash = await sha256Hex(otp)
@@ -173,11 +233,29 @@ Deno.serve(async (req: Request) => {
     if (!employee) return jsonReply({ ok: false, error: 'No account found for that phone number.' })
 
     const { data: authRow } = await supabase.from('employee_auth').select('*').eq('employee_id', employee.id).single()
+
+    if (authRow?.otp_locked_until && new Date(authRow.otp_locked_until) > new Date()) {
+      const minsLeft = Math.ceil((new Date(authRow.otp_locked_until).getTime() - Date.now()) / 60000)
+      return jsonReply({ ok: false, error: `Too many attempts. Try again in ${minsLeft} min.` })
+    }
+
     if (!authRow?.otp_code_hash || !authRow.otp_expires_at || new Date(authRow.otp_expires_at) < new Date()) {
       return jsonReply({ ok: false, error: 'Code expired — request a new one.' })
     }
     const otpHash = await sha256Hex(String(json.otp || ''))
-    if (otpHash !== authRow.otp_code_hash) return jsonReply({ ok: false, error: 'Incorrect code.' })
+    if (otpHash !== authRow.otp_code_hash) {
+      // Same "atomic increment, alert once on a new IP-wide block" pattern
+      // as login's wrong-PIN path below — see record_otp_failure's migration
+      // comment for why the naive read-then-write version this replaced
+      // could let concurrent guesses dodge the lockout.
+      const { data: otpFail } = await supabase.rpc('record_otp_failure', {
+        p_employee_id: employee.id, p_max_attempts: MAX_OTP_ATTEMPTS, p_lockout_minutes: OTP_LOCKOUT_MINUTES,
+      }).single()
+      await recordIpFailure()
+      return jsonReply(otpFail?.new_locked_until
+        ? { ok: false, error: `Too many attempts. Try again in ${OTP_LOCKOUT_MINUTES} min.` }
+        : { ok: false, error: 'Incorrect code.' })
+    }
 
     const salt = randomHex()
     const pinHash = await sha256Hex(`${salt}:${newPin}`)
@@ -185,6 +263,7 @@ Deno.serve(async (req: Request) => {
       pin_hash: pinHash, pin_salt: salt,
       pin_fail_count: 0, pin_locked_until: null,
       otp_code_hash: null, otp_expires_at: null,
+      otp_fail_count: 0, otp_locked_until: null,
       updated_at: new Date().toISOString(),
     }).eq('employee_id', employee.id)
     if (error) return jsonReply({ ok: false, error: `Could not save PIN: ${error.message}` })
@@ -215,15 +294,17 @@ Deno.serve(async (req: Request) => {
       return jsonReply({ ok: true, employee: { id: employee.id, name: employee.name } })
     }
 
-    const failCount = (authRow.pin_fail_count || 0) + 1
-    const lockedUntil = failCount >= MAX_PIN_ATTEMPTS ? new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000).toISOString() : null
-    await supabase.from('employee_auth').update({
-      pin_fail_count: lockedUntil ? 0 : failCount, pin_locked_until: lockedUntil, updated_at: new Date().toISOString(),
-    }).eq('employee_id', employee.id)
+    // Atomic increment (see record_pin_failure's migration comment) — the
+    // old version here read pin_fail_count, added 1 in JS, then wrote it
+    // back, which let concurrent guesses race past the lockout.
+    const { data: pinFail } = await supabase.rpc('record_pin_failure', {
+      p_employee_id: employee.id, p_max_attempts: MAX_PIN_ATTEMPTS, p_lockout_minutes: LOCKOUT_MINUTES,
+    }).single()
+    await recordIpFailure()
 
-    return jsonReply(lockedUntil
+    return jsonReply(pinFail?.new_locked_until
       ? { ok: false, error: `Too many attempts. Try again in ${LOCKOUT_MINUTES} min.` }
-      : { ok: false, error: 'Incorrect PIN.', attemptsRemaining: MAX_PIN_ATTEMPTS - failCount })
+      : { ok: false, error: 'Incorrect PIN.', attemptsRemaining: MAX_PIN_ATTEMPTS - (pinFail?.new_fail_count ?? 0) })
   }
 
   return jsonReply({ ok: false, error: 'Unknown action' }, 400)
