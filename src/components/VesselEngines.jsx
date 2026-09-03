@@ -8,7 +8,7 @@ const btnSecondary = { padding: '0.4rem 0.9rem', background: '#fff', color: '#55
 const btnSmall = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #ccc', background: '#fff', borderRadius: '4px', cursor: 'pointer' }
 const btnDanger = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #e0b0b0', background: '#fff', color: '#c0392b', borderRadius: '4px', cursor: 'pointer' }
 
-const blankEngine = () => ({ engine_type: 'main', label: '', manufacturer: '', model: '', serial_number: '', cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', status: 'active', notes: '' })
+const blankEngine = () => ({ engine_type: '', label: '', manufacturer: '', model: '', serial_number: '', arrangement_number: '', cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', status: 'active', notes: '' })
 const blankComponent = () => ({ position_label: '', component_type_id: '', serial_number: '', install_date: '', notes: '' })
 const blankServiceEntry = () => ({ service_date: '', description: '', hours_at_service: '', performed_by: '', work_order_id: '' })
 
@@ -67,15 +67,15 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   function engineNumField(v) { return v === '' ? null : Number(v) }
 
   async function saveNewEngine() {
-    if (!newEngine.label.trim()) { alert('Give the engine a label (e.g. "Port", "Generator 1")'); return }
     setSaving(true)
     const payload = {
       vessel_id: vessel.id,
-      engine_type: newEngine.engine_type,
-      label: newEngine.label.trim(),
+      engine_type: newEngine.engine_type || null,
+      label: newEngine.label.trim() || null,
       manufacturer: newEngine.manufacturer || null,
       model: newEngine.model || null,
       serial_number: newEngine.serial_number || null,
+      arrangement_number: newEngine.arrangement_number || null,
       cylinder_count: engineNumField(newEngine.cylinder_count),
       kw: engineNumField(newEngine.kw),
       install_date: newEngine.install_date || null,
@@ -95,19 +95,20 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   function startEditEngine(engine) {
     setEditingEngineId(engine.id)
     setEngineDraft({
-      engine_type: engine.engine_type, label: engine.label, manufacturer: engine.manufacturer || '',
-      model: engine.model || '', serial_number: engine.serial_number || '', cylinder_count: engine.cylinder_count ?? '',
-      kw: engine.kw ?? '', install_date: engine.install_date || '', hours: engine.hours ?? '',
-      hours_updated_at: engine.hours_updated_at || '', status: engine.status, notes: engine.notes || '',
+      engine_type: engine.engine_type || '', label: engine.label || '', manufacturer: engine.manufacturer || '',
+      model: engine.model || '', serial_number: engine.serial_number || '', arrangement_number: engine.arrangement_number || '',
+      cylinder_count: engine.cylinder_count ?? '', kw: engine.kw ?? '', install_date: engine.install_date || '',
+      hours: engine.hours ?? '', hours_updated_at: engine.hours_updated_at || '', status: engine.status, notes: engine.notes || '',
     })
   }
 
   async function saveEngineEdit(engineId) {
     setSaving(true)
     const payload = {
-      engine_type: engineDraft.engine_type, label: engineDraft.label.trim(),
+      engine_type: engineDraft.engine_type || null, label: engineDraft.label.trim() || null,
       manufacturer: engineDraft.manufacturer || null, model: engineDraft.model || null,
-      serial_number: engineDraft.serial_number || null, cylinder_count: engineNumField(engineDraft.cylinder_count),
+      serial_number: engineDraft.serial_number || null, arrangement_number: engineDraft.arrangement_number || null,
+      cylinder_count: engineNumField(engineDraft.cylinder_count),
       kw: engineNumField(engineDraft.kw), install_date: engineDraft.install_date || null,
       hours: engineNumField(engineDraft.hours), hours_updated_at: engineDraft.hours_updated_at || null,
       status: engineDraft.status, notes: engineDraft.notes || null,
@@ -120,7 +121,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   }
 
   async function deleteEngine(engine) {
-    if (!confirm(`Delete "${engine.label}"? This also deletes its components and service log.`)) return
+    if (!confirm(`Delete "${engine.label || engine.manufacturer || 'this engine'}"? This also deletes its components and service log.`)) return
     const { error } = await supabase.schema('Cores').from('engines').delete().eq('id', engine.id)
     if (error) { alert('Error deleting engine: ' + error.message); return }
     load()
@@ -247,10 +248,11 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                     {isEditing ? (
                       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
                         <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'engine_type')}>
+                          <option value="">Unspecified</option>
                           <option value="main">Main</option>
                           <option value="auxiliary">Auxiliary</option>
                         </select>
-                        <input style={inputStyle} placeholder="Label (Port, Generator 1…)" {...engineField(engineDraft, setEngineDraft, 'label')} />
+                        <input style={inputStyle} placeholder="Label (PME, P Gen, Spare…)" {...engineField(engineDraft, setEngineDraft, 'label')} />
                         <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'status')}>
                           <option value="active">Active</option>
                           <option value="removed">Removed</option>
@@ -258,6 +260,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                         <input style={inputStyle} placeholder="Manufacturer" {...engineField(engineDraft, setEngineDraft, 'manufacturer')} />
                         <input style={inputStyle} placeholder="Model" {...engineField(engineDraft, setEngineDraft, 'model')} />
                         <input style={inputStyle} placeholder="Serial number" {...engineField(engineDraft, setEngineDraft, 'serial_number')} />
+                        <input style={inputStyle} placeholder="Arrangement #" {...engineField(engineDraft, setEngineDraft, 'arrangement_number')} />
                         <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(engineDraft, setEngineDraft, 'cylinder_count')} />
                         <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(engineDraft, setEngineDraft, 'kw')} />
                         <input style={inputStyle} type="date" placeholder="Install date" {...engineField(engineDraft, setEngineDraft, 'install_date')} />
@@ -269,14 +272,14 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                       <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedEngineId(isExpanded ? null : engine.id)}>
                         <div style={{ fontWeight: 700, fontSize: '1rem' }}>
                           <span style={{ color: '#aaa', fontSize: '0.85rem', marginRight: '0.4rem' }}>{isExpanded ? '▾' : '▸'}</span>
-                          {engine.label}
+                          {engine.label || <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>No label</span>}
                           <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.82rem' }}>
-                            {engine.engine_type === 'main' ? 'Main engine' : 'Auxiliary'}
+                            {engine.engine_type === 'main' ? 'Main engine' : engine.engine_type === 'auxiliary' ? 'Auxiliary' : ''}
                             {engine.status !== 'active' ? ` · ${engine.status}` : ''}
                           </span>
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem' }}>
-                          {[engine.manufacturer, engine.model, engine.serial_number && `S/N ${engine.serial_number}`, engine.kw && `${engine.kw} kW`, engine.cylinder_count && `${engine.cylinder_count} cyl`]
+                          {[engine.manufacturer, engine.model, engine.serial_number && `S/N ${engine.serial_number}`, engine.arrangement_number && `Arr# ${engine.arrangement_number}`, engine.kw && `${engine.kw} kW`, engine.cylinder_count && `${engine.cylinder_count} cyl`]
                             .filter(Boolean).join(' · ') || 'No details yet'}
                           {engine.hours != null && ` · ${engine.hours}h${engine.hours_updated_at ? ` as of ${engine.hours_updated_at}` : ''}`}
                         </div>
@@ -432,10 +435,11 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
               <div style={{ border: '1px dashed #0066cc', borderRadius: '6px', padding: '1rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                   <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'engine_type')}>
+                    <option value="">Unspecified</option>
                     <option value="main">Main</option>
                     <option value="auxiliary">Auxiliary</option>
                   </select>
-                  <input style={inputStyle} placeholder="Label (Port, Generator 1…)" {...engineField(newEngine, setNewEngine, 'label')} autoFocus />
+                  <input style={inputStyle} placeholder="Label (PME, P Gen, Spare…)" {...engineField(newEngine, setNewEngine, 'label')} autoFocus />
                   <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'status')}>
                     <option value="active">Active</option>
                     <option value="removed">Removed</option>
@@ -443,6 +447,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                   <input style={inputStyle} placeholder="Manufacturer" {...engineField(newEngine, setNewEngine, 'manufacturer')} />
                   <input style={inputStyle} placeholder="Model" {...engineField(newEngine, setNewEngine, 'model')} />
                   <input style={inputStyle} placeholder="Serial number" {...engineField(newEngine, setNewEngine, 'serial_number')} />
+                  <input style={inputStyle} placeholder="Arrangement #" {...engineField(newEngine, setNewEngine, 'arrangement_number')} />
                   <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(newEngine, setNewEngine, 'cylinder_count')} />
                   <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(newEngine, setNewEngine, 'kw')} />
                   <input style={inputStyle} type="date" placeholder="Install date" {...engineField(newEngine, setNewEngine, 'install_date')} />
