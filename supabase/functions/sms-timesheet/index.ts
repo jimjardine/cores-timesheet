@@ -95,9 +95,9 @@ Add a day for another date: "TS yesterday", "TS monday".`,
 
   dayoff: `DAY OFF — mark today as off
 
-Text "day off" and today's marked as intentionally not worked — no hours,
-no job, nothing for the office to review. Keeps it from showing up as a
-missed report. Only covers today; text it again on another day you're off.`,
+Text "day off" and it's sent to the office as intentionally not worked — no
+hours, no job. Keeps it from showing up as a missed report once approved.
+Only covers today; text it again on another day you're off.`,
 
   reject: `REJECT — delete an entry
 
@@ -1320,34 +1320,38 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── Day off ("day off") ──
-  // Deterministic keyword, no Claude call, no office review needed — there's
-  // nothing to check (no hours, no job). A positive "I'm intentionally not
-  // working today" signal instead of silence, so it doesn't read as a missed
-  // report in Submission Status. Guarded on no-media so a photo captioned
-  // "day off" still gets saved as a photo below, and on a known employee —
-  // an unrecognized number still needs a human to match it, same as any
-  // other text from that number.
+  // Deterministic keyword, no Claude call. Used to auto-accept straight into
+  // timesheet_entries ("nothing to check") — changed 2026-09-03, Niki wants
+  // day-off requests to land in SMS Review like everything else instead of
+  // going straight to Timesheets, so this now creates a pending sms_submission
+  // (empty entries, is_day_off flag) for her to approve/decline; approve()
+  // is what actually writes the timesheet_entries row. Guarded on no-media so
+  // a photo captioned "day off" still gets saved as a photo below, and on a
+  // known employee — an unrecognized number still needs a human to match it,
+  // same as any other text from that number.
   if (msgLower === 'day off' && mediaUrls.length === 0 && employeeId) {
-    const { data: existing } = await supabase
+    const { data: existingApproved } = await supabase
       .from('timesheet_entries').select('id')
       .eq('employee_id', employeeId).eq('work_date', today).eq('is_day_off', true)
       .limit(1)
+    const { data: existingPending } = await supabase
+      .from('sms_submissions').select('id')
+      .eq('employee_id', employeeId).eq('work_date', today).eq('is_day_off', true)
+      .in('status', ['submitted', 'collecting']).limit(1)
     let r: string
-    if (existing && existing.length > 0) {
+    if (existingApproved && existingApproved.length > 0) {
       r = `Already marked ${friendlyDate(today)} as a day off${employeeName ? ', ' + employeeName.split(' ')[0] : ''}.`
+    } else if (existingPending && existingPending.length > 0) {
+      r = `Already sent that in — the office still needs to approve ${friendlyDate(today)} as a day off.`
     } else {
-      const { error } = await supabase.from('timesheet_entries').insert({
-        employee_id: employeeId, work_date: today, job_id: null,
-        hours: 0, ot_hours: 0, description: 'Day off',
-        per_diem: 0, is_day_off: true, entry_source: 'sms',
+      const { error } = await supabase.from('sms_submissions').insert({
+        from_phone: fromPhone, employee_id: employeeId, work_date: today,
+        entries: [], status: 'submitted', is_day_off: true,
+        raw_messages: [{ text: msgBody, direction: 'in', ts: new Date().toISOString() }],
       })
       r = error
-        // Unique index race (see migration) reads as a duplicate-key error —
-        // someone else's concurrent "day off" already landed, which is fine.
-        ? (error.message?.includes('duplicate key')
-            ? `Already marked ${friendlyDate(today)} as a day off${employeeName ? ', ' + employeeName.split(' ')[0] : ''}.`
-            : `Couldn't save that — contact the office if this keeps happening.`)
-        : `Got it${employeeName ? ' ' + employeeName.split(' ')[0] : ''} — marked ${friendlyDate(today)} as a day off.`
+        ? `Couldn't save that — contact the office if this keeps happening.`
+        : `Got it${employeeName ? ' ' + employeeName.split(' ')[0] : ''} — sent ${friendlyDate(today)} in to the office as a day off.`
     }
     return isTwilio ? twiML(r) : jsonReply({ reply: r })
   }
