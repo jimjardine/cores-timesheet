@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
-import ComponentTypePicker from './ComponentTypePicker'
+import LookupPicker from './LookupPicker'
 
 const inputStyle = { padding: '0.4rem 0.6rem', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' }
 const btnPrimary = { padding: '0.4rem 0.9rem', background: '#0066cc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }
@@ -8,22 +8,11 @@ const btnSecondary = { padding: '0.4rem 0.9rem', background: '#fff', color: '#55
 const btnSmall = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #ccc', background: '#fff', borderRadius: '4px', cursor: 'pointer' }
 const btnDanger = { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #e0b0b0', background: '#fff', color: '#c0392b', borderRadius: '4px', cursor: 'pointer' }
 
-// engine_type is the engine's application, not just main/auxiliary — Jim's
-// correction after seeing the first pass: "label is TYPE... Main, aux,
-// genset, emergency" (plus 'spare', seen in the real data — e.g. Strait
-// Falcon's spare engine). Still plain text (no CHECK/enum), same posture as
-// jobs.status/vessels.status elsewhere in this schema.
-const ENGINE_TYPES = [
-  { value: '', label: 'Unspecified' },
-  { value: 'main', label: 'Main' },
-  { value: 'auxiliary', label: 'Auxiliary' },
-  { value: 'genset', label: 'Genset' },
-  { value: 'emergency', label: 'Emergency' },
-  { value: 'spare', label: 'Spare' },
-]
-const ENGINE_TYPE_LABELS = Object.fromEntries(ENGINE_TYPES.filter(t => t.value).map(t => [t.value, t.label]))
-
-const blankEngine = () => ({ engine_type: '', side: '', manufacturer: '', model: '', serial_number: '', arrangement_number: '', cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', status: 'active', notes: '' })
+const blankEngine = () => ({
+  engine_type_id: '', side: '', manufacturer: '', model: '', arrangement_number: '', serial_number: '',
+  cylinder_count: '', kw: '', install_date: '', hours: '', hours_updated_at: '', terminated_date: '',
+  is_modified: false, modification_description: '', modification_date: '', notes: '',
+})
 const blankComponent = () => ({ position_label: '', component_type_id: '', serial_number: '', install_date: '', notes: '' })
 const blankServiceEntry = () => ({ service_date: '', description: '', hours_at_service: '', performed_by: '', work_order_id: '' })
 
@@ -34,6 +23,7 @@ const blankServiceEntry = () => ({ service_date: '', description: '', hours_at_s
 // GearPhotos.jsx already handles this shape of per-item CRUD elsewhere.
 export default function VesselEngines({ vessel, jobs, onClose }) {
   const [engines, setEngines] = useState([])
+  const [engineTypes, setEngineTypes] = useState([])
   const [componentTypes, setComponentTypes] = useState([])
   const [components, setComponents] = useState([])
   const [serviceLog, setServiceLog] = useState([])
@@ -62,7 +52,8 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
     const engineList = e || []
     setEngines(engineList)
     const engineIds = engineList.map(x => x.id)
-    const [{ data: ct }, compsRes, logRes] = await Promise.all([
+    const [{ data: et }, { data: ct }, compsRes, logRes] = await Promise.all([
+      supabase.schema('Cores').from('engine_types').select('*').order('name'),
       supabase.schema('Cores').from('component_types').select('*').order('name'),
       engineIds.length
         ? supabase.schema('Cores').from('engine_components').select('*').in('engine_id', engineIds).order('position_label')
@@ -71,6 +62,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
         ? supabase.schema('Cores').from('engine_service_log').select('*, jobs(job_number)').in('engine_id', engineIds).order('service_date', { ascending: false })
         : Promise.resolve({ data: [] }),
     ])
+    setEngineTypes(et || [])
     setComponentTypes(ct || [])
     setComponents(compsRes.data || [])
     setServiceLog(logRes.data || [])
@@ -81,25 +73,33 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
 
   function engineNumField(v) { return v === '' ? null : Number(v) }
 
+  // Shared between add and edit — description/date only mean anything when
+  // the checkbox is actually on, so don't carry stale values if it gets
+  // unchecked after being filled in.
+  function engineFields(d) {
+    return {
+      engine_type_id: d.engine_type_id || null,
+      side: d.side || null,
+      manufacturer: d.manufacturer || null,
+      model: d.model || null,
+      arrangement_number: d.arrangement_number || null,
+      serial_number: d.serial_number || null,
+      cylinder_count: engineNumField(d.cylinder_count),
+      kw: engineNumField(d.kw),
+      install_date: d.install_date || null,
+      hours: engineNumField(d.hours),
+      hours_updated_at: d.hours_updated_at || null,
+      terminated_date: d.terminated_date || null,
+      is_modified: !!d.is_modified,
+      modification_description: d.is_modified ? (d.modification_description || null) : null,
+      modification_date: d.is_modified ? (d.modification_date || null) : null,
+      notes: d.notes || null,
+    }
+  }
+
   async function saveNewEngine() {
     setSaving(true)
-    const payload = {
-      vessel_id: vessel.id,
-      engine_type: newEngine.engine_type || null,
-      side: newEngine.side || null,
-      manufacturer: newEngine.manufacturer || null,
-      model: newEngine.model || null,
-      serial_number: newEngine.serial_number || null,
-      arrangement_number: newEngine.arrangement_number || null,
-      cylinder_count: engineNumField(newEngine.cylinder_count),
-      kw: engineNumField(newEngine.kw),
-      install_date: newEngine.install_date || null,
-      hours: engineNumField(newEngine.hours),
-      hours_updated_at: newEngine.hours_updated_at || null,
-      status: newEngine.status,
-      notes: newEngine.notes || null,
-    }
-    const { error } = await supabase.schema('Cores').from('engines').insert(payload)
+    const { error } = await supabase.schema('Cores').from('engines').insert({ vessel_id: vessel.id, ...engineFields(newEngine) })
     setSaving(false)
     if (error) { alert('Error adding engine: ' + error.message); return }
     setAddingEngine(false)
@@ -110,25 +110,18 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   function startEditEngine(engine) {
     setEditingEngineId(engine.id)
     setEngineDraft({
-      engine_type: engine.engine_type || '', side: engine.side || '', manufacturer: engine.manufacturer || '',
-      model: engine.model || '', serial_number: engine.serial_number || '', arrangement_number: engine.arrangement_number || '',
+      engine_type_id: engine.engine_type_id || '', side: engine.side || '', manufacturer: engine.manufacturer || '',
+      model: engine.model || '', arrangement_number: engine.arrangement_number || '', serial_number: engine.serial_number || '',
       cylinder_count: engine.cylinder_count ?? '', kw: engine.kw ?? '', install_date: engine.install_date || '',
-      hours: engine.hours ?? '', hours_updated_at: engine.hours_updated_at || '', status: engine.status, notes: engine.notes || '',
+      hours: engine.hours ?? '', hours_updated_at: engine.hours_updated_at || '', terminated_date: engine.terminated_date || '',
+      is_modified: engine.is_modified || false, modification_description: engine.modification_description || '',
+      modification_date: engine.modification_date || '', notes: engine.notes || '',
     })
   }
 
   async function saveEngineEdit(engineId) {
     setSaving(true)
-    const payload = {
-      engine_type: engineDraft.engine_type || null, side: engineDraft.side || null,
-      manufacturer: engineDraft.manufacturer || null, model: engineDraft.model || null,
-      serial_number: engineDraft.serial_number || null, arrangement_number: engineDraft.arrangement_number || null,
-      cylinder_count: engineNumField(engineDraft.cylinder_count),
-      kw: engineNumField(engineDraft.kw), install_date: engineDraft.install_date || null,
-      hours: engineNumField(engineDraft.hours), hours_updated_at: engineDraft.hours_updated_at || null,
-      status: engineDraft.status, notes: engineDraft.notes || null,
-    }
-    const { error } = await supabase.schema('Cores').from('engines').update(payload).eq('id', engineId)
+    const { error } = await supabase.schema('Cores').from('engines').update(engineFields(engineDraft)).eq('id', engineId)
     setSaving(false)
     if (error) { alert('Error saving engine: ' + error.message); return }
     setEditingEngineId(null)
@@ -136,7 +129,8 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
   }
 
   async function deleteEngine(engine) {
-    const desc = [engine.engine_type && ENGINE_TYPE_LABELS[engine.engine_type], engine.manufacturer].filter(Boolean).join(' ') || 'this engine'
+    const typeName = engineTypes.find(t => t.id === engine.engine_type_id)?.name
+    const desc = [typeName, engine.manufacturer].filter(Boolean).join(' ') || 'this engine'
     if (!confirm(`Delete "${desc}"? This also deletes its components and service log.`)) return
     const { error } = await supabase.schema('Cores').from('engines').delete().eq('id', engine.id)
     if (error) { alert('Error deleting engine: ' + error.message); return }
@@ -238,6 +232,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
     value: draft[key] ?? '',
     onChange: e => setDraft(d => ({ ...d, [key]: e.target.value })),
   })
+  const engineTypeById = Object.fromEntries(engineTypes.map(t => [t.id, t.name]))
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 250, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '2rem', overflowY: 'auto' }}>
@@ -263,39 +258,49 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                   <div style={{ padding: '0.9rem 1.1rem', background: '#f8f9fa', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
                     {isEditing ? (
                       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                        <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'engine_type')}>
-                          {ENGINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
+                        <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
+                          value={engineDraft.engine_type_id}
+                          onChange={id => setEngineDraft(d => ({ ...d, engine_type_id: id }))}
+                          onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
                         <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'side')}>
                           <option value="">Unspecified side</option>
                           <option value="port">Port</option>
                           <option value="starboard">Starboard</option>
                         </select>
-                        <select style={inputStyle} {...engineField(engineDraft, setEngineDraft, 'status')}>
-                          <option value="active">Active</option>
-                          <option value="removed">Removed</option>
-                        </select>
                         <input style={inputStyle} placeholder="Manufacturer" {...engineField(engineDraft, setEngineDraft, 'manufacturer')} />
                         <input style={inputStyle} placeholder="Model" {...engineField(engineDraft, setEngineDraft, 'model')} />
-                        <input style={inputStyle} placeholder="Serial number" {...engineField(engineDraft, setEngineDraft, 'serial_number')} />
                         <input style={inputStyle} placeholder="Arrangement #" {...engineField(engineDraft, setEngineDraft, 'arrangement_number')} />
+                        <input style={inputStyle} placeholder="Serial number" {...engineField(engineDraft, setEngineDraft, 'serial_number')} />
                         <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(engineDraft, setEngineDraft, 'cylinder_count')} />
                         <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(engineDraft, setEngineDraft, 'kw')} />
                         <input style={inputStyle} type="date" placeholder="Install date" {...engineField(engineDraft, setEngineDraft, 'install_date')} />
                         <input style={inputStyle} type="number" step="0.1" placeholder="Hours" {...engineField(engineDraft, setEngineDraft, 'hours')} />
                         <input style={inputStyle} type="date" placeholder="Hours as of" {...engineField(engineDraft, setEngineDraft, 'hours_updated_at')} />
+                        <input style={inputStyle} type="date" placeholder="Terminated date" title="Terminated date" {...engineField(engineDraft, setEngineDraft, 'terminated_date')} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', gridColumn: '1 / -1', fontSize: '0.85rem', color: '#555' }}>
+                          <input type="checkbox" checked={!!engineDraft.is_modified}
+                            onChange={e => setEngineDraft(d => ({ ...d, is_modified: e.target.checked }))} />
+                          Modified from stock
+                        </label>
+                        {engineDraft.is_modified && (
+                          <>
+                            <input style={{ ...inputStyle, gridColumn: '1 / 3' }} placeholder="What was modified (e.g. oversized piston liner)"
+                              {...engineField(engineDraft, setEngineDraft, 'modification_description')} />
+                            <input style={inputStyle} type="date" placeholder="Date done" title="Date done" {...engineField(engineDraft, setEngineDraft, 'modification_date')} />
+                          </>
+                        )}
                         <textarea style={{ ...inputStyle, gridColumn: '1 / -1', minHeight: '50px', resize: 'vertical' }} placeholder="Notes" {...engineField(engineDraft, setEngineDraft, 'notes')} />
                       </div>
                     ) : (
                       <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedEngineId(isExpanded ? null : engine.id)}>
                         <div style={{ fontWeight: 700, fontSize: '1rem' }}>
                           <span style={{ color: '#aaa', fontSize: '0.85rem', marginRight: '0.4rem' }}>{isExpanded ? '▾' : '▸'}</span>
-                          {engine.engine_type
-                            ? ENGINE_TYPE_LABELS[engine.engine_type]
-                            : <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>Unspecified type</span>}
+                          {engineTypeById[engine.engine_type_id]
+                            || <span style={{ fontWeight: 400, fontStyle: 'italic', color: '#aaa' }}>Unspecified type</span>}
                           {engine.side && <span style={{ fontWeight: 400 }}> · {engine.side === 'port' ? 'Port' : 'Starboard'}</span>}
                           <span style={{ fontWeight: 400, color: '#888', marginLeft: '0.5rem', fontSize: '0.82rem' }}>
-                            {engine.status !== 'active' ? engine.status : ''}
+                            {engine.terminated_date ? `terminated ${engine.terminated_date}` : ''}
+                            {engine.is_modified ? (engine.terminated_date ? ' · modified' : 'modified') : ''}
                           </span>
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem' }}>
@@ -303,6 +308,11 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                             .filter(Boolean).join(' · ') || 'No details yet'}
                           {engine.hours != null && ` · ${engine.hours}h${engine.hours_updated_at ? ` as of ${engine.hours_updated_at}` : ''}`}
                         </div>
+                        {engine.is_modified && engine.modification_description && (
+                          <div style={{ fontSize: '0.8rem', color: '#a06b00', marginTop: '0.2rem' }}>
+                            🔧 {engine.modification_description}{engine.modification_date ? ` (${engine.modification_date})` : ''}
+                          </div>
+                        )}
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
@@ -340,7 +350,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                           return isEditingC ? (
                             <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 1fr auto', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
                               <input style={inputStyle} placeholder="Position (Left1…)" {...engineField(componentDraft, setComponentDraft, 'position_label')} />
-                              <ComponentTypePicker types={componentTypes} value={componentDraft.component_type_id}
+                              <LookupPicker table="component_types" placeholder="Type a component…" types={componentTypes} value={componentDraft.component_type_id}
                                 onChange={id => setComponentDraft(d => ({ ...d, component_type_id: id }))}
                                 onTypeCreated={t => setComponentTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
                               <input style={inputStyle} placeholder="Serial number" {...engineField(componentDraft, setComponentDraft, 'serial_number')} />
@@ -367,7 +377,7 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
                         {addingComponentFor === engine.id && (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 1fr auto', gap: '0.4rem', marginTop: '0.5rem', alignItems: 'center' }}>
                             <input style={inputStyle} placeholder="Position (Left1…)" {...engineField(newComponent, setNewComponent, 'position_label')} />
-                            <ComponentTypePicker types={componentTypes} value={newComponent.component_type_id}
+                            <LookupPicker table="component_types" placeholder="Type a component…" types={componentTypes} value={newComponent.component_type_id}
                               onChange={id => setNewComponent(d => ({ ...d, component_type_id: id }))}
                               onTypeCreated={t => setComponentTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
                             <input style={inputStyle} placeholder="Serial number" {...engineField(newComponent, setNewComponent, 'serial_number')} />
@@ -454,25 +464,35 @@ export default function VesselEngines({ vessel, jobs, onClose }) {
             {addingEngine ? (
               <div style={{ border: '1px dashed #0066cc', borderRadius: '6px', padding: '1rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'engine_type')} autoFocus>
-                    {ENGINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <LookupPicker table="engine_types" types={engineTypes} placeholder="Engine Type…"
+                    value={newEngine.engine_type_id}
+                    onChange={id => setNewEngine(d => ({ ...d, engine_type_id: id }))}
+                    onTypeCreated={t => setEngineTypes(p => [...p, t].sort((a, b) => a.name.localeCompare(b.name)))} />
                   <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'side')}>
                     <option value="">Unspecified side</option>
                     <option value="port">Port</option>
                     <option value="starboard">Starboard</option>
                   </select>
-                  <select style={inputStyle} {...engineField(newEngine, setNewEngine, 'status')}>
-                    <option value="active">Active</option>
-                    <option value="removed">Removed</option>
-                  </select>
                   <input style={inputStyle} placeholder="Manufacturer" {...engineField(newEngine, setNewEngine, 'manufacturer')} />
                   <input style={inputStyle} placeholder="Model" {...engineField(newEngine, setNewEngine, 'model')} />
-                  <input style={inputStyle} placeholder="Serial number" {...engineField(newEngine, setNewEngine, 'serial_number')} />
                   <input style={inputStyle} placeholder="Arrangement #" {...engineField(newEngine, setNewEngine, 'arrangement_number')} />
+                  <input style={inputStyle} placeholder="Serial number" {...engineField(newEngine, setNewEngine, 'serial_number')} />
                   <input style={inputStyle} type="number" placeholder="Cylinders" {...engineField(newEngine, setNewEngine, 'cylinder_count')} />
                   <input style={inputStyle} type="number" step="0.1" placeholder="kW" {...engineField(newEngine, setNewEngine, 'kw')} />
                   <input style={inputStyle} type="date" placeholder="Install date" {...engineField(newEngine, setNewEngine, 'install_date')} />
+                  <input style={inputStyle} type="date" placeholder="Terminated date" title="Terminated date" {...engineField(newEngine, setNewEngine, 'terminated_date')} />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', gridColumn: '1 / -1', fontSize: '0.85rem', color: '#555' }}>
+                    <input type="checkbox" checked={!!newEngine.is_modified}
+                      onChange={e => setNewEngine(d => ({ ...d, is_modified: e.target.checked }))} />
+                    Modified from stock
+                  </label>
+                  {newEngine.is_modified && (
+                    <>
+                      <input style={{ ...inputStyle, gridColumn: '1 / 3' }} placeholder="What was modified (e.g. oversized piston liner)"
+                        {...engineField(newEngine, setNewEngine, 'modification_description')} />
+                      <input style={inputStyle} type="date" placeholder="Date done" title="Date done" {...engineField(newEngine, setNewEngine, 'modification_date')} />
+                    </>
+                  )}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                   <button style={btnSecondary} onClick={() => { setAddingEngine(false); setNewEngine(blankEngine()) }} disabled={saving}>Cancel</button>

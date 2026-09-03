@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 
-// Type-to-filter picker for Cores.component_types, with inline "add new" when
-// nothing matches — same interaction pattern as PersonPicker/JobPicker. The
-// point is convergence: pick what already exists instead of typing a slightly
+// Type-to-filter picker over any simple {id, name} lookup table (component
+// types, engine types, ...), with inline "add new" when nothing matches —
+// same interaction pattern as PersonPicker/JobPicker. The point is
+// convergence: pick what already exists instead of typing a slightly
 // different spelling each time ("piston" vs "Piston" vs "pistons"), but a
-// genuinely new part type can still be added without leaving this field.
-export default function ComponentTypePicker({ types, value, onChange, onTypeCreated, placeholder = 'Type a component…' }) {
+// genuinely new value can still be added without leaving this field.
+export default function LookupPicker({ table, types, value, onChange, onTypeCreated, placeholder = 'Type to search…' }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -42,11 +43,11 @@ export default function ComponentTypePicker({ types, value, onChange, onTypeCrea
     if (row.id === '__create__') {
       const name = row.name
       setCreating(true)
-      const { data, error } = await supabase.schema('Cores').from('component_types').insert({ name }).select().single()
+      const { data, error } = await supabase.schema('Cores').from(table).insert({ name }).select().single()
       if (error) {
         // Someone else may have just added the exact same name — re-fetch and
         // use it instead of failing outright.
-        const { data: existing } = await supabase.schema('Cores').from('component_types').select('*').ilike('name', name).maybeSingle()
+        const { data: existing } = await supabase.schema('Cores').from(table).select('*').ilike('name', name).maybeSingle()
         setCreating(false)
         if (existing) {
           onTypeCreated?.(existing)
@@ -54,7 +55,7 @@ export default function ComponentTypePicker({ types, value, onChange, onTypeCrea
           setQuery(''); setOpen(false); setActiveIndex(-1)
           return
         }
-        alert('Error adding component type: ' + error.message)
+        alert('Error adding: ' + error.message)
         return
       }
       setCreating(false)
@@ -108,7 +109,7 @@ export default function ComponentTypePicker({ types, value, onChange, onTypeCrea
           maxHeight: '16rem', overflowY: 'auto', boxShadow: '0 4px 14px rgba(0,0,0,0.15)', fontSize: '0.85rem',
         }}>
           {rows.length === 0 && (
-            <div style={{ padding: '0.6rem 0.75rem', color: '#999' }}>Start typing to add a component type</div>
+            <div style={{ padding: '0.6rem 0.75rem', color: '#999' }}>Start typing to add a new one</div>
           )}
           {rows.map((r, i) => (
             <div key={r.id}
