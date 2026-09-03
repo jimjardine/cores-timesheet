@@ -168,25 +168,28 @@ export default function EmployeeHome({ employee }) {
     setError('')
   }
 
-  // Same insert the SMS "day off" keyword does — a positive "intentionally
-  // not working" signal, not a missing report. entry_source 'sms' (not
-  // 'self') since it's auto-accepted with nothing to review, matching how
-  // the texted-in path stamps it, and keeps it locked/office-owned like
-  // everything else here rather than reopening the self-entry edit path
-  // that was removed for good reason (2026-08-27).
+  // Same shape as the SMS "day off" keyword — a pending sms_submissions row
+  // (empty entries, is_day_off flag) instead of a direct timesheet_entries
+  // insert. Changed 2026-09-03: this used to auto-accept with nothing to
+  // review, but Niki wants day-off requests to land in SMS Review like
+  // everything else instead of going straight to Timesheets. Reuses an
+  // existing day-off row for this date if one's already there (e.g. a prior
+  // rejected request) rather than piling up duplicates.
   async function markDayOff(ymd) {
-    if (!confirm('Mark this day as off?')) return
+    if (!confirm('Send today in as a day off? The office will review it.')) return
     setMarkingDayOffFor(ymd)
     setError('')
-    const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
-      employee_id: employee.id, work_date: ymd, job_id: null,
-      hours: 0, ot_hours: 0, description: 'Day off',
-      per_diem: 0, is_day_off: true, entry_source: 'sms',
-    })
-    // Unique index race (see migration) — a text and a tap landing at the
-    // same moment reads as a duplicate-key error, which just means it's
-    // already marked. Not a real failure.
-    if (error && !error.message?.includes('duplicate key')) { setError(error.message); setMarkingDayOffFor(null); return }
+    const { data: existing } = await supabase.schema('Cores').from('sms_submissions')
+      .select('id').eq('employee_id', employee.id).eq('work_date', ymd).eq('is_day_off', true)
+      .order('updated_at', { ascending: false }).limit(1).maybeSingle()
+    const { error } = existing
+      ? await supabase.schema('Cores').from('sms_submissions')
+          .update({ status: 'submitted', updated_at: new Date().toISOString() }).eq('id', existing.id)
+      : await supabase.schema('Cores').from('sms_submissions').insert({
+          from_phone: 'mobile-app', employee_id: employee.id, work_date: ymd,
+          entries: [], status: 'submitted', is_day_off: true,
+        })
+    if (error) { setError(error.message); setMarkingDayOffFor(null); return }
     await load({ silent: true })
     setMarkingDayOffFor(null)
   }
@@ -556,6 +559,10 @@ export default function EmployeeHome({ employee }) {
               <div className="emp-hint" style={{ marginBottom: '0.6rem', cursor: 'pointer' }} onClick={() => openLog(ymd)}>
                 {`${daySub.status === 'draft' ? '📝 Draft — not submitted yet' : daySub.status === 'rejected' ? '✗ Sent back' : '⏳ Submitted'}: In ${fmtTimeShort(daySub.time_in)} · Out ${daySub.stated_time_out ? fmtTimeShort(daySub.stated_time_out) : '—'} · Lunch ${daySub.lunch_minutes ?? 0}min · PD: ${daySub.per_diem_location && daySub.per_diem_location !== 'none' ? daySub.per_diem_location : 'none'} (tap to edit)`}
               </div>
+            ) : daySub?.is_day_off && daySub.status !== 'rejected' ? (
+              // No fields to reopen for a day-off request — nothing tappable,
+              // just a status line until the office approves or declines it.
+              <div className="emp-hint" style={{ marginBottom: '0.6rem' }}>⏳ Day off — sent to the office for approval</div>
             ) : dayEntries.length > 0 ? (
               // Already approved, no pending sub (submissions excludes
               // status='approved') — the "+ Add Job Info" button below is

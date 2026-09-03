@@ -214,52 +214,56 @@ export default function SmsReview({ onApproved } = {}) {
   // ── Approve ───────────────────────────────────────────────────────────────
   async function approve(sub) {
     const entries = sub.entries || []
-    if (entries.some(e => !e.description?.trim())) {
-      alert('Every job needs a note describing what was done — click Edit to add one before approving.')
-      return
-    }
-    // Matches the validation saveEdit() enforces — approving straight from the
-    // list (without opening Edit) used to skip this, letting a 0/blank-hours
-    // entry (e.g. a job mentioned with no stated duration) through silently.
-    if (entries.some(e => !(Number(e.hours) > 0))) {
-      alert('Every entry needs hours greater than 0 — click Edit to fix it before approving.')
-      return
-    }
-    // Hours can go stale against time_in/stated_time_out when either gets edited
-    // without the other (see Aug 6 2026 incident — time was corrected but the
-    // job hours weren't, and it slipped through to approval unnoticed).
-    if (sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 15) {
-      const deltaHrs = deltaMinsToHours(sub.delta_minutes)
-      const ok = confirm(`Heads up — this submission's job hours don't match its time span (off by ${Math.abs(deltaHrs)}hrs). Approve anyway?`)
-      if (!ok) return
-    }
+    // Day-off requests have no job/hours/time to validate — none of this
+    // block applies (see the day-off branch right after the atomic claim).
+    if (!sub.is_day_off) {
+      if (entries.some(e => !e.description?.trim())) {
+        alert('Every job needs a note describing what was done — click Edit to add one before approving.')
+        return
+      }
+      // Matches the validation saveEdit() enforces — approving straight from the
+      // list (without opening Edit) used to skip this, letting a 0/blank-hours
+      // entry (e.g. a job mentioned with no stated duration) through silently.
+      if (entries.some(e => !(Number(e.hours) > 0))) {
+        alert('Every entry needs hours greater than 0 — click Edit to fix it before approving.')
+        return
+      }
+      // Hours can go stale against time_in/stated_time_out when either gets edited
+      // without the other (see Aug 6 2026 incident — time was corrected but the
+      // job hours weren't, and it slipped through to approval unnoticed).
+      if (sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 15) {
+        const deltaHrs = deltaMinsToHours(sub.delta_minutes)
+        const ok = confirm(`Heads up — this submission's job hours don't match its time span (off by ${Math.abs(deltaHrs)}hrs). Approve anyway?`)
+        if (!ok) return
+      }
 
-    // Guard against a text-reported supply duplicating one already logged
-    // elsewhere for the same employee/day/job — typically a gear photo whose
-    // note said the same thing this text did.
-    const suppliesToApprove = (sub.supplies || []).filter(s => s.supply_name?.trim())
-    if (suppliesToApprove.length > 0) {
-      const jobIdFor = (jobNumber) => jobs.find(j => j.job_number.toUpperCase() === (jobNumber || '').toUpperCase())?.id
-      const jobIds = [...new Set(suppliesToApprove.map(s => jobIdFor(s.job_number)).filter(Boolean))]
-      if (jobIds.length > 0) {
-        const { data: existing } = await supabase.schema('Cores').from('job_supplies')
-          .select('supply_name, job_id, source_photo_id')
-          .eq('employee_id', sub.employee_id).eq('work_date', sub.work_date).in('job_id', jobIds)
-          .not('applied_at', 'is', null)
-        const dupes = []
-        for (const s of suppliesToApprove) {
-          const jobId = jobIdFor(s.job_number)
-          const hit = (existing || []).find(r => r.job_id === jobId && looksLikeSameSupply(s.supply_name, r.supply_name))
-          if (hit) dupes.push({ name: s.supply_name, existing: hit.supply_name, source: hit.source_photo_id ? 'a gear photo' : 'another entry' })
-        }
-        // Just tell her exactly what's already there and let her decide —
-        // she knows whether this is the same item or a second one.
-        if (dupes.length === 1) {
-          const d = dupes[0]
-          if (!confirm(`There's already a "${d.existing}" logged for this job today (from ${d.source}). Do you want to add "${d.name}" as well?`)) return
-        } else if (dupes.length > 1) {
-          const list = dupes.map(d => `"${d.existing}" (from ${d.source}) — this submission also has "${d.name}"`).join('\n')
-          if (!confirm(`Some of these look like they're already logged for this job today:\n\n${list}\n\nApprove anyway?`)) return
+      // Guard against a text-reported supply duplicating one already logged
+      // elsewhere for the same employee/day/job — typically a gear photo whose
+      // note said the same thing this text did.
+      const suppliesToApprove = (sub.supplies || []).filter(s => s.supply_name?.trim())
+      if (suppliesToApprove.length > 0) {
+        const jobIdFor = (jobNumber) => jobs.find(j => j.job_number.toUpperCase() === (jobNumber || '').toUpperCase())?.id
+        const jobIds = [...new Set(suppliesToApprove.map(s => jobIdFor(s.job_number)).filter(Boolean))]
+        if (jobIds.length > 0) {
+          const { data: existing } = await supabase.schema('Cores').from('job_supplies')
+            .select('supply_name, job_id, source_photo_id')
+            .eq('employee_id', sub.employee_id).eq('work_date', sub.work_date).in('job_id', jobIds)
+            .not('applied_at', 'is', null)
+          const dupes = []
+          for (const s of suppliesToApprove) {
+            const jobId = jobIdFor(s.job_number)
+            const hit = (existing || []).find(r => r.job_id === jobId && looksLikeSameSupply(s.supply_name, r.supply_name))
+            if (hit) dupes.push({ name: s.supply_name, existing: hit.supply_name, source: hit.source_photo_id ? 'a gear photo' : 'another entry' })
+          }
+          // Just tell her exactly what's already there and let her decide —
+          // she knows whether this is the same item or a second one.
+          if (dupes.length === 1) {
+            const d = dupes[0]
+            if (!confirm(`There's already a "${d.existing}" logged for this job today (from ${d.source}). Do you want to add "${d.name}" as well?`)) return
+          } else if (dupes.length > 1) {
+            const list = dupes.map(d => `"${d.existing}" (from ${d.source}) — this submission also has "${d.name}"`).join('\n')
+            if (!confirm(`Some of these look like they're already logged for this job today:\n\n${list}\n\nApprove anyway?`)) return
+          }
         }
       }
     }
@@ -280,6 +284,31 @@ export default function SmsReview({ onApproved } = {}) {
     if (!claimed || claimed.length === 0) {
       alert('This submission was already approved or deleted (probably in another tab) — refreshing.')
       await load(); setActing(null); return
+    }
+
+    // Day off: one fixed row, no job/hours mapping to do. Same shape the old
+    // direct-insert used to write, plus the link back to this submission.
+    if (sub.is_day_off) {
+      const { error } = await supabase.schema('Cores').from('timesheet_entries').insert({
+        employee_id: sub.employee_id, work_date: sub.work_date, job_id: null,
+        hours: 0, ot_hours: 0, description: 'Day off', per_diem: 0,
+        is_day_off: true, entry_source: 'sms', source_submission_id: sub.id,
+        approved_by_name: getAdminName(), approved_at: new Date().toISOString(),
+      })
+      if (error) {
+        if (error.message?.includes('duplicate key')) {
+          // Already has a day-off entry for this date some other way — the
+          // request is satisfied either way, nothing more to do.
+        } else {
+          await supabase.schema('Cores').from('sms_submissions').update({ status: sub.status, updated_at: new Date().toISOString() }).eq('id', sub.id)
+          alert('Error creating the day-off entry — submission was reverted, try again: ' + error.message)
+          setActing(null); return
+        }
+      }
+      await load()
+      onApproved?.()
+      setActing(null)
+      return
     }
 
     // Case-insensitive: Claude is told to return lowercase "none" but
@@ -685,11 +714,15 @@ export default function SmsReview({ onApproved } = {}) {
       )}
 
       {sortedVisible.map(sub => {
+        // Day-off requests have no time/hours/lunch by design — none of the
+        // usual "missing info" flags apply to them.
         const flags = []
         if (!sub.employee_id)                          flags.push('employee unknown')
-        if (!sub.time_in)                              flags.push('start time missing')
-        if (!sub.entries || sub.entries.length === 0)  flags.push('no job entries')
-        if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
+        if (!sub.is_day_off) {
+          if (!sub.time_in)                              flags.push('start time missing')
+          if (!sub.entries || sub.entries.length === 0)  flags.push('no job entries')
+          if (sub.lunch_minutes == null)                 flags.push('lunch unknown')
+        }
         // No 'per diem unknown' flag — the bot never asks about PD (silent
         // default to 'none' at save time), so a null here just means none,
         // not something the office needs to chase down.
@@ -731,6 +764,11 @@ export default function SmsReview({ onApproved } = {}) {
                 <span style={{ fontSize: '0.8rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: STATUS_COLORS[sub.status] + '22', color: STATUS_COLORS[sub.status], fontWeight: 600, border: `1px solid ${STATUS_COLORS[sub.status]}44` }}>
                   {sub.status === 'rejected' ? 'deleted' : sub.status}
                 </span>
+                {sub.is_day_off && (
+                  <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: '#fff4d6', color: '#8a6100', fontWeight: 600, border: '1px solid #e6c56b' }}>
+                    🏖️ Day off
+                  </span>
+                )}
                 {flags.map(f => (
                   <span key={f} style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: 10, background: '#ffe0e0', color: '#c00', border: '1px solid #ffaaaa' }}>
                     ⚠ {f}
@@ -753,22 +791,26 @@ export default function SmsReview({ onApproved } = {}) {
             {isExpanded && (
               <div style={{ padding: '1rem' }}>
 
-                {/* Time row */}
-                <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.75rem', fontSize: '0.9rem', flexWrap: 'wrap' }}>
-                  <span><strong>In:</strong> {fmt12(sub.time_in)}</span>
-                  <span><strong>Out:</strong> {fmt12(sub.stated_time_out || sub.calculated_time_out)}</span>
-                  <span><strong>Lunch:</strong> {sub.lunch_minutes != null ? (sub.lunch_minutes === 0 ? 'None' : `${sub.lunch_minutes}min`) : '?'}</span>
-                  {sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 0 && (
-                    <span style={{ color: Math.abs(sub.delta_minutes) > 15 ? '#c00' : '#888' }}>
-                      <strong>Δ:</strong> {(() => { const h = deltaMinsToHours(sub.delta_minutes); return `${h > 0 ? '+' : ''}${fmtHours(h)}hrs` })()}
-                    </span>
-                  )}
-                  <span><strong>Per diem:</strong> {sub.per_diem_location && sub.per_diem_location.trim().toLowerCase() !== 'none' ? sub.per_diem_location : 'No'}</span>
-                  <span style={{ color: '#999', marginLeft: 'auto' }}>{sub.from_phone}</span>
-                </div>
+                {/* Time row — day-off requests have none of this */}
+                {!sub.is_day_off && (
+                  <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.75rem', fontSize: '0.9rem', flexWrap: 'wrap' }}>
+                    <span><strong>In:</strong> {fmt12(sub.time_in)}</span>
+                    <span><strong>Out:</strong> {fmt12(sub.stated_time_out || sub.calculated_time_out)}</span>
+                    <span><strong>Lunch:</strong> {sub.lunch_minutes != null ? (sub.lunch_minutes === 0 ? 'None' : `${sub.lunch_minutes}min`) : '?'}</span>
+                    {sub.delta_minutes != null && Math.abs(sub.delta_minutes) > 0 && (
+                      <span style={{ color: Math.abs(sub.delta_minutes) > 15 ? '#c00' : '#888' }}>
+                        <strong>Δ:</strong> {(() => { const h = deltaMinsToHours(sub.delta_minutes); return `${h > 0 ? '+' : ''}${fmtHours(h)}hrs` })()}
+                      </span>
+                    )}
+                    <span><strong>Per diem:</strong> {sub.per_diem_location && sub.per_diem_location.trim().toLowerCase() !== 'none' ? sub.per_diem_location : 'No'}</span>
+                    <span style={{ color: '#999', marginLeft: 'auto' }}>{sub.from_phone}</span>
+                  </div>
+                )}
 
                 {/* Entries table */}
-                {sub.entries && sub.entries.length > 0 ? (
+                {sub.is_day_off ? (
+                  <div style={{ color: '#8a6100', marginBottom: '0.75rem', fontSize: '0.875rem' }}>🏖️ Requesting this day off — no hours, no job.</div>
+                ) : sub.entries && sub.entries.length > 0 ? (
                   <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
                     <thead>
                       <tr style={{ background: '#f0f0f0' }}>
@@ -1004,17 +1046,20 @@ export default function SmsReview({ onApproved } = {}) {
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <button
                       onClick={() => approve(sub)}
-                      disabled={!!acting || !sub.employee_id || !sub.entries?.length}
+                      disabled={!!acting || !sub.employee_id || (!sub.is_day_off && !sub.entries?.length)}
                       style={{ padding: '0.4rem 1rem', background: '#2a7a2a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
                     >
-                      {acting === sub.id ? 'Approving…' : 'Approve → Timesheet'}
+                      {acting === sub.id ? 'Approving…' : sub.is_day_off ? 'Approve Day Off' : 'Approve → Timesheet'}
                     </button>
-                    <button
-                      onClick={() => openEdit(sub)}
-                      style={{ padding: '0.4rem 1rem', background: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
-                    >
-                      Edit
-                    </button>
+                    {/* Nothing to edit on a day-off request — no time, job, or hours */}
+                    {!sub.is_day_off && (
+                      <button
+                        onClick={() => openEdit(sub)}
+                        style={{ padding: '0.4rem 1rem', background: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => setRejectOpen(o => ({ ...o, [sub.id]: !o[sub.id] }))}
                       disabled={!!acting}
