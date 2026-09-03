@@ -766,7 +766,7 @@ function resolveDayArg(argRaw: string, today: string): string | null {
 
 // ── Claude parser ─────────────────────────────────────────────────────────────
 
-async function parseWithClaude(msgBody: string, today: string, askedQuestions: string[] = []): Promise<any> {
+async function parseWithClaude(msgBody: string, today: string, askedQuestions: string[] = [], knownTimeIn: string | null = null): Promise<any> {
   const system = `You are a timesheet parser for a marine engineering company in Nova Scotia, Canada.
 Extract timesheet data from the worker's text and return ONLY valid JSON with no explanation or markdown.
 
@@ -803,7 +803,9 @@ Job numbers are 4-digit numbers. Hours can be decimal (6.5, 4.25). Quantities ca
 
 CONTEXT: Earlier in this conversation we asked the worker if they took a lunch. If this message reads as a direct answer to that — a bare number of minutes ("30", "45 min"), "half hour"/"1/2 hour" (→30), or "none"/"no"/"worked through"/"nope" (→0) — set lunch_minutes accordingly even without the word "lunch" anywhere in the message. Never invent data the message does not contain.` : ''}${askedQuestions.includes('Consumables?') ? `
 
-CONTEXT: Earlier in this conversation we asked the worker what consumables/supplies they used today. If this message reads as a direct answer to that, treat any items listed as supplies (job_number empty string unless a job is explicitly named in this reply) even without "used"/"supplies:" phrasing — e.g. "2 rags, roll of tape" counts as supplies, not job work. If they say there weren't any ("none", "nothing", "no", "nope"), return supplies: [] and don't invent anything.` : ''}`
+CONTEXT: Earlier in this conversation we asked the worker what consumables/supplies they used today. If this message reads as a direct answer to that, treat any items listed as supplies (job_number empty string unless a job is explicitly named in this reply) even without "used"/"supplies:" phrasing — e.g. "2 rags, roll of tape" counts as supplies, not job work. If they say there weren't any ("none", "nothing", "no", "nope"), return supplies: [] and don't invent anything.` : ''}${knownTimeIn ? `
+
+CONTEXT: This shift's start time is already known to be ${knownTimeIn}. If this message states a bare end-of-shift hour with no am/pm marker and no minutes ("out 4", "stopped at 4", "done at 9"), resolve stated_time_out to whichever of AM/PM produces a normal same-day shift length after ${knownTimeIn} — never default to AM just because the hour is small. A shift starting in the morning ending at "4" almost always means 4pm, not 4am. Only pick a time before ${knownTimeIn} (an overnight/graveyard shift) if the message itself says so explicitly (e.g. "worked overnight", "out at 4am").` : ''}`
 
   const payload = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -1682,8 +1684,18 @@ Deno.serve(async (req: Request) => {
     is_help_request: false
   }
 
+  // Lets the parser correctly resolve a bare, ambiguous end-of-shift hour
+  // ("out 4") against a shift that's already known to have started in the
+  // morning — see parseWithClaude's CONTEXT block. Without this, a message
+  // parsed in isolation has no way to tell "4" means 4pm not 4am, which is
+  // exactly what silently corrupted Jim Jardine's day on 2026-09-02: the
+  // bot did flag the resulting midnight-ish out time after the fact, but by
+  // then the wrong time was already saved and the day's hours never got
+  // recomputed from the real (much longer) shift.
+  const knownTimeIn = submission?.time_in ? friendlyTime(submission.time_in.substring(0, 5)) : null
+
   try {
-    parsed = await parseWithClaude(msgBody, today, parseContext)
+    parsed = await parseWithClaude(msgBody, today, parseContext, knownTimeIn)
   } catch (_e) {
     console.error('parseWithClaude failed:', _e instanceof Error ? _e.message : String(_e))
     const r = "Couldn't read that one. Reply HELP for the format, or text the office directly."
