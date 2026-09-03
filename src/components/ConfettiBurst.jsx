@@ -10,12 +10,10 @@ export const CELEBRATION_VARIANTS = {
   confetti: null,
   party: ['🎉', '🎊', '✨', '🥳'],
   nautical: ['⚓️', '🚢', '🐟', '🌊'],
-  poop: ['💩'],
-  gross: ['🤢', '🤮', '🦨'],
-  toilet: ['🚽', '🧻', '💩'],
-  insult: ['🤡', '🖕', '😝'],
-  stinky: ['👃', '💨', '🦨'],
-  chaos: ['🤪', '🥴', '🍆'],
+  flowers: ['🌸', '🌺', '🌻', '🦋'],
+  hearts: ['💖', '✨', '🌟', '💫'],
+  trophy: ['🏆', '🥇', '🎯', '👏'],
+  rainbow: ['🌈', '☀️', '😄', '🎈'],
 }
 
 export function pickCelebrationVariant() {
