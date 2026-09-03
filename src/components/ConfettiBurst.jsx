@@ -11,6 +11,11 @@ export const CELEBRATION_VARIANTS = {
   party: ['🎉', '🎊', '✨', '🥳'],
   nautical: ['⚓️', '🚢', '🐟', '🌊'],
   poop: ['💩'],
+  gross: ['🤢', '🤮', '🦨'],
+  toilet: ['🚽', '🧻', '💩'],
+  insult: ['🤡', '🖕', '😝'],
+  stinky: ['👃', '💨', '🦨'],
+  chaos: ['🤪', '🥴', '🍆'],
 }
 
 export function pickCelebrationVariant() {
